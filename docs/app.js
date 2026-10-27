@@ -1242,6 +1242,10 @@ document.addEventListener('contextmenu', ev => {
 addEventListener('scroll', hideCtx, { passive: true });
 addEventListener('resize', hideCtx);
 
+// где нажали кнопку мыши: окно закрывается, только если и нажали, и отпустили на фоне
+let downAt = null;
+document.addEventListener('pointerdown', ev => { downAt = ev.target; });
+
 document.addEventListener('click', async ev => {
   if (!ev.target.closest('#ctx')) hideCtx();
   const el = ev.target.closest('[data-act]');
@@ -1249,7 +1253,8 @@ document.addEventListener('click', async ev => {
   const act = el.dataset.act;
   const id = el.dataset.id;
   const v = el.dataset.v;
-  if (act === 'close-bg' && ev.target !== el) return; // щелчок внутри окна, а не по фону
+  // щелчок внутри окна, а не по фону; и не выделение текста, отпущенное за краем окна
+  if (act === 'close-bg' && (ev.target !== el || downAt !== el)) return;
   if (BUSY.has(act)) el.disabled = true; // от двойного нажатия, пока ждём базу
   try {
     switch (act) {
