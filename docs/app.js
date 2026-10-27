@@ -27,8 +27,13 @@ const S = {
 };
 
 function loadCal() {
-  const def = { mode: 'month', habits: true, sections: [] };
-  try { return { ...def, ...JSON.parse(localGet('cal') || '{}') }; } catch { return def; }
+  // hidden — скрытые разделы ('none' — без раздела); всё, что светится, показывается
+  const def = { mode: 'month', habits: true, hidden: [] };
+  try {
+    const c = { ...def, ...JSON.parse(localGet('cal') || '{}') };
+    delete c.sections;
+    return c;
+  } catch { return def; }
 }
 const saveCal = () => localSet('cal', JSON.stringify(S.cal));
 
@@ -188,7 +193,7 @@ function render() {
   const views = { today: renderToday, calendar: renderCalendar, sections: renderSections };
   document.body.className = 'v-' + S.view;
   $app.innerHTML = views[S.view]() + `
-    <button class="fab" data-act="new" title="Новая задача">+</button>
+    ${S.pick ? pickBar() : '<button class="fab" data-act="new" title="Новая задача">+</button>'}
     <nav class="bottom">
       ${[['today', 'Сегодня'], ['calendar', 'Календарь'], ['sections', 'Разделы']]
         .map(([k, n]) => `<button class="pill ${S.view === k ? 'on' : ''}" data-act="view" data-v="${k}">${n}</button>`).join('')}
@@ -210,14 +215,20 @@ function taskRow(t, opts = {}) {
     if (st.total) meta.push(`<span class="stat">${st.done} из ${st.total} за 30 дн.</span>`);
   }
   if (opts.note) meta.unshift(`<span class="${opts.noteCls || ''}">${opts.note}</span>`);
-  const cls = `task ${t.kind === 'habit' ? 'habit' : ''} ${opts.done ? 'done' : ''}`;
+  const picked = S.pick && S.pick.has(t.id);
+  const cls = `task ${t.kind === 'habit' ? 'habit' : ''} ${opts.done ? 'done' : ''} ${picked ? 'picked' : ''}`;
   // mark — значок без действия (прошлые отметки и будущие повторы в календаре)
-  const check = opts.mark
-    ? `<div class="check" style="${opts.markStyle || ''}">${opts.mark}</div>`
-    : `<button class="check" data-act="${opts.done ? 'undo' : 'done'}" data-id="${t.id}" title="${opts.done ? 'Отменить' : 'Сделано'}">✓</button>`;
-  return `<div class="${cls}">
+  const check = S.pick && opts.drag
+    ? `<div class="check pick">${picked ? '✓' : ''}</div>`
+    : opts.mark
+      ? `<div class="check" style="${opts.markStyle || ''}">${opts.mark}</div>`
+      : `<button class="check" data-act="${opts.done ? 'undo' : 'done'}" data-id="${t.id}" title="${opts.done ? 'Отменить' : 'Сделано'}">✓</button>`;
+  // drag — строка в «Разделах»: её можно перетаскивать и выбирать
+  const dnd = opts.drag ? ` data-drag="${t.id}" data-sec="${t.section_id || ''}"${S.pick ? '' : ' draggable="true"'}` : '';
+  const act = S.pick && opts.drag ? 'pick' : 'edit';
+  return `<div class="${cls}"${dnd}${S.pick && opts.drag ? ` data-act="pick" data-id="${t.id}"` : ''}>
     ${check}
-    <div class="body" data-act="edit" data-id="${t.id}">
+    <div class="body" data-act="${act}" data-id="${t.id}">
       <div class="title">${esc(t.title)}</div>
       ${meta.length ? `<div class="meta">${meta.join('')}</div>` : ''}
     </div>
@@ -238,7 +249,7 @@ function renderToday() {
   const doneIds = [...new Set(S.logs.filter(l => l.status === 'done' && l.done_on === t0).map(l => l.task_id))];
   const doneToday = doneIds.map(id => S.tasks.find(t => t.id === id)).filter(Boolean);
 
-  let html = `<header><h1>Сегодня</h1><div class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</div></header>`;
+  let html = `<header class="top"><div><h1>Сегодня</h1><div class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</div></div>${GEAR}</header>`;
   if (!due.length && !noDate.length && !doneToday.length && !events.length) {
     html += '<div class="empty">Задач на сегодня нет.<br>Нажми «+», чтобы добавить.</div>';
   }
@@ -284,8 +295,7 @@ function occurrences(from, to) {
 // Фильтры календаря: привычки и разделы (ничего не выбрано — все разделы).
 function calVisible(o) {
   if (!S.cal.habits && o.t.kind === 'habit') return false;
-  const secs = S.cal.sections.filter(id => id === 'none' || S.sections.some(s => s.id === id));
-  return !secs.length || secs.includes(o.t.section_id || 'none');
+  return !S.cal.hidden.includes(o.t.section_id || 'none');
 }
 
 function dayItems(occ, d) {
@@ -356,16 +366,16 @@ function renderCalendar() {
   }
 
   const filters = [`<button class="pill ${c.habits ? 'on' : ''}" data-act="cal-habits">Привычки</button>`]
-    .concat(S.sections.map(s => `<button class="pill ${c.sections.includes(s.id) ? 'on' : ''}" data-act="cal-sec" data-id="${s.id}"><i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name)}</button>`))
-    .concat(S.sections.length ? [`<button class="pill ${c.sections.includes('none') ? 'on' : ''}" data-act="cal-sec" data-id="none">Без раздела</button>`] : []);
+    .concat(S.sections.map(s => `<button class="pill ${c.hidden.includes(s.id) ? '' : 'on'}" data-act="cal-sec" data-id="${s.id}"><i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name)}</button>`))
+    .concat([`<button class="pill ${c.hidden.includes('none') ? '' : 'on'}" data-act="cal-sec" data-id="none">Без раздела</button>`]);
 
   const items = dayItems(occ, S.day);
   // события на несколько дней — в «весь день», а не в расписании
   const timed = items.filter(o => o.t.start_time && !(o.t.end_date && o.t.end_date > o.t.due_date));
   const rest = items.filter(o => !timed.includes(o));
   const d = parse(S.day);
-  return `<header class="cal-top"><h1>Календарь</h1>
-      <div class="seg"><button class="pill ${week ? '' : 'on'}" data-act="cal-mode" data-v="month">Месяц</button><button class="pill ${week ? 'on' : ''}" data-act="cal-mode" data-v="week">Неделя</button></div>
+  return `<header class="top"><h1>Календарь</h1>
+      <div class="tools"><div class="seg"><button class="pill ${week ? '' : 'on'}" data-act="cal-mode" data-v="month">Месяц</button><button class="pill ${week ? 'on' : ''}" data-act="cal-mode" data-v="week">Неделя</button></div>${GEAR}</div>
     </header>
     <div class="chips">${filters.join('')}</div>
     <div class="cal-head">
@@ -381,24 +391,220 @@ function renderCalendar() {
     ${items.length ? '' : '<div class="empty">На этот день ничего нет</div>'}`;
 }
 
+// Порядок внутри раздела: ручной (position), при равенстве — по сроку.
+function byPos(a, b) {
+  return (a.position || 0) - (b.position || 0)
+    || (upcoming(a) || '9999').localeCompare(upcoming(b) || '9999')
+    || (a.created_at || '').localeCompare(b.created_at || '');
+}
+
+const sectionTasks = secId => active().filter(t => (t.section_id || null) === secId && !eventOver(t)).sort(byPos);
+
 function renderSections() {
   const sel = S.section;
-  const list = active()
-    .filter(t => (sel === null || t.section_id === sel) && !eventOver(t))
-    .sort((a, b) => (upcoming(a) || '9999') < (upcoming(b) || '9999') ? -1 : (upcoming(a) || '9999') > (upcoming(b) || '9999') ? 1 : 0);
-  const chips = [`<button class="pill ${sel === null ? 'on' : ''}" data-act="section" data-id="">Все</button>`]
-    .concat(S.sections.map(s => `<button class="pill ${sel === s.id ? 'on' : ''}" data-act="section" data-id="${s.id}"><i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name)}</button>`))
-    .concat(['<button class="pill" data-act="new-section" title="Новый раздел">+</button>']);
-  const cur = S.sections.find(s => s.id === sel);
-  return `<header><h1>Разделы</h1></header>
-    <div class="chips">${chips.join('')}</div>
-    ${cur ? `<button class="link" data-act="edit-section" data-id="${cur.id}">✎ Изменить раздел «${esc(cur.name)}»</button>` : ''}
-    ${list.map(t => taskRow(t, { date: true, noSection: sel !== null })).join('') || '<div class="empty">Здесь пока пусто</div>'}
-    <div style="text-align:center;margin-top:28px">
-      <button class="link" data-act="import">Загрузить задачи из файла</button><br>
-      <button class="link" data-act="logout">Выйти из аккаунта</button>
-      <input type="file" id="import-file" accept=".json,application/json" hidden>
+  const count = id => sectionTasks(id).length;
+  // слева (на телефоне — строкой сверху): разделы; на них можно бросать задачи
+  const item = (id, name, color, n) => `<button class="pill side-item ${sel === id ? 'on' : ''}" data-act="section" data-id="${id || ''}" data-drop-sec="${id || ''}">
+      ${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}<span class="name">${esc(name)}</span>${n ? `<span class="n">${n}</span>` : ''}</button>`;
+  const side = [`<button class="pill side-item ${sel === null ? 'on' : ''}" data-act="section" data-id="">Все<span class="n">${active().filter(t => !eventOver(t)).length}</span></button>`]
+    .concat(S.sections.map(s => item(s.id, s.name, s.color, count(s.id))))
+    .concat(count(null) ? [item('none', 'Без раздела', null, count(null))] : [])
+    .concat(['<button class="pill side-item add" data-act="new-section">+ Раздел</button>']);
+
+  const groups = sel === null
+    ? S.sections.map(s => [s.id, s.name, s.color]).concat([[null, 'Без раздела', null]])
+    : [[sel === 'none' ? null : sel, ...(sel === 'none' ? ['Без раздела', null] : [sectionOf({ section_id: sel })?.name, sectionOf({ section_id: sel })?.color])]];
+  let body = '';
+  for (const [id, name, color] of groups) {
+    const list = sectionTasks(id);
+    if (sel === null && !list.length && id === null) continue;
+    const head = `<h2 class="group" data-drop-sec="${id || ''}">${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}${esc(name || '')}
+      ${id ? `<button class="edit-sec" data-act="edit-section" data-id="${id}" title="Изменить раздел">✎</button>` : ''}</h2>`;
+    body += head + (list.map(t => taskRow(t, { date: true, noSection: true, drag: true })).join('')
+      || `<div class="empty small" data-drop-sec="${id || ''}">Пусто${S.pick ? '' : ' — перетащи сюда задачу'}</div>`);
+  }
+  const tools = S.pick
+    ? '<button class="pill" data-act="pick-all">Выбрать все</button>'
+    : '<button class="pill" data-act="pick-start">Выбрать</button>';
+  return `<header class="top"><h1>Разделы</h1><div class="tools">${tools}${GEAR}</div></header>
+    <div class="split">
+      <nav class="side">${side.join('')}</nav>
+      <div class="main">${body || '<div class="empty">Здесь пока пусто</div>'}</div>
     </div>`;
+}
+
+// ---------- перетаскивание мышкой (в «Разделах») ----------
+let dragId = null;
+const clearDrop = () => document.querySelectorAll('.drop-before,.drop-after,.drop-in').forEach(e => e.classList.remove('drop-before', 'drop-after', 'drop-in'));
+
+document.addEventListener('dragstart', e => {
+  const row = e.target.closest && e.target.closest('[data-drag]');
+  if (!row) return;
+  dragId = row.dataset.drag;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', dragId);
+  row.classList.add('dragging');
+});
+
+document.addEventListener('dragend', () => {
+  dragId = null;
+  clearDrop();
+  document.querySelectorAll('.dragging').forEach(e => e.classList.remove('dragging'));
+});
+
+function dropTarget(e) {
+  const row = e.target.closest('[data-drag]');
+  if (row && row.dataset.drag !== dragId) {
+    const r = row.getBoundingClientRect();
+    return { row, after: e.clientY > r.top + r.height / 2 };
+  }
+  const sec = e.target.closest('[data-drop-sec]');
+  return sec ? { sec } : null;
+}
+
+document.addEventListener('dragover', e => {
+  if (!dragId) return;
+  const t = dropTarget(e);
+  clearDrop();
+  if (!t) return;
+  e.preventDefault();
+  if (t.row) t.row.classList.add(t.after ? 'drop-after' : 'drop-before');
+  else t.sec.classList.add('drop-in');
+});
+
+document.addEventListener('drop', async e => {
+  if (!dragId) return;
+  const t = dropTarget(e);
+  const id = dragId;
+  clearDrop();
+  if (!t) return;
+  e.preventDefault();
+  try {
+    if (t.row) await moveTask(id, t.row.dataset.sec || null, t.row.dataset.drag, t.after);
+    else await moveTask(id, t.sec.dataset.dropSec === 'none' ? null : t.sec.dataset.dropSec || null, null, true);
+  } catch (err) { console.error(err); await load(); }
+});
+
+// Переставить задачу: в раздел secId, перед/после задачи targetId (или в конец).
+async function moveTask(id, secId, targetId, after) {
+  const t = byId(id);
+  const list = sectionTasks(secId).filter(x => x.id !== id);
+  const i = targetId ? list.findIndex(x => x.id === targetId) + (after ? 1 : 0) : list.length;
+  list.splice(i, 0, t);
+  const changes = [];
+  list.forEach((x, k) => {
+    const upd = {};
+    if ((x.position || 0) !== k) upd.position = k;
+    if (x.id === id && (x.section_id || null) !== secId) upd.section_id = secId;
+    if (Object.keys(upd).length) { Object.assign(x, upd); changes.push([x.id, upd]); }
+  });
+  render();
+  await Promise.all(changes.map(([cid, upd]) => call(sb.from('tasks').update(upd).eq('id', cid))));
+}
+
+// ---------- выбор нескольких задач ----------
+function pickBar() {
+  const n = S.pick.size;
+  return `<div class="pickbar">
+    <span>Выбрано: ${n}</span>
+    <button class="btn main" data-act="bulk" ${n ? '' : 'disabled'}>Изменить</button>
+    <button class="btn danger" data-act="bulk-delete" ${n ? '' : 'disabled'}>Удалить</button>
+    <button class="btn" data-act="pick-end">Готово</button>
+  </div>`;
+}
+
+const KEEP = '__keep';
+
+function openBulk() {
+  $modal.dataset.kind = 'bulk';
+  S.bulk = { weekdays: [], from: 'due' };
+  const opt = (v, n) => `<option value="${v}">${n}</option>`;
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet">
+    <h3>Изменить задачи: ${S.pick.size}</h3>
+    <div class="msg" style="margin:-6px 0 12px">Меняется только то, где выбрано не «не менять».</div>
+    <div class="field"><label>Срок</label>
+      <select class="inp" id="b-datemode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить дату')}${opt('none', 'Без срока')}</select>
+      <input class="inp" id="b-date" type="date" value="${today()}" style="margin-top:8px"></div>
+    <div class="field"><label>Повтор</label>
+      <div class="row">
+        <select class="inp" id="b-unit">${opt(KEEP, '— не менять —')}${opt('', 'Не повторять')}${opt('day', 'Дни')}${opt('week', 'Недели')}${opt('month', 'Месяцы')}${opt('year', 'Годы')}</select>
+        <span id="b-every-box" class="row" style="flex:1">каждые <input class="inp" id="b-every" type="number" min="1" value="1" style="max-width:80px"></span>
+      </div></div>
+    <div class="field" id="b-wd-box"><label>Дни недели (можно не выбирать)</label>
+      <div class="wds">${WD.map((w, i) => `<button class="pill" data-act="b-wd" data-v="${i + 1}">${w}</button>`).join('')}</div></div>
+    <div class="field" id="b-from-box"><label>Новый срок считать</label>
+      <div class="seg">
+        <button class="pill" data-act="b-from" data-v="due">от старого срока</button>
+        <button class="pill" data-act="b-from" data-v="done">от дня выполнения</button>
+      </div></div>
+    <div class="field"><label>Вид</label>
+      <select class="inp" id="b-kind">${opt(KEEP, '— не менять —')}${opt('task', 'Обычная')}${opt('habit', 'Привычка')}${opt('event', 'Событие')}</select></div>
+    <div class="field"><label>Раздел</label>
+      <select class="inp" id="b-section">${opt(KEEP, '— не менять —')}${opt('', 'Без раздела')}${S.sections.map(s => opt(s.id, esc(s.name))).join('')}</select></div>
+    <div class="actions"><span></span>
+      <div class="row"><button class="btn" data-act="close">Отмена</button><button class="btn main" data-act="bulk-save">Применить</button></div>
+    </div>
+  </div></div>`;
+  ['b-datemode', 'b-unit'].forEach(id => { document.getElementById(id).onchange = syncBulk; });
+  syncBulk();
+}
+
+function syncBulk() {
+  const unit = document.getElementById('b-unit').value;
+  document.getElementById('b-date').style.display = document.getElementById('b-datemode').value === 'set' ? '' : 'none';
+  document.getElementById('b-every-box').style.display = unit && unit !== KEEP ? '' : 'none';
+  document.getElementById('b-wd-box').style.display = unit === 'week' ? '' : 'none';
+  document.getElementById('b-from-box').style.display = unit && unit !== KEEP ? '' : 'none';
+  $modal.querySelectorAll('[data-act=b-wd]').forEach(b => b.classList.toggle('on', S.bulk.weekdays.includes(+b.dataset.v)));
+  $modal.querySelectorAll('[data-act=b-from]').forEach(b => b.classList.toggle('on', b.dataset.v === S.bulk.from));
+}
+
+async function saveBulk() {
+  const ids = [...S.pick];
+  const v = id => document.getElementById(id).value;
+  const upd = {};
+  if (v('b-datemode') === 'set') upd.due_date = v('b-date') || today();
+  if (v('b-datemode') === 'none') upd.due_date = null;
+  if (v('b-unit') !== KEEP) {
+    const unit = v('b-unit') || null;
+    upd.repeat_unit = unit;
+    upd.repeat_every = unit ? Math.max(1, parseInt(v('b-every')) || 1) : null;
+    upd.repeat_weekdays = unit === 'week' && S.bulk.weekdays.length ? [...S.bulk.weekdays].sort() : null;
+    upd.repeat_from = S.bulk.from;
+  }
+  if (v('b-kind') !== KEEP) upd.kind = v('b-kind');
+  if (v('b-section') !== KEEP) upd.section_id = v('b-section') || null;
+  if (!Object.keys(upd).length) return toast('Ничего не выбрано для изменения');
+  await call(sb.from('tasks').update(upd).in('id', ids));
+  // у повтора должен быть срок: где его нет — сегодня
+  if (upd.repeat_unit && !('due_date' in upd)) await call(sb.from('tasks').update({ due_date: today() }).in('id', ids).is('due_date', null));
+  S.pick = null;
+  closeModal();
+  await load();
+  toast(`Изменено задач: ${ids.length}`);
+}
+
+async function deleteBulk() {
+  const ids = [...S.pick];
+  if (!confirm(`Удалить задачи (${ids.length}) совсем? Их история тоже удалится.`)) return;
+  await call(sb.from('tasks').delete().in('id', ids));
+  S.pick = null;
+  await load();
+}
+
+// ---------- настройки (шестерёнка) ----------
+const GEAR = '<button class="icon" data-act="settings" title="Настройки">⚙</button>';
+
+function openSettings() {
+  $modal.dataset.kind = 'settings';
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet">
+    <h3>Настройки</h3>
+    <div class="menu">
+      <button class="btn" data-act="import">Загрузить задачи из файла</button>
+      <button class="btn" data-act="logout">Выйти из аккаунта</button>
+    </div>
+    <div class="actions"><span></span><button class="btn" data-act="close">Закрыть</button></div>
+  </div></div>`;
 }
 
 // ---------- вход ----------
@@ -656,7 +862,7 @@ document.addEventListener('change', async ev => {
 
 // ---------- нажатия ----------
 const byId = id => S.tasks.find(t => t.id === id);
-const BUSY = new Set(['login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no']);
+const BUSY = new Set(['login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no', 'bulk-save', 'bulk-delete']);
 
 document.addEventListener('click', async ev => {
   const el = ev.target.closest('[data-act]');
@@ -669,8 +875,24 @@ document.addEventListener('click', async ev => {
   try {
     switch (act) {
       case 'login': case 'signup': await auth(act); break;
-      case 'logout': await sb.auth.signOut(); break;
-      case 'view': S.view = v; localSet('view', v); render(); scrollTo(0, 0); break;
+      case 'logout': closeModal(); await sb.auth.signOut(); break;
+      case 'settings': openSettings(); break;
+      case 'pick-start': S.pick = new Set(); render(); break;
+      case 'pick-end': S.pick = null; render(); break;
+      case 'pick': S.pick.has(id) ? S.pick.delete(id) : S.pick.add(id); render(); break;
+      case 'pick-all': $app.querySelectorAll('[data-drag]').forEach(r => S.pick.add(r.dataset.drag)); render(); break;
+      case 'bulk': openBulk(); break;
+      case 'bulk-save': await saveBulk(); break;
+      case 'bulk-delete': await deleteBulk(); break;
+      case 'b-wd': {
+        const set = new Set(S.bulk.weekdays);
+        set.has(+v) ? set.delete(+v) : set.add(+v);
+        S.bulk.weekdays = [...set];
+        syncBulk();
+        break;
+      }
+      case 'b-from': S.bulk.from = v; syncBulk(); break;
+      case 'view': S.view = v; S.pick = null; localSet('view', v); render(); scrollTo(0, 0); break;
       case 'done': el.classList.add('ok'); await complete(byId(id)); break;
       case 'undo': await undo(byId(id)); break;
       case 'edit': openEdit(byId(id)); break;
@@ -711,9 +933,9 @@ document.addEventListener('click', async ev => {
       case 'cal-mode': S.cal.mode = v; saveCal(); S.month = S.day.slice(0, 8) + '01'; render(); break;
       case 'cal-habits': S.cal.habits = !S.cal.habits; saveCal(); render(); break;
       case 'cal-sec': {
-        const set = new Set(S.cal.sections);
+        const set = new Set(S.cal.hidden);
         set.has(id) ? set.delete(id) : set.add(id);
-        S.cal.sections = [...set];
+        S.cal.hidden = [...set];
         saveCal();
         render();
         break;
@@ -724,7 +946,7 @@ document.addEventListener('click', async ev => {
       case 's-color': $modal.querySelectorAll('[data-act=s-color]').forEach(b => b.classList.toggle('on', b === el)); break;
       case 's-save': await saveSection(id); break;
       case 's-delete': await deleteSection(id); break;
-      case 'import': document.getElementById('import-file').click(); break;
+      case 'import': closeModal(); document.getElementById('import-file').click(); break;
       case 'r-yes': { const t = byId(id); await call(sb.rpc('complete_task', { p_task: id, p_done_on: t.due_date })); await load(); break; }
       case 'r-no': await call(sb.rpc('miss_task', { p_task: id, p_today: today() })); await load(); break;
     }

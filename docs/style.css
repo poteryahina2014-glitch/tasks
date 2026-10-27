@@ -179,3 +179,56 @@ header.cal-top { display: flex; align-items: center; justify-content: space-betw
   .cal.week .day { min-height: 260px; justify-content: flex-start; }
   .cal.week .ci { font-size: 12px; }
 }
+
+/* Заголовок с инструментами и шестерёнкой */
+header.top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+header .tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.icon { width: 40px; height: 40px; border-radius: 50%; font-size: 20px; color: var(--muted); }
+.icon:hover { background: var(--button); color: var(--text); }
+.menu { display: flex; flex-direction: column; gap: 8px; }
+.menu .btn { text-align: left; }
+
+/* Разделы: на телефоне — строка-таблетки сверху, на компьютере — колонка слева */
+.side { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 6px; scrollbar-width: none; }
+.side::-webkit-scrollbar { display: none; }
+.side-item { display: flex; align-items: center; gap: 6px; }
+.side-item .n { color: var(--muted); font-size: 12px; }
+.side-item.add { color: var(--muted); }
+h2.group { display: flex; align-items: center; gap: 4px; }
+h2.group .dot { margin-right: 2px; }
+.edit-sec { color: var(--muted); font-size: 14px; padding: 0 6px; opacity: 0; }
+h2.group:hover .edit-sec, .edit-sec:focus { opacity: 1; }
+@media (hover: none) { .edit-sec { opacity: 1; } }
+.empty.small { padding: 10px; font-size: 13px; border: 1px dashed var(--border); border-radius: 12px; margin-bottom: 8px; }
+
+/* Перетаскивание */
+.task[draggable="true"] { cursor: grab; }
+.task.dragging { opacity: .4; }
+.task.drop-before { box-shadow: 0 -3px 0 var(--accent); }
+.task.drop-after { box-shadow: 0 3px 0 var(--accent); }
+.drop-in { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 12px; }
+
+/* Выбор нескольких */
+.task[data-act="pick"] { cursor: pointer; }
+.check.pick { border-radius: 7px; border-color: var(--accent); color: var(--bg); }
+.task.picked { border-color: var(--accent); background: var(--sel); }
+.task.picked .check.pick { background: var(--accent); }
+.pickbar {
+  position: fixed; left: 12px; right: 12px; margin: 0 auto; width: fit-content; bottom: calc(68px + env(safe-area-inset-bottom)); z-index: 4;
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center;
+  background: var(--top); border: 1px solid var(--border); border-radius: 14px; padding: 8px 10px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.45);
+}
+.pickbar span { color: var(--muted); padding: 0 6px; }
+.btn:disabled { opacity: .45; cursor: default; }
+
+/* Компьютер: шире, разделы слева, фильтры календаря переносятся на новые строки */
+@media (min-width: 900px) {
+  #app { max-width: 1180px; padding: 0 28px 110px; }
+  .fab { right: max(28px, calc(50% - 562px)); }
+  .chips { flex-wrap: wrap; overflow: visible; }
+  .split { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 24px; align-items: start; }
+  .side { flex-direction: column; overflow: visible; position: sticky; top: 76px; gap: 6px; padding-top: 18px; }
+  .side-item { border-radius: 10px; justify-content: flex-start; width: 100%; }
+  .side-item .name { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; }
+}
