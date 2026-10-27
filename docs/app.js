@@ -394,7 +394,11 @@ function renderSections() {
     <div class="chips">${chips.join('')}</div>
     ${cur ? `<button class="link" data-act="edit-section" data-id="${cur.id}">✎ Изменить раздел «${esc(cur.name)}»</button>` : ''}
     ${list.map(t => taskRow(t, { date: true, noSection: sel !== null })).join('') || '<div class="empty">Здесь пока пусто</div>'}
-    <div style="text-align:center;margin-top:28px"><button class="link" data-act="logout">Выйти из аккаунта</button></div>`;
+    <div style="text-align:center;margin-top:28px">
+      <button class="link" data-act="import">Загрузить задачи из файла</button><br>
+      <button class="link" data-act="logout">Выйти из аккаунта</button>
+      <input type="file" id="import-file" accept=".json,application/json" hidden>
+    </div>`;
 }
 
 // ---------- вход ----------
@@ -613,6 +617,43 @@ async function deleteSection(id) {
   await load();
 }
 
+// ---------- загрузка из файла (todoist.json от tools/todoist_export.py) ----------
+async function importFile(file) {
+  let data;
+  try { data = JSON.parse(await file.text()); } catch { return toast('Не получилось прочитать файл'); }
+  const tasks = data.tasks || [];
+  const newSecs = (data.sections || []).filter(s => !S.sections.some(x => x.name === s.name));
+  if (!tasks.length) return toast('В файле нет задач');
+  if (!confirm(`Загрузить ${tasks.length} задач и ${newSecs.length} новых разделов?\nЕсли уже загружала этот файл, задачи повторятся.`)) return;
+  if (newSecs.length) {
+    await call(sb.from('sections').insert(newSecs.map((s, i) => ({ name: s.name, color: s.color, position: S.sections.length + i }))));
+  }
+  const secs = await call(sb.from('sections').select('id,name'));
+  const secId = name => (secs.find(s => s.name === name) || {}).id || null;
+  const rows = tasks.map(t => ({
+    title: t.title,
+    notes: t.notes || null,
+    kind: t.kind || 'task',
+    section_id: t.section ? secId(t.section) : null,
+    due_date: t.due_date || null,
+    start_time: t.start_time || null,
+    end_time: t.end_time || null,
+    repeat_unit: t.repeat_unit || null,
+    repeat_every: t.repeat_unit ? t.repeat_every || 1 : null,
+    repeat_weekdays: t.repeat_unit === 'week' ? t.repeat_weekdays || null : null,
+    repeat_from: t.repeat_from || 'due',
+  }));
+  for (let i = 0; i < rows.length; i += 200) await call(sb.from('tasks').insert(rows.slice(i, i + 200)));
+  await load();
+  toast(`Загружено задач: ${rows.length}`);
+}
+
+document.addEventListener('change', async ev => {
+  if (ev.target.id !== 'import-file' || !ev.target.files[0]) return;
+  try { await importFile(ev.target.files[0]); } catch (e) { console.error(e); }
+  ev.target.value = '';
+});
+
 // ---------- нажатия ----------
 const byId = id => S.tasks.find(t => t.id === id);
 const BUSY = new Set(['login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no']);
@@ -683,6 +724,7 @@ document.addEventListener('click', async ev => {
       case 's-color': $modal.querySelectorAll('[data-act=s-color]').forEach(b => b.classList.toggle('on', b === el)); break;
       case 's-save': await saveSection(id); break;
       case 's-delete': await deleteSection(id); break;
+      case 'import': document.getElementById('import-file').click(); break;
       case 'r-yes': { const t = byId(id); await call(sb.rpc('complete_task', { p_task: id, p_done_on: t.due_date })); await load(); break; }
       case 'r-no': await call(sb.rpc('miss_task', { p_task: id, p_today: today() })); await load(); break;
     }
