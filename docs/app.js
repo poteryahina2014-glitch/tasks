@@ -148,6 +148,8 @@ const busyEvents = () => (S.space === 'personal'
   ? activeAll().filter(t => isEvent(t) && spaceOf(t) === 'work' && !pausedSec(t.section_id)) : []);
 const isEvent = t => t.kind === 'event';
 const hhmm = s => (s ? s.slice(0, 5) : '');
+// готовые часы для «Напомнить»
+const REMIND_TIMES = ['07:00', '09:00', '12:00', '14:00', '17:00', '20:00'];
 const timeLabel = t => (t.start_time ? hhmm(t.start_time) + (t.end_time ? '–' + hhmm(t.end_time) : '') : '');
 const cap = s => s[0].toUpperCase() + s.slice(1);
 // событие прошло и больше не повторится
@@ -232,6 +234,7 @@ function taskRow(t, opts = {}) {
   if (t.start_date && !isEvent(t) && t.start_date > today()) meta.push(`<span>с ${dateLabel(t.start_date)}</span>`);
   if (opts.date && due) meta.push(`<span class="${due < today() && !isEvent(t) ? 'late' : ''}">${t.start_date && !isEvent(t) ? 'до ' : ''}${dateLabel(due)}${t.end_date ? ' — ' + dateLabel(t.end_date) : ''}</span>`);
   if (t.start_time) meta.unshift(`<span class="time">${timeLabel(t)}</span>`);
+  if (t.remind_at) meta.push(`<span>🔔 ${hhmm(t.remind_at)}</span>`);
   if (isEvent(t) && !opts.mark) opts = { ...opts, mark: '•', markStyle: 'border-color:var(--accent);color:var(--accent)' };
   if (sec && !opts.noSection) meta.push(`<span>${esc(sec.name)}</span>`);
   const rep = repeatLabel(t);
@@ -663,8 +666,84 @@ function openSettings() {
       <button class="btn" data-act="import">Загрузить задачи из файла</button>
       <button class="btn" data-act="logout">Выйти из аккаунта</button>
     </div>
+    <h2>Уведомления</h2>
+    <div id="push-box"><div class="msg">Проверяю…</div></div>
     <div class="actions"><span></span><button class="btn" data-act="close">Закрыть</button></div>
   </div></div>`;
+  renderPush();
+}
+
+// ---------- уведомления ----------
+const pushOk = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const b64key = s => Uint8Array.from(atob((s + '='.repeat((4 - s.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+async function pushSub() {
+  if (!pushOk()) return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+
+// Часть настроек про уведомления: включены ли на этом устройстве + вечернее напоминание.
+async function renderPush() {
+  const box = document.getElementById('push-box');
+  if (!box) return;
+  if (!pushOk()) { box.innerHTML = '<div class="msg">Этот браузер не умеет уведомления. На телефоне открой установленное приложение.</div>'; return; }
+  const sub = await pushSub();
+  const on = sub && Notification.permission === 'granted';
+  const { data: pref, error } = await sb.from('prefs').select('*').maybeSingle();
+  if (error) { box.innerHTML = '<div class="msg err">База ещё не готова к уведомлениям — нужно запустить 005_push.sql.</div>'; return; }
+  const p = pref || { daily_on: true, daily_time: '20:00' };
+  const t = hhmm(p.daily_time);
+  box.innerHTML = `
+    <div class="msg">${on ? '🔔 На этом устройстве уведомления включены.' : Notification.permission === 'denied'
+      ? 'Уведомления запрещены в настройках браузера/телефона для этого приложения — разреши их там.' : 'На этом устройстве уведомления выключены.'}</div>
+    <div class="menu">
+      ${on ? '<button class="btn" data-act="push-test">Прислать проверочное уведомление</button><button class="btn" data-act="push-off">Выключить на этом устройстве</button>'
+        : '<button class="btn main" data-act="push-on">Включить уведомления на этом устройстве</button>'}
+      <button class="btn ${p.daily_on ? 'on' : ''}" data-act="daily-on">${p.daily_on ? '✓ ' : ''}Вечером напоминать, что не сделано сегодня</button>
+    </div>
+    <div class="wds remind" style="margin-top:8px;${p.daily_on ? '' : 'display:none'}">
+      ${REMIND_TIMES.map(h => `<button class="pill ${h === t ? 'on' : ''}" data-act="daily-time" data-v="${h}">${+h.slice(0, 2)}:00</button>`).join('')}
+      <input class="inp ${REMIND_TIMES.includes(t) ? '' : 'on'}" id="daily-time" type="time" value="${t}" title="Своё время">
+    </div>`;
+  box.dataset.on = p.daily_on ? '1' : '';
+  document.getElementById('daily-time').onchange = ev => ev.target.value && savePrefs({ daily_time: ev.target.value });
+}
+
+async function savePrefs(row) {
+  await call(sb.from('prefs').upsert({ user_id: S.user.id, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, ...row }));
+  renderPush();
+}
+
+async function pushOn() {
+  if (await Notification.requestPermission() !== 'granted') { renderPush(); return toast('Без разрешения уведомления не придут'); }
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription()
+    || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64key(CONFIG.vapid) });
+  const j = sub.toJSON();
+  await call(sb.from('push_subs').upsert({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth }, { onConflict: 'endpoint' }));
+  await savePrefs({});
+  toast('Уведомления включены');
+}
+
+async function pushOff() {
+  const sub = await pushSub();
+  if (sub) {
+    await call(sb.from('push_subs').delete().eq('endpoint', sub.endpoint));
+    await sub.unsubscribe();
+  }
+  renderPush();
+}
+
+// Проверка всей цепочки: сервер присылает уведомление на это устройство.
+async function pushTest() {
+  const sub = await pushSub();
+  if (!sub) return;
+  try {
+    const r = await fetch(CONFIG.url + '/functions/v1/notify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ test: sub.endpoint }),
+    });
+    toast(r.ok ? 'Отправлено — уведомление придёт через пару секунд' : 'Сервер ответил ошибкой ' + r.status);
+  } catch { toast('Не получилось связаться с сервером — функция notify создана?'); }
 }
 
 // ---------- вход ----------
@@ -728,7 +807,7 @@ function renderReview() {
 // ---------- окно задачи ----------
 function openEdit(t) {
   const isNew = !t.id;
-  S.edit = { ...t };
+  S.edit = { ...t, remind_at_was: t.remind_at };
   const e = S.edit;
   const st = !isNew && e.kind === 'habit' ? habitStats(e) : null;
   $modal.dataset.kind = 'edit';
@@ -756,6 +835,12 @@ function openEdit(t) {
     <div class="field"><label>Время (можно не указывать)</label>
       <div class="row">с <input class="inp" id="f-start" type="time" value="${hhmm(e.start_time)}">
         до <input class="inp" id="f-end" type="time" value="${hhmm(e.end_time)}"></div></div>
+    <div class="field" id="f-remind-box"><label>Напомнить на телефон (в день срока)</label>
+      <div class="wds remind">
+        <button class="pill" data-act="remind" data-v="">Нет</button>
+        ${REMIND_TIMES.map(h => `<button class="pill" data-act="remind" data-v="${h}">${h.replace(/^0/, '').slice(0, -3)}:00</button>`).join('')}
+        <input class="inp" id="f-remind" type="time" title="Своё время" value="${hhmm(e.remind_at)}">
+      </div></div>
     <div class="field"><label>Повтор</label>
       <div class="row">
         <select class="inp" id="f-unit">
@@ -784,6 +869,7 @@ function openEdit(t) {
   document.getElementById('f-unit').value = e.repeat_unit || '';
   document.getElementById('f-section').value = e.section_id || '';
   document.getElementById('f-unit').onchange = ev => { e.repeat_unit = ev.target.value || null; syncEdit(); };
+  document.getElementById('f-remind').onchange = ev => { e.remind_at = ev.target.value || null; syncEdit(); };
   syncEdit();
   if (isNew) document.getElementById('f-title').focus();
 }
@@ -795,6 +881,10 @@ function syncEdit() {
   q('[data-act=kind]').forEach(b => b.classList.toggle('on', b.dataset.v === e.kind));
   q('[data-act=from]').forEach(b => b.classList.toggle('on', b.dataset.v === e.repeat_from));
   q('[data-act=wd]').forEach(b => b.classList.toggle('on', (e.repeat_weekdays || []).includes(+b.dataset.v)));
+  const rem = hhmm(e.remind_at);
+  q('[data-act=remind]').forEach(b => b.classList.toggle('on', b.dataset.v.slice(0, 5) === rem));
+  document.getElementById('f-remind').value = rem;
+  document.getElementById('f-remind').classList.toggle('on', !!rem && !REMIND_TIMES.some(h => h.startsWith(rem)));
   document.getElementById('f-every-box').style.display = e.repeat_unit ? '' : 'none';
   document.getElementById('f-wd-box').style.display = e.repeat_unit === 'week' ? '' : 'none';
   // у события нет выполнения: «от дня выполнения» не нужно, зато есть «по какое число»
@@ -831,7 +921,12 @@ async function saveEdit() {
     end_time: document.getElementById('f-end').value || null,
     end_date: null,
     start_date: isEvent(e) ? null : document.getElementById('f-startdate').value || null,
+    remind_at: document.getElementById('f-remind').value || null,
   };
+  // время поменяли — сегодня напомнить заново
+  if (hhmm(row.remind_at) !== hhmm(e.remind_at_was)) row.reminded_on = null;
+  // пока база не обновлена (005_push.sql), не трогаем новые поля у задач без напоминания
+  if (!row.remind_at && !e.remind_at_was) { delete row.remind_at; delete row.reminded_on; }
   const sec = S.sections.find(x => x.id === row.section_id);
   row.space = sec ? spaceOfSec(sec) : e.id ? e.space || S.space : S.space;
   if (!row.start_time) row.end_time = null;
@@ -1294,6 +1389,11 @@ document.addEventListener('click', async ev => {
       case 'logout': closeModal(); await sb.auth.signOut(); break;
       case 'settings': openSettings(); break;
       case 'show-done': S.showDone = !S.showDone; localSet('done', S.showDone ? '1' : ''); openSettings(); render(); break;
+      case 'push-on': await pushOn(); break;
+      case 'push-off': await pushOff(); break;
+      case 'push-test': await pushTest(); break;
+      case 'daily-on': await savePrefs({ daily_on: !document.getElementById('push-box').dataset.on }); break;
+      case 'daily-time': await savePrefs({ daily_time: v }); break;
       case 'cm': hideCtx(); await quick(byId(id), v); break;
       case 'cm-edit': hideCtx(); openEdit(byId(id)); break;
       case 'space': setSpace(S.space === 'work' ? 'personal' : 'work'); break;
@@ -1352,6 +1452,7 @@ document.addEventListener('click', async ev => {
         syncEdit();
         break;
       case 'from': S.edit.repeat_from = v; syncEdit(); break;
+      case 'remind': S.edit.remind_at = v || null; syncEdit(); break;
       case 'wd': {
         const set = new Set(S.edit.repeat_weekdays || []);
         set.has(+v) ? set.delete(+v) : set.add(+v);

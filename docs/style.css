@@ -304,3 +304,8 @@ body.work .pill.mode { border-color: var(--accent); }
 #ctx .ctx-sep { color: var(--muted); font-size: 12px; padding: 8px 10px 2px; }
 #ctx hr { border: 0; border-top: 1px solid var(--border); margin: 6px 4px; }
 .menu .btn.on { border-color: var(--accent); color: var(--accent); }
+
+/* «Напомнить»: готовые часы + своё время */
+.wds.remind { flex-wrap: wrap; align-items: center; }
+.wds.remind .inp { width: auto; padding: 6px 8px; }
+.wds.remind .inp.on { border-color: var(--accent); }

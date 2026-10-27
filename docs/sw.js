@@ -26,3 +26,21 @@ self.addEventListener('fetch', e => {
     e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
   }
 });
+
+// Уведомления с сервера (функция notify в Supabase).
+self.addEventListener('push', e => {
+  let m = {};
+  try { m = e.data.json(); } catch { m = { title: 'Задачи', body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(m.title || 'Задачи', {
+    body: m.body || '', tag: m.tag, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png',
+  }));
+});
+
+// Нажатие на уведомление — открыть приложение (или переключиться на открытое).
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    const w = list.find(c => c.url.startsWith(self.registration.scope));
+    return w ? w.focus() : self.clients.openWindow('./');
+  }));
+});
