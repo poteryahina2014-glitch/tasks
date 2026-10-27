@@ -69,7 +69,7 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: v
 .cal-head { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 8px; }
 .cal-head button { font-size: 22px; padding: 4px 14px; border-radius: 10px; }
 .cal-head button:hover { background: var(--button); }
-.cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
 .cal .wd { text-align: center; color: var(--muted); font-size: 12px; padding: 2px 0; }
 .cal .day {
   aspect-ratio: 1 / 1; border-radius: 10px; background: var(--card); border: 1px solid transparent;
@@ -175,7 +175,7 @@ header.cal-top { display: flex; align-items: center; justify-content: space-betw
   .cal.month .dn { text-align: left; padding-left: 4px; }
   .cal.month .dots { display: none; }
   .cal.month .lines { display: block; }
-  .cal.week { grid-template-columns: repeat(7, 1fr); }
+  .cal.week { grid-template-columns: repeat(7, minmax(0, 1fr)); }
   .cal.week .day { min-height: 260px; justify-content: flex-start; }
   .cal.week .ci { font-size: 12px; }
 }
