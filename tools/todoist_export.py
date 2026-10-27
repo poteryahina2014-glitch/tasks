@@ -58,7 +58,7 @@ def parse_repeat(s):
     if days and not any(w.startswith(("month", "месяц", "числ")) for w in words):
         every = int(num.group()) if num and re.search(r"\d+\s*(week|недел)", s) else 1
         return {**rep, "repeat_unit": "week", "repeat_every": every, "repeat_weekdays": days}
-    if re.search(r"\d+(st|nd|rd|th)\b", s):  # every 15th
+    if re.search(r"\d+(st|nd|rd|th)\b|\d+\s*-?\s*(е|го|ое)\b", s):  # every 15th / каждое 15-е
         return {**rep, "repeat_unit": "month"}
     if re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|январ|феврал|март|апрел|ма[яй]\b|июн|июл|август|сентябр|октябр|ноябр|декабр", s):
         return {**rep, "repeat_unit": "year"}  # every jan 5 / каждое 5 января
