@@ -31,6 +31,7 @@ create table if not exists tasks (
   position int not null default 0,
   created_at timestamptz not null default now()
 );
+-- время, события ('event') и события на несколько дней — см. 002_events.sql
 
 -- История отметок: сделала / пропустила (привычка) / перенесла (обычная).
 -- По ней считается статистика привычек и работает «отменить».

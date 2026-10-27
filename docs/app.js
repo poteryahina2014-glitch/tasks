@@ -23,7 +23,14 @@ const S = {
   day: null,              // выбранный день в календаре
   edit: null,             // задача в окне редактирования
   loaded: false,
+  cal: loadCal(),         // календарь: режим (месяц/неделя) и фильтры
 };
+
+function loadCal() {
+  const def = { mode: 'month', habits: true, sections: [] };
+  try { return { ...def, ...JSON.parse(localGet('cal') || '{}') }; } catch { return def; }
+}
+const saveCal = () => localSet('cal', JSON.stringify(S.cal));
 
 // ---------- даты (всё в местном времени, строки 'YYYY-MM-DD') ----------
 const pad = n => String(n).padStart(2, '0');
@@ -115,6 +122,20 @@ async function call(promise) {
 
 const sectionOf = t => S.sections.find(s => s.id === t.section_id);
 const active = () => S.tasks.filter(t => !t.done_on);
+const isEvent = t => t.kind === 'event';
+const hhmm = s => (s ? s.slice(0, 5) : '');
+const timeLabel = t => (t.start_time ? hhmm(t.start_time) + (t.end_time ? '–' + hhmm(t.end_time) : '') : '');
+const cap = s => s[0].toUpperCase() + s.slice(1);
+// событие прошло и больше не повторится
+const eventOver = t => isEvent(t) && !t.repeat_unit && (t.end_date || t.due_date) < today();
+
+// Ближайшая дата события, начиная с сегодня (у повторяющегося события срок не сдвигается).
+function upcoming(t) {
+  let d = t.due_date;
+  if (!isEvent(t) || !t.repeat_unit || !d) return d;
+  for (let i = 0; i < 2000 && d < today(); i++) d = nextDue(d, t.repeat_every, t.repeat_unit, t.repeat_weekdays);
+  return d;
+}
 
 // Статистика привычки за последние 30 дней (до вчера включительно + сегодня, если уже отмечено).
 function habitStats(t) {
@@ -165,6 +186,7 @@ function render() {
   if (!S.user) return renderLogin();
   if (!S.loaded) { $app.innerHTML = '<div class="empty">Загружаю…</div>'; return; }
   const views = { today: renderToday, calendar: renderCalendar, sections: renderSections };
+  document.body.className = 'v-' + S.view;
   $app.innerHTML = views[S.view]() + `
     <button class="fab" data-act="new" title="Новая задача">+</button>
     <nav class="bottom">
@@ -176,7 +198,10 @@ function render() {
 function taskRow(t, opts = {}) {
   const sec = sectionOf(t);
   const meta = [];
-  if (opts.date && t.due_date) meta.push(`<span class="${t.due_date < today() ? 'late' : ''}">${dateLabel(t.due_date)}</span>`);
+  const due = upcoming(t);
+  if (opts.date && due) meta.push(`<span class="${due < today() && !isEvent(t) ? 'late' : ''}">${dateLabel(due)}${t.end_date ? ' — ' + dateLabel(t.end_date) : ''}</span>`);
+  if (t.start_time) meta.unshift(`<span class="time">${timeLabel(t)}</span>`);
+  if (isEvent(t) && !opts.mark) opts = { ...opts, mark: '•', markStyle: 'border-color:var(--accent);color:var(--accent)' };
   if (sec && !opts.noSection) meta.push(`<span><i class="dot" style="background:${esc(sec.color)}"></i>${esc(sec.name)}</span>`);
   const rep = repeatLabel(t);
   if (rep) meta.push(`<span>↻ ${esc(rep)}</span>`);
@@ -202,18 +227,22 @@ function taskRow(t, opts = {}) {
 function renderToday() {
   const now = new Date();
   const t0 = today();
-  const due = active().filter(t => t.due_date && t.due_date <= t0);
+  const due = active().filter(t => !isEvent(t) && t.due_date && t.due_date <= t0)
+    .sort((a, b) => (a.start_time || '99') < (b.start_time || '99') ? -1 : 1);
   const habits = due.filter(t => t.kind === 'habit');
   const tasks = due.filter(t => t.kind !== 'habit');
-  const noDate = active().filter(t => !t.due_date);
+  const noDate = active().filter(t => !isEvent(t) && !t.due_date);
+  const events = [...new Map((occurrences(t0, t0)[t0] || []).filter(o => isEvent(o.t)).map(o => [o.t.id, o.t])).values()]
+    .sort((a, b) => (a.start_time || '') < (b.start_time || '') ? -1 : 1);
   // сделано сегодня: последние отметки «done» сегодняшним числом
   const doneIds = [...new Set(S.logs.filter(l => l.status === 'done' && l.done_on === t0).map(l => l.task_id))];
   const doneToday = doneIds.map(id => S.tasks.find(t => t.id === id)).filter(Boolean);
 
   let html = `<header><h1>Сегодня</h1><div class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</div></header>`;
-  if (!due.length && !noDate.length && !doneToday.length) {
+  if (!due.length && !noDate.length && !doneToday.length && !events.length) {
     html += '<div class="empty">Задач на сегодня нет.<br>Нажми «+», чтобы добавить.</div>';
   }
+  if (events.length) html += '<h2>События</h2>' + events.map(t => taskRow(t)).join('');
   if (habits.length) html += '<h2>Привычки</h2>' + habits.map(t => taskRow(t)).join('');
   if (tasks.length) html += '<h2>Задачи</h2>' + tasks.map(t => taskRow(t)).join('');
   if (noDate.length) html += '<h2>Без срока</h2>' + noDate.map(t => taskRow(t)).join('');
@@ -221,19 +250,27 @@ function renderToday() {
   return html;
 }
 
-// Что стоит на день d: настоящие сроки + будущие повторы.
+// Что стоит на дни from…to: сроки, будущие повторы, события (и на несколько дней), прошлые отметки.
 function occurrences(from, to) {
   const map = {};
   const add = (d, item) => (map[d] = map[d] || []).push(item);
   for (const t of active()) {
     if (!t.due_date) continue;
+    const span = t.end_date && t.end_date > t.due_date ? daysBetween(t.due_date, t.end_date) : 0;
+    const put = (d, kind) => {
+      for (let i = 0; i <= span; i++) {
+        const x = addDays(d, i);
+        if (x >= from && x <= to) add(x, { t, kind });
+      }
+    };
     let d = t.due_date;
-    if (d >= from && d <= to) add(d, { t, kind: 'due' });
-    if (!t.repeat_unit || d < today()) continue;
-    for (let i = 0; i < 400; i++) {
+    put(d, 'due');
+    // у задач повторы показываем вперёд от текущего срока; у событий срок не сдвигается — считаем от первой даты
+    if (!t.repeat_unit || (!isEvent(t) && d < today())) continue;
+    for (let i = 0; i < 2000; i++) {
       d = nextDue(d, t.repeat_every, t.repeat_unit, t.repeat_weekdays);
       if (!d || d > to) break;
-      if (d >= from) add(d, { t, kind: 'repeat' });
+      if (addDays(d, span) >= from) put(d, 'repeat');
     }
   }
   for (const l of S.logs) {
@@ -244,52 +281,111 @@ function occurrences(from, to) {
   return map;
 }
 
+// Фильтры календаря: привычки и разделы (ничего не выбрано — все разделы).
+function calVisible(o) {
+  if (!S.cal.habits && o.t.kind === 'habit') return false;
+  const secs = S.cal.sections.filter(id => id === 'none' || S.sections.some(s => s.id === id));
+  return !secs.length || secs.includes(o.t.section_id || 'none');
+}
+
+function dayItems(occ, d) {
+  const seen = new Set();
+  return (occ[d] || [])
+    .filter(o => o.kind !== 'moved' && calVisible(o) && !seen.has(o.t.id + o.kind) && seen.add(o.t.id + o.kind))
+    .sort((a, b) => (a.t.start_time || '99') < (b.t.start_time || '99') ? -1 : (a.t.start_time || '99') > (b.t.start_time || '99') ? 1 : 0);
+}
+
+const itemCls = o => o.kind === 'done' ? 'd' : o.kind === 'missed' ? 'm' : isEvent(o.t) ? 'e' : o.t.kind === 'habit' ? 'h' : '';
+
+function occRow(o) {
+  if (o.kind === 'done') return taskRow(o.t, { done: true, mark: '✓' });
+  if (o.kind === 'missed') return taskRow(o.t, { mark: '✕', markStyle: 'border-color:var(--bad);color:var(--bad)', note: 'пропущено', noteCls: 'late' });
+  if (o.kind === 'repeat' && !isEvent(o.t)) return taskRow(o.t, { mark: '↻', markStyle: 'color:var(--muted)', note: 'повтор' });
+  return taskRow(o.t);
+}
+
+// Расписание дня: занятое время и свободные промежутки между ним.
+function schedule(items) {
+  if (!items.length) return '';
+  const free = (a, b) => (a < b ? `<div class="free">Свободно ${a}–${b}</div>` : '');
+  let cur = '00:00';
+  let html = '';
+  for (const o of items) {
+    const s = hhmm(o.t.start_time);
+    const e = o.t.end_time ? hhmm(o.t.end_time) : s;
+    html += free(cur, s) + occRow(o);
+    if (e > cur) cur = e;
+  }
+  return '<h2>Расписание</h2>' + html + free(cur, '24:00');
+}
+
 function renderCalendar() {
   const t0 = today();
+  const c = S.cal;
+  const week = c.mode === 'week';
   if (!S.month) S.month = t0.slice(0, 8) + '01';
   if (!S.day) S.day = t0;
-  const m = parse(S.month);
-  const start = weekStart(S.month);
-  const end = addDays(weekStart(addDays(addMonths(S.month, 1), -1)), 6);
+  let start, end, title;
+  if (week) {
+    start = weekStart(S.day);
+    end = addDays(start, 6);
+    const a = parse(start), b = parse(end);
+    title = a.getMonth() === b.getMonth()
+      ? `${a.getDate()}–${b.getDate()} ${MONTHS_OF[b.getMonth()]}`
+      : `${a.getDate()} ${MONTHS_OF[a.getMonth()].slice(0, 3)} – ${b.getDate()} ${MONTHS_OF[b.getMonth()].slice(0, 3)}`;
+  } else {
+    start = weekStart(S.month);
+    end = addDays(weekStart(addDays(addMonths(S.month, 1), -1)), 6);
+    const m = parse(S.month);
+    title = `${cap(MONTHS[m.getMonth()])} ${m.getFullYear()}`;
+  }
   const occ = occurrences(start, end);
 
-  let cells = WD.map(w => `<div class="wd">${w}</div>`).join('');
+  let cells = week ? '' : WD.map(w => `<div class="wd">${w}</div>`).join('');
   for (let d = start; d <= end; d = addDays(d, 1)) {
-    const items = (occ[d] || []).filter(o => o.kind !== 'moved');
-    const dots = items.slice(0, 6).map(o =>
-      `<i class="${o.kind === 'done' ? 'd' : o.t.kind === 'habit' ? 'h' : ''}"></i>`).join('');
-    const cls = ['day', d.slice(0, 7) !== S.month.slice(0, 7) ? 'out' : '', d === t0 ? 'today' : '', d === S.day ? 'sel' : ''].join(' ');
-    cells += `<button class="${cls}" data-act="day" data-d="${d}">${parse(d).getDate()}<span class="dots">${dots}</span></button>`;
+    const items = dayItems(occ, d);
+    const cls = ['day', !week && d.slice(0, 7) !== S.month.slice(0, 7) ? 'out' : '', d === t0 ? 'today' : '', d === S.day ? 'sel' : ''].join(' ');
+    const dots = items.slice(0, 6).map(o => `<i class="${itemCls(o)}"></i>`).join('');
+    const shown = week ? items : items.slice(0, 3);
+    const lines = shown.map(o => {
+      const sec = sectionOf(o.t);
+      return `<span class="ci ${itemCls(o)}"${sec ? ` style="border-color:${esc(sec.color)}"` : ''}>${o.t.start_time ? `<b>${hhmm(o.t.start_time)}</b> ` : ''}${esc(o.t.title)}</span>`;
+    }).join('') + (items.length > shown.length ? `<span class="more">ещё ${items.length - shown.length}</span>` : '');
+    const head = week ? `<span class="dn">${WD[isodow(d) - 1]}, ${parse(d).getDate()}</span>` : `<span class="dn">${parse(d).getDate()}</span>`;
+    cells += `<button class="${cls}" data-act="day" data-d="${d}">${head}<span class="dots">${dots}</span><span class="lines">${lines}</span></button>`;
   }
 
-  const items = occ[S.day] || [];
-  const seen = new Set();
-  let list = '';
-  for (const o of items) {
-    if (o.kind === 'moved' || seen.has(o.t.id + o.kind)) continue;
-    seen.add(o.t.id + o.kind);
-    if (o.kind === 'done') list += taskRow(o.t, { done: true, mark: '✓' });
-    else if (o.kind === 'missed') list += taskRow(o.t, { mark: '✕', markStyle: 'border-color:var(--bad);color:var(--bad)', note: 'пропущено', noteCls: 'late' });
-    else if (o.kind === 'repeat') list += taskRow(o.t, { mark: '↻', markStyle: 'color:var(--muted)', note: 'повтор' });
-    else list += taskRow(o.t);
-  }
+  const filters = [`<button class="pill ${c.habits ? 'on' : ''}" data-act="cal-habits">Привычки</button>`]
+    .concat(S.sections.map(s => `<button class="pill ${c.sections.includes(s.id) ? 'on' : ''}" data-act="cal-sec" data-id="${s.id}"><i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name)}</button>`))
+    .concat(S.sections.length ? [`<button class="pill ${c.sections.includes('none') ? 'on' : ''}" data-act="cal-sec" data-id="none">Без раздела</button>`] : []);
+
+  const items = dayItems(occ, S.day);
+  // события на несколько дней — в «весь день», а не в расписании
+  const timed = items.filter(o => o.t.start_time && !(o.t.end_date && o.t.end_date > o.t.due_date));
+  const rest = items.filter(o => !timed.includes(o));
   const d = parse(S.day);
-  return `<header><h1>Календарь</h1></header>
+  return `<header class="cal-top"><h1>Календарь</h1>
+      <div class="seg"><button class="pill ${week ? '' : 'on'}" data-act="cal-mode" data-v="month">Месяц</button><button class="pill ${week ? 'on' : ''}" data-act="cal-mode" data-v="week">Неделя</button></div>
+    </header>
+    <div class="chips">${filters.join('')}</div>
     <div class="cal-head">
-      <button data-act="month" data-n="-1">‹</button>
-      <b>${MONTHS[m.getMonth()][0].toUpperCase() + MONTHS[m.getMonth()].slice(1)} ${m.getFullYear()}</b>
-      <button data-act="month" data-n="1">›</button>
+      <button data-act="nav" data-n="-1">‹</button>
+      <b>${title}</b>
+      <button data-act="nav" data-n="1">›</button>
     </div>
-    <div class="cal">${cells}</div>
+    <div class="cal ${week ? 'week' : 'month'}">${cells}</div>
     <h2>${DAYS[d.getDay()]}, ${d.getDate()} ${MONTHS_OF[d.getMonth()]}</h2>
-    ${list || '<div class="empty">На этот день ничего нет</div>'}`;
+    ${schedule(timed)}
+    ${timed.length && rest.length ? '<h2>Без времени</h2>' : ''}
+    ${rest.map(occRow).join('')}
+    ${items.length ? '' : '<div class="empty">На этот день ничего нет</div>'}`;
 }
 
 function renderSections() {
   const sel = S.section;
   const list = active()
-    .filter(t => sel === null || t.section_id === sel)
-    .sort((a, b) => (a.due_date || '9999') < (b.due_date || '9999') ? -1 : (a.due_date || '9999') > (b.due_date || '9999') ? 1 : 0);
+    .filter(t => (sel === null || t.section_id === sel) && !eventOver(t))
+    .sort((a, b) => (upcoming(a) || '9999') < (upcoming(b) || '9999') ? -1 : (upcoming(a) || '9999') > (upcoming(b) || '9999') ? 1 : 0);
   const chips = [`<button class="pill ${sel === null ? 'on' : ''}" data-act="section" data-id="">Все</button>`]
     .concat(S.sections.map(s => `<button class="pill ${sel === s.id ? 'on' : ''}" data-act="section" data-id="${s.id}"><i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name)}</button>`))
     .concat(['<button class="pill" data-act="new-section" title="Новый раздел">+</button>']);
@@ -336,7 +432,7 @@ function authError(e) {
 // ---------- утренняя проверка ----------
 function reviewList() {
   const t0 = today();
-  return active().filter(t => t.due_date && t.due_date < t0).sort((a, b) => a.due_date < b.due_date ? -1 : 1);
+  return active().filter(t => !isEvent(t) && t.due_date && t.due_date < t0).sort((a, b) => a.due_date < b.due_date ? -1 : 1);
 }
 
 function renderReview() {
@@ -367,21 +463,27 @@ function openEdit(t) {
   const st = !isNew && e.kind === 'habit' ? habitStats(e) : null;
   $modal.dataset.kind = 'edit';
   $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet">
-    <h3>${isNew ? 'Новая задача' : 'Задача'}</h3>
-    <div class="field"><input class="inp" id="f-title" placeholder="Что сделать?" value="${esc(e.title || '')}"></div>
+    <h3>${isNew ? 'Новая запись' : isEvent(e) ? 'Событие' : 'Задача'}</h3>
+    <div class="field"><input class="inp" id="f-title" placeholder="Название" value="${esc(e.title || '')}"></div>
     <div class="field seg" id="f-kind">
       <button class="pill" data-act="kind" data-v="task">Обычная</button>
       <button class="pill" data-act="kind" data-v="habit">Привычка</button>
+      <button class="pill" data-act="kind" data-v="event">Событие</button>
     </div>
     ${st ? `<div class="stats">За 30 дней: <b>${st.done} из ${st.total}</b>
       <div class="strip">${st.days.map(d => `<i class="${d}"></i>`).join('')}</div></div>` : ''}
-    <div class="field"><label>Срок</label>
+    <div class="field"><label id="f-date-label">Срок</label>
       <input class="inp" id="f-date" type="date" value="${e.due_date || ''}" style="margin-bottom:8px">
       <div class="row">
         <button class="pill" data-act="date" data-v="0">Сегодня</button>
         <button class="pill" data-act="date" data-v="1">Завтра</button>
-        <button class="pill" data-act="date" data-v="">Без срока</button>
+        <button class="pill" data-act="date" data-v="" id="f-nodate">Без срока</button>
       </div></div>
+    <div class="field" id="f-end-box"><label>По какое число (если событие на несколько дней)</label>
+      <input class="inp" id="f-enddate" type="date" value="${e.end_date || ''}"></div>
+    <div class="field"><label>Время (можно не указывать)</label>
+      <div class="row">с <input class="inp" id="f-start" type="time" value="${hhmm(e.start_time)}">
+        до <input class="inp" id="f-end" type="time" value="${hhmm(e.end_time)}"></div></div>
     <div class="field"><label>Повтор</label>
       <div class="row">
         <select class="inp" id="f-unit">
@@ -423,7 +525,11 @@ function syncEdit() {
   q('[data-act=wd]').forEach(b => b.classList.toggle('on', (e.repeat_weekdays || []).includes(+b.dataset.v)));
   document.getElementById('f-every-box').style.display = e.repeat_unit ? '' : 'none';
   document.getElementById('f-wd-box').style.display = e.repeat_unit === 'week' ? '' : 'none';
-  document.getElementById('f-from-box').style.display = e.repeat_unit ? '' : 'none';
+  // у события нет выполнения: «от дня выполнения» не нужно, зато есть «по какое число»
+  document.getElementById('f-from-box').style.display = e.repeat_unit && !isEvent(e) ? '' : 'none';
+  document.getElementById('f-end-box').style.display = isEvent(e) ? '' : 'none';
+  document.getElementById('f-nodate').style.display = isEvent(e) ? 'none' : '';
+  document.getElementById('f-date-label').textContent = isEvent(e) ? 'Дата' : 'Срок';
 }
 
 function closeModal() {
@@ -447,8 +553,17 @@ async function saveEdit() {
     repeat_from: e.repeat_from || 'due',
     section_id: document.getElementById('f-section').value || null,
     notes: document.getElementById('f-notes').value.trim() || null,
+    start_time: document.getElementById('f-start').value || null,
+    end_time: document.getElementById('f-end').value || null,
+    end_date: null,
   };
-  if (row.repeat_unit && !row.due_date) row.due_date = today();
+  if (!row.start_time) row.end_time = null;
+  if ((row.repeat_unit || isEvent(row)) && !row.due_date) row.due_date = today();
+  if (isEvent(row)) {
+    row.repeat_from = 'due';
+    const end = document.getElementById('f-enddate').value;
+    if (end && end > row.due_date) row.end_date = end;
+  }
   if (e.id) await call(sb.from('tasks').update(row).eq('id', e.id));
   else await call(sb.from('tasks').insert(row));
   closeModal();
@@ -533,6 +648,7 @@ document.addEventListener('click', async ev => {
           document.getElementById('f-unit').value = 'day';
           if (!document.getElementById('f-date').value) document.getElementById('f-date').value = today();
         }
+        if (v === 'event' && !document.getElementById('f-date').value) document.getElementById('f-date').value = S.view === 'calendar' ? S.day : today();
         syncEdit();
         break;
       case 'from': S.edit.repeat_from = v; syncEdit(); break;
@@ -545,7 +661,22 @@ document.addEventListener('click', async ev => {
       }
       case 'date': document.getElementById('f-date').value = v === '' ? '' : addDays(today(), +v); break;
       case 'day': S.day = el.dataset.d; render(); break;
-      case 'month': S.month = addMonths(S.month, +el.dataset.n); S.day = S.month; render(); if (S.month < addDays(today(), -62)) await load(); break;
+      case 'nav':
+        if (S.cal.mode === 'week') { S.day = addDays(S.day, 7 * el.dataset.n); S.month = S.day.slice(0, 8) + '01'; }
+        else { S.month = addMonths(S.month, +el.dataset.n); S.day = S.month; }
+        render();
+        if (S.month < addDays(today(), -62)) await load();
+        break;
+      case 'cal-mode': S.cal.mode = v; saveCal(); S.month = S.day.slice(0, 8) + '01'; render(); break;
+      case 'cal-habits': S.cal.habits = !S.cal.habits; saveCal(); render(); break;
+      case 'cal-sec': {
+        const set = new Set(S.cal.sections);
+        set.has(id) ? set.delete(id) : set.add(id);
+        S.cal.sections = [...set];
+        saveCal();
+        render();
+        break;
+      }
       case 'section': S.section = id || null; render(); break;
       case 'new-section': openSection(null); break;
       case 'edit-section': openSection(S.sections.find(s => s.id === id)); break;

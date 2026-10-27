@@ -139,3 +139,43 @@ textarea.inp { min-height: 64px; resize: vertical; }
 }
 #toast.show { display: flex; }
 #toast button { color: var(--accent); font-weight: 600; }
+
+/* Время, события */
+.task .meta .time { color: var(--accent); font-weight: 600; }
+.free { color: var(--muted); font-size: 13px; padding: 2px 12px 8px; border-left: 2px dashed var(--track); margin: 0 0 8px 13px; }
+
+/* Календарь: фильтры, режимы, названия в днях */
+header.cal-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.cal .dn { line-height: 1.2; }
+.cal .lines { display: none; width: 100%; padding: 2px 3px 0; text-align: left; }
+.cal .ci {
+  display: block; font-size: 11px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-left: 3px solid var(--border); padding-left: 4px; margin-top: 2px; border-radius: 2px;
+}
+.cal .ci b { font-weight: 600; color: var(--accent); }
+.cal .ci.h { color: var(--habit); }
+.cal .ci.d { color: var(--muted); text-decoration: line-through; }
+.cal .ci.m { color: var(--bad); opacity: .8; }
+.cal .more { display: block; font-size: 11px; color: var(--muted); padding-left: 7px; margin-top: 2px; }
+.cal .dots i.e { background: var(--warn); }
+.cal .dots i.m { background: var(--bad); }
+
+/* Неделя: на телефоне — дни столбиком, на компьютере — 7 колонок */
+.cal.week { grid-template-columns: 1fr; }
+.cal.week .day { aspect-ratio: auto; align-items: stretch; padding: 8px 10px; min-height: 44px; }
+.cal.week .dn { text-align: left; font-weight: 600; font-size: 14px; }
+.cal.week .dots { display: none; }
+.cal.week .lines { display: block; padding: 0; }
+.cal.week .ci { font-size: 13px; white-space: normal; }
+
+/* Компьютер: шире, в днях месяца видны названия */
+@media (min-width: 900px) {
+  body.v-calendar #app { max-width: 1180px; }
+  .cal.month .day { aspect-ratio: auto; min-height: 104px; align-items: stretch; padding: 6px 4px; }
+  .cal.month .dn { text-align: left; padding-left: 4px; }
+  .cal.month .dots { display: none; }
+  .cal.month .lines { display: block; }
+  .cal.week { grid-template-columns: repeat(7, 1fr); }
+  .cal.week .day { min-height: 260px; justify-content: flex-start; }
+  .cal.week .ci { font-size: 12px; }
+}
