@@ -245,3 +245,38 @@ h2.group .off { text-transform: none; letter-spacing: 0; font-weight: 400; margi
 .paused-note { color: var(--muted); font-size: 13px; padding: 4px 0 10px; }
 .paused-note .link { padding: 0 0 0 6px; font-size: 13px; }
 .paused-list { opacity: .5; }
+
+/* Режим «Работа»: другой акцентный цвет, чтобы сразу было видно, где ты */
+body.work { --accent: #7fd8e8; --sel: #24414f; }
+.pill.mode { white-space: nowrap; }
+body.work .pill.mode { border-color: var(--accent); }
+@media (max-width: 520px) {
+  nav.bottom { gap: 4px; }
+  nav.bottom .pill { padding: 6px 10px; font-size: 14px; }
+}
+
+/* Рабочие встречи в личном календаре — бледно */
+.task.busy { opacity: .5; }
+.cal .ci.busy { opacity: .45; }
+.cal .dots i.busy { opacity: .4; }
+
+/* Проекты */
+.project { background: var(--top); border: 1px solid var(--border); border-radius: 14px; padding: 12px 12px 4px; margin: 14px 0; }
+.p-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+.p-meta { color: var(--muted); font-size: 13px; }
+.p-meta .late { color: var(--bad); }
+.p-meta .warn { color: var(--warn); }
+.bar { height: 6px; background: var(--track); border-radius: 3px; margin: 8px 0 12px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--good); border-radius: 3px; }
+.project .link { margin-bottom: 8px; }
+
+/* Шаблоны */
+.tpl-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.tpl-row span { color: var(--muted); font-size: 13px; }
+.sheet.wide { max-width: 760px; }
+.wds.months { flex-wrap: wrap; }
+.step { display: grid; grid-template-columns: minmax(0, 1fr) 58px 58px 58px 32px; gap: 6px; margin-bottom: 6px; align-items: center; }
+.inp.num { padding: 10px 6px; text-align: center; }
+.icon.small { width: 32px; height: 32px; font-size: 14px; }
+.step.head { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+.step.head span:not(:first-child) { text-align: center; }

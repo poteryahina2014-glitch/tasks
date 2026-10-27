@@ -24,6 +24,10 @@ const S = {
   edit: null,             // задача в окне редактирования
   loaded: false,
   cal: loadCal(),         // календарь: режим (месяц/неделя) и фильтры
+  space: localGet('space') === 'work' ? 'work' : 'personal', // режим «Личное / Работа» (своё на каждом устройстве)
+  templates: [],
+  projects: [],
+  tpl: null,              // шаблон в окне редактирования
 };
 
 function loadCal() {
@@ -129,7 +133,18 @@ const sectionOf = t => S.sections.find(s => s.id === t.section_id);
 // Задачи выключенного раздела нигде не показываются, кроме самого раздела в «Разделах».
 const pausedSec = id => !!(id && (S.sections.find(s => s.id === id) || {}).paused);
 const activeAll = () => S.tasks.filter(t => !t.done_on);
-const active = () => activeAll().filter(t => !pausedSec(t.section_id));
+// Режим: раздел относится к личному или рабочему; задача без раздела — по своему полю space.
+const spaceOfSec = sec => (sec && sec.space) || 'personal';
+const spaceOf = t => {
+  const sec = t.section_id && S.sections.find(x => x.id === t.section_id);
+  return sec ? spaceOfSec(sec) : t.space || 'personal';
+};
+const secsOf = space => S.sections.filter(x => spaceOfSec(x) === space);
+const mySecs = () => secsOf(S.space);
+const active = () => activeAll().filter(t => !pausedSec(t.section_id) && spaceOf(t) === S.space);
+// рабочие события — в личном календаре видны бледно, как «занято»
+const busyEvents = () => (S.space === 'personal'
+  ? activeAll().filter(t => isEvent(t) && spaceOf(t) === 'work' && !pausedSec(t.section_id)) : []);
 const isEvent = t => t.kind === 'event';
 const hhmm = s => (s ? s.slice(0, 5) : '');
 const timeLabel = t => (t.start_time ? hhmm(t.start_time) + (t.end_time ? '–' + hhmm(t.end_time) : '') : '');
@@ -163,15 +178,20 @@ function habitStats(t) {
 async function load() {
   const since = addDays(today(), -62);
   const monthFrom = S.month && S.month < since ? S.month : since;
-  const [tasks, sections, logs] = await Promise.all([
-    call(sb.from('tasks').select('*').or(`done_on.is.null,done_on.gte.${monthFrom}`).order('position').order('created_at')),
+  const [tasks, sections, logs, templates, projects] = await Promise.all([
+    call(sb.from('tasks').select('*').or(`done_on.is.null,done_on.gte.${monthFrom},project_id.not.is.null`).order('position').order('created_at')),
     call(sb.from('sections').select('*').order('position').order('created_at')),
     call(sb.from('task_log').select('task_id,day,status,done_on').gte('day', monthFrom).order('id')),
+    call(sb.from('templates').select('*').order('created_at')),
+    call(sb.from('projects').select('*').eq('archived', false).order('created_at', { ascending: false })),
   ]);
   S.tasks = tasks;
   S.sections = sections;
   S.logs = logs;
+  S.templates = templates;
+  S.projects = projects;
   S.loaded = true;
+  if (await autoGenerate()) return load(); // закончился период — шаблоны создали задачи
   render();
   renderReview();
 }
@@ -193,12 +213,13 @@ async function undo(t) {
 function render() {
   if (!S.user) return renderLogin();
   if (!S.loaded) { $app.innerHTML = '<div class="empty">Загружаю…</div>'; return; }
-  const views = { today: renderToday, calendar: renderCalendar, sections: renderSections };
-  document.body.className = 'v-' + S.view;
+  const views = { today: renderToday, calendar: renderCalendar, sections: renderSections, projects: renderProjects };
+  if (S.view === 'projects' && S.space !== 'work') S.view = 'today';
+  document.body.className = 'v-' + S.view + (S.space === 'work' ? ' work' : '');
   $app.innerHTML = views[S.view]() + `
     ${S.pick ? pickBar() : '<button class="fab" data-act="new" title="Новая задача">+</button>'}
     <nav class="bottom">
-      ${[['today', 'Сегодня'], ['calendar', 'Календарь'], ['sections', 'Разделы']]
+      ${[['today', 'Сегодня'], ['calendar', 'Календарь'], ['sections', 'Разделы']].concat(S.space === 'work' ? [['projects', 'Проекты']] : [])
         .map(([k, n]) => `<button class="pill ${S.view === k ? 'on' : ''}" data-act="view" data-v="${k}">${n}</button>`).join('')}
     </nav>`;
 }
@@ -207,7 +228,8 @@ function taskRow(t, opts = {}) {
   const sec = sectionOf(t);
   const meta = [];
   const due = upcoming(t);
-  if (opts.date && due) meta.push(`<span class="${due < today() && !isEvent(t) ? 'late' : ''}">${dateLabel(due)}${t.end_date ? ' — ' + dateLabel(t.end_date) : ''}</span>`);
+  if (t.start_date && !isEvent(t) && t.start_date > today()) meta.push(`<span>с ${dateLabel(t.start_date)}</span>`);
+  if (opts.date && due) meta.push(`<span class="${due < today() && !isEvent(t) ? 'late' : ''}">${t.start_date && !isEvent(t) ? 'до ' : ''}${dateLabel(due)}${t.end_date ? ' — ' + dateLabel(t.end_date) : ''}</span>`);
   if (t.start_time) meta.unshift(`<span class="time">${timeLabel(t)}</span>`);
   if (isEvent(t) && !opts.mark) opts = { ...opts, mark: '•', markStyle: 'border-color:var(--accent);color:var(--accent)' };
   if (sec && !opts.noSection) meta.push(`<span><i class="dot" style="background:${esc(sec.color)}"></i>${esc(sec.name)}</span>`);
@@ -219,7 +241,7 @@ function taskRow(t, opts = {}) {
   }
   if (opts.note) meta.unshift(`<span class="${opts.noteCls || ''}">${opts.note}</span>`);
   const picked = S.pick && S.pick.has(t.id);
-  const cls = `task ${t.kind === 'habit' ? 'habit' : ''} ${opts.done ? 'done' : ''} ${picked ? 'picked' : ''}`;
+  const cls = `task ${t.kind === 'habit' ? 'habit' : ''} ${opts.done ? 'done' : ''} ${picked ? 'picked' : ''} ${opts.busy ? 'busy' : ''}`;
   // mark — значок без действия (прошлые отметки и будущие повторы в календаре)
   const check = S.pick && opts.drag
     ? `<div class="check pick">${picked ? '✓' : ''}</div>`
@@ -245,20 +267,24 @@ function renderToday() {
     .sort((a, b) => (a.start_time || '99') < (b.start_time || '99') ? -1 : 1);
   const habits = due.filter(t => t.kind === 'habit');
   const tasks = due.filter(t => t.kind !== 'habit');
-  const noDate = active().filter(t => !isEvent(t) && !t.due_date);
-  const events = [...new Map((occurrences(t0, t0)[t0] || []).filter(o => isEvent(o.t)).map(o => [o.t.id, o.t])).values()]
+  const started = t => t.start_date && t.start_date <= t0;
+  const noDate = active().filter(t => !isEvent(t) && !t.due_date && !started(t));
+  // начатые, но со сроком позже — «в работе»
+  const inWork = active().filter(t => !isEvent(t) && started(t) && (!t.due_date || t.due_date > t0)).sort(byPos);
+  const events = [...new Map((occurrences(t0, t0)[t0] || []).filter(o => isEvent(o.t) && spaceOf(o.t) === S.space).map(o => [o.t.id, o.t])).values()]
     .sort((a, b) => (a.start_time || '') < (b.start_time || '') ? -1 : 1);
   // сделано сегодня: последние отметки «done» сегодняшним числом
   const doneIds = [...new Set(S.logs.filter(l => l.status === 'done' && l.done_on === t0).map(l => l.task_id))];
   const doneToday = doneIds.map(id => S.tasks.find(t => t.id === id)).filter(Boolean);
 
-  let html = `<header class="top"><h1>Сегодня <span class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</span></h1>${GEAR}</header>`;
-  if (!due.length && !noDate.length && !doneToday.length && !events.length) {
+  let html = `<header class="top"><h1>Сегодня <span class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</span></h1>${MODE()}${GEAR}</header>`;
+  if (!due.length && !noDate.length && !doneToday.length && !events.length && !inWork.length) {
     html += '<div class="empty">Задач на сегодня нет.<br>Нажми «+», чтобы добавить.</div>';
   }
   if (events.length) html += '<h2>События</h2>' + events.map(t => taskRow(t)).join('');
   if (habits.length) html += '<h2>Привычки</h2>' + habits.map(t => taskRow(t)).join('');
   if (tasks.length) html += '<h2>Задачи</h2>' + tasks.map(t => taskRow(t)).join('');
+  if (inWork.length) html += '<h2>В работе</h2>' + inWork.map(t => taskRow(t, { date: true })).join('');
   if (noDate.length) html += '<h2>Без срока</h2>' + noDate.map(t => taskRow(t)).join('');
   if (doneToday.length) html += '<h2>Сделано сегодня</h2>' + doneToday.map(t => taskRow(t, { done: true })).join('');
   return html;
@@ -268,7 +294,7 @@ function renderToday() {
 function occurrences(from, to) {
   const map = {};
   const add = (d, item) => (map[d] = map[d] || []).push(item);
-  for (const t of active()) {
+  for (const t of active().concat(busyEvents())) {
     if (!t.due_date) continue;
     const span = t.end_date && t.end_date > t.due_date ? daysBetween(t.due_date, t.end_date) : 0;
     const put = (d, kind) => {
@@ -290,7 +316,7 @@ function occurrences(from, to) {
   for (const l of S.logs) {
     if (l.day < from || l.day > to) continue;
     const t = S.tasks.find(x => x.id === l.task_id);
-    if (t) add(l.day, { t, kind: l.status });
+    if (t && spaceOf(t) === S.space && !pausedSec(t.section_id)) add(l.day, { t, kind: l.status });
   }
   return map;
 }
@@ -308,9 +334,11 @@ function dayItems(occ, d) {
     .sort((a, b) => (a.t.start_time || '99') < (b.t.start_time || '99') ? -1 : (a.t.start_time || '99') > (b.t.start_time || '99') ? 1 : 0);
 }
 
-const itemCls = o => o.kind === 'done' ? 'd' : o.kind === 'missed' ? 'm' : isEvent(o.t) ? 'e' : o.t.kind === 'habit' ? 'h' : '';
+const itemCls = o => (spaceOf(o.t) !== S.space ? 'busy ' : '') + itemClsBase(o);
+const itemClsBase = o => o.kind === 'done' ? 'd' : o.kind === 'missed' ? 'm' : isEvent(o.t) ? 'e' : o.t.kind === 'habit' ? 'h' : '';
 
 function occRow(o) {
+  if (spaceOf(o.t) !== S.space) return taskRow(o.t, { busy: true, mark: '•', markStyle: 'color:var(--muted)', note: 'работа' });
   if (o.kind === 'done') return taskRow(o.t, { done: true, mark: '✓' });
   if (o.kind === 'missed') return taskRow(o.t, { mark: '✕', markStyle: 'border-color:var(--bad);color:var(--bad)', note: 'пропущено', noteCls: 'late' });
   if (o.kind === 'repeat' && !isEvent(o.t)) return taskRow(o.t, { mark: '↻', markStyle: 'color:var(--muted)', note: 'повтор' });
@@ -369,7 +397,7 @@ function renderCalendar() {
   }
 
   const filters = [`<button class="pill ${c.habits ? 'on' : ''}" data-act="cal-habits">Привычки</button>`]
-    .concat(S.sections.filter(s => !s.paused).map(s => `<button class="pill ${c.hidden.includes(s.id) ? '' : 'on'}" data-act="cal-sec" data-id="${s.id}"><i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name)}</button>`))
+    .concat(mySecs().filter(s => !s.paused).map(s => `<button class="pill ${c.hidden.includes(s.id) ? '' : 'on'}" data-act="cal-sec" data-id="${s.id}"><i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name)}</button>`))
     .concat([`<button class="pill ${c.hidden.includes('none') ? '' : 'on'}" data-act="cal-sec" data-id="none">Без раздела</button>`]);
 
   const items = dayItems(occ, S.day);
@@ -378,7 +406,7 @@ function renderCalendar() {
   const rest = items.filter(o => !timed.includes(o));
   const d = parse(S.day);
   return `<header class="top"><h1>Календарь</h1>
-      <div class="tools"><div class="seg"><button class="pill ${week ? '' : 'on'}" data-act="cal-mode" data-v="month">Месяц</button><button class="pill ${week ? 'on' : ''}" data-act="cal-mode" data-v="week">Неделя</button></div>${GEAR}</div>
+      <div class="tools"><div class="seg"><button class="pill ${week ? '' : 'on'}" data-act="cal-mode" data-v="month">Месяц</button><button class="pill ${week ? 'on' : ''}" data-act="cal-mode" data-v="week">Неделя</button></div>${MODE()}${GEAR}</div>
     </header>
     <div class="chips">${filters.join('')}</div>
     <div class="cal-head">
@@ -401,7 +429,7 @@ function byPos(a, b) {
     || (a.created_at || '').localeCompare(b.created_at || '');
 }
 
-const sectionTasks = secId => activeAll().filter(t => (t.section_id || null) === secId && !eventOver(t)).sort(byPos);
+const sectionTasks = secId => activeAll().filter(t => (t.section_id || null) === secId && spaceOf(t) === S.space && !eventOver(t)).sort(byPos);
 
 function renderSections() {
   const sel = S.section;
@@ -410,12 +438,12 @@ function renderSections() {
   const item = (id, name, color, n) => `<button class="pill side-item ${sel === id ? 'on' : ''} ${pausedSec(id) ? 'paused' : ''}" data-act="section" data-id="${id || ''}" data-drop-sec="${id || ''}">
       ${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}<span class="name">${esc(name)}</span>${pausedSec(id) ? '<span class="n" title="Раздел выключен">⏸</span>' : n ? `<span class="n">${n}</span>` : ''}</button>`;
   const side = [`<button class="pill side-item ${sel === null ? 'on' : ''}" data-act="section" data-id="">Все<span class="n">${active().filter(t => !eventOver(t)).length}</span></button>`]
-    .concat(S.sections.map(s => item(s.id, s.name, s.color, count(s.id))))
+    .concat(mySecs().map(s => item(s.id, s.name, s.color, count(s.id))))
     .concat(count(null) ? [item('none', 'Без раздела', null, count(null))] : [])
     .concat(['<button class="pill side-item add" data-act="new-section">+ Раздел</button>']);
 
   const groups = sel === null
-    ? S.sections.map(s => [s.id, s.name, s.color]).concat([[null, 'Без раздела', null]])
+    ? mySecs().map(s => [s.id, s.name, s.color]).concat([[null, 'Без раздела', null]])
     : [[sel === 'none' ? null : sel, ...(sel === 'none' ? ['Без раздела', null] : [sectionOf({ section_id: sel })?.name, sectionOf({ section_id: sel })?.color])]];
   let body = '';
   for (const [id, name, color] of groups) {
@@ -439,7 +467,7 @@ function renderSections() {
   const tools = S.pick
     ? '<button class="pill" data-act="pick-all">Выбрать все</button>'
     : '<button class="pill" data-act="pick-start">Выбрать</button>';
-  return `<header class="top"><h1>Разделы</h1><div class="tools">${tools}${GEAR}</div></header>
+  return `<header class="top"><h1>Разделы</h1><div class="tools">${tools}${MODE()}${GEAR}</div></header>
     <div class="split">
       <nav class="side">${side.join('')}</nav>
       <div class="main">${body || '<div class="empty">Здесь пока пусто</div>'}</div>
@@ -553,7 +581,7 @@ function openBulk() {
     <div class="field"><label>Вид</label>
       <select class="inp" id="b-kind">${opt(KEEP, '— не менять —')}${opt('task', 'Обычная')}${opt('habit', 'Привычка')}${opt('event', 'Событие')}</select></div>
     <div class="field"><label>Раздел</label>
-      <select class="inp" id="b-section">${opt(KEEP, '— не менять —')}${opt('', 'Без раздела')}${S.sections.map(s => opt(s.id, esc(s.name))).join('')}</select></div>
+      <select class="inp" id="b-section">${opt(KEEP, '— не менять —')}${opt('', 'Без раздела')}${mySecs().map(s => opt(s.id, esc(s.name))).join('')}</select></div>
     <div class="actions"><span></span>
       <div class="row"><button class="btn" data-act="close">Отмена</button><button class="btn main" data-act="bulk-save">Применить</button></div>
     </div>
@@ -702,6 +730,8 @@ function openEdit(t) {
         <button class="pill" data-act="date" data-v="1">Завтра</button>
         <button class="pill" data-act="date" data-v="" id="f-nodate">Без срока</button>
       </div></div>
+    <div class="field" id="f-startdate-box"><label>Начать с (можно не указывать)</label>
+      <input class="inp" id="f-startdate" type="date" value="${e.start_date || ''}"></div>
     <div class="field" id="f-end-box"><label>По какое число (если событие на несколько дней)</label>
       <input class="inp" id="f-enddate" type="date" value="${e.end_date || ''}"></div>
     <div class="field"><label>Время (можно не указывать)</label>
@@ -725,7 +755,7 @@ function openEdit(t) {
       </div></div>
     <div class="field"><label>Раздел</label>
       <select class="inp" id="f-section"><option value="">Без раздела</option>
-        ${S.sections.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
+        ${mySecs().map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
     <div class="field"><label>Заметка</label><textarea class="inp" id="f-notes">${esc(e.notes || '')}</textarea></div>
     <div class="actions">
       ${isNew ? '<span></span>' : '<button class="btn danger" data-act="delete">Удалить</button>'}
@@ -751,12 +781,14 @@ function syncEdit() {
   // у события нет выполнения: «от дня выполнения» не нужно, зато есть «по какое число»
   document.getElementById('f-from-box').style.display = e.repeat_unit && !isEvent(e) ? '' : 'none';
   document.getElementById('f-end-box').style.display = isEvent(e) ? '' : 'none';
+  document.getElementById('f-startdate-box').style.display = isEvent(e) ? 'none' : '';
   document.getElementById('f-nodate').style.display = isEvent(e) ? 'none' : '';
   document.getElementById('f-date-label').textContent = isEvent(e) ? 'Дата' : 'Срок';
 }
 
 function closeModal() {
   S.edit = null;
+  S.tpl = null;
   $modal.innerHTML = '';
   $modal.dataset.kind = '';
   renderReview();
@@ -779,7 +811,10 @@ async function saveEdit() {
     start_time: document.getElementById('f-start').value || null,
     end_time: document.getElementById('f-end').value || null,
     end_date: null,
+    start_date: isEvent(e) ? null : document.getElementById('f-startdate').value || null,
   };
+  const sec = S.sections.find(x => x.id === row.section_id);
+  row.space = sec ? spaceOfSec(sec) : e.id ? e.space || S.space : S.space;
   if (!row.start_time) row.end_time = null;
   if ((row.repeat_unit || isEvent(row)) && !row.due_date) row.due_date = today();
   if (isEvent(row)) {
@@ -808,6 +843,8 @@ function openSection(sec) {
     <h3>${sec ? 'Раздел' : 'Новый раздел'}</h3>
     <div class="field"><input class="inp" id="s-name" placeholder="Название" value="${esc(sec?.name || '')}"></div>
     <div class="field seg">${SECTION_COLORS.map(c => `<button class="pill ${c === color ? 'on' : ''}" data-act="s-color" data-v="${c}"><i class="dot" style="background:${c};margin:0"></i></button>`).join('')}</div>
+    ${sec ? `<div class="field"><label>Режим (задачи раздела переедут вместе с ним)</label>
+      <select class="inp" id="s-space">${Object.entries(SPACES).map(([k, n]) => `<option value="${k}" ${spaceOfSec(sec) === k ? 'selected' : ''}>${n}</option>`).join('')}</select></div>` : ''}
     <div class="actions">
       ${sec ? `<div class="row"><button class="btn danger" data-act="s-delete" data-id="${sec.id}">Удалить</button>
         <button class="btn" data-act="s-pause" data-id="${sec.id}" title="${sec.paused ? 'Снова показывать задачи раздела' : 'Временно скрыть задачи раздела, не удаляя'}">${sec.paused ? '▶ Включить' : '⏸ Выключить'}</button></div>` : '<span></span>'}
@@ -820,9 +857,13 @@ async function saveSection(id) {
   const name = document.getElementById('s-name').value.trim();
   if (!name) return toast('Напиши название');
   const color = $modal.querySelector('[data-act=s-color].on').dataset.v;
-  if (id) await call(sb.from('sections').update({ name, color }).eq('id', id));
+  if (id) {
+    const space = document.getElementById('s-space').value;
+    await call(sb.from('sections').update({ name, color, space }).eq('id', id));
+    if (space !== S.space) { S.section = null; toast(`Раздел «${name}» теперь в режиме «${SPACES[space]}»`); }
+  }
   else {
-    const [s] = await call(sb.from('sections').insert({ name, color, position: S.sections.length }).select());
+    const [s] = await call(sb.from('sections').insert({ name, color, position: S.sections.length, space: S.space }).select());
     S.section = s.id;
   }
   closeModal();
@@ -896,9 +937,246 @@ async function togglePause(id) {
   toast(paused ? `Раздел «${sec.name}» выключен` : `Раздел «${sec.name}» включён`);
 }
 
+// ---------- режимы «Личное / Работа» ----------
+const SPACES = { personal: '🏠 Личное', work: '💼 Работа' };
+const MODE = () => `<button class="pill mode" data-act="space" title="Переключить на «${S.space === 'work' ? 'Личное' : 'Работа'}»">${SPACES[S.space]}</button>`;
+
+function setSpace(space) {
+  S.space = space;
+  localSet('space', space);
+  S.section = null;
+  S.pick = null;
+  if (space !== 'work' && S.view === 'projects') S.view = 'today';
+  render();
+  renderReview();
+}
+
+// ---------- проекты и шаблоны (рабочий режим) ----------
+const QUARTERS = ['I', 'II', 'III', 'IV'];
+const PERIODS = { month: 'Каждый месяц', quarter: 'Каждый квартал', year: 'Каждый год' };
+
+// Последний закончившийся период на дату d: ключ, подпись и последний день.
+function lastPeriod(period, d = today()) {
+  const t = parse(d);
+  let y = t.getFullYear();
+  let m = t.getMonth(); // 0–11, текущий месяц
+  if (period === 'month') {
+    m -= 1;
+    if (m < 0) { m = 11; y -= 1; }
+    return { key: `${y}-${pad(m + 1)}`, label: `${MONTHS[m]} ${y}`, end: iso(new Date(y, m + 1, 0)), month: m + 1 };
+  }
+  if (period === 'quarter') {
+    let q = Math.floor(m / 3) - 1;
+    if (q < 0) { q = 3; y -= 1; }
+    return { key: `${y}-Q${q + 1}`, label: `${QUARTERS[q]} кв. ${y}`, end: iso(new Date(y, q * 3 + 3, 0)) };
+  }
+  return { key: `${y - 1}`, label: `${y - 1} год`, end: `${y - 1}-12-31` };
+}
+
+// Число day в n-м месяце после конца периода (31 в 30-дневном месяце → 30).
+function dayAfter(end, n, day) {
+  const e = parse(end);
+  const last = new Date(e.getFullYear(), e.getMonth() + n + 1, 0).getDate();
+  return iso(new Date(e.getFullYear(), e.getMonth() + n, Math.min(day, last)));
+}
+
+// Создать проект и задачи шаблона за период p. Дубль (с другого устройства) база не пустит.
+async function createProject(tpl, p) {
+  const sec = S.sections.find(s => s.id === tpl.section_id);
+  const { data, error } = await sb.from('projects')
+    .insert({ template_id: tpl.id, period: p.key, title: `${tpl.title} — ${p.label}`, section_id: tpl.section_id }).select();
+  if (error) {
+    if (error.code !== '23505') toast('Ошибка: ' + error.message);
+    return false;
+  }
+  const rows = (tpl.steps || []).filter(s => s.title).map((s, i) => ({
+    title: s.title,
+    project_id: data[0].id,
+    section_id: tpl.section_id,
+    space: sec ? sec.space || 'work' : 'work',
+    position: i,
+    start_date: s.start_day ? dayAfter(p.end, s.month || 1, s.start_day) : null,
+    due_date: s.due_day ? dayAfter(p.end, s.month || 1, s.due_day) : null,
+  }));
+  if (rows.length) await call(sb.from('tasks').insert(rows));
+  await call(sb.from('templates').update({ last_period: p.key }).eq('id', tpl.id));
+  return true;
+}
+
+// Новый период закончился — создать задачи по шаблонам (только за последний период, без «догонки»).
+let generating = false;
+async function autoGenerate() {
+  if (generating) return false;
+  generating = true;
+  let made = false;
+  try {
+    for (const tpl of S.templates) {
+      if (!tpl.last_period) continue; // первый раз создаётся вручную при сохранении шаблона
+      const p = lastPeriod(tpl.period);
+      if (tpl.period === 'month' && tpl.months && tpl.months.length && !tpl.months.includes(p.month)) continue;
+      if (tpl.last_period >= p.key) continue;
+      if (await createProject(tpl, p)) made = true;
+    }
+  } finally { generating = false; }
+  return made;
+}
+
+const projectTasks = id => S.tasks.filter(t => t.project_id === id).sort(byPos);
+
+function renderProjects() {
+  const list = S.projects.filter(p => !p.archived && (!p.section_id || !pausedSec(p.section_id)));
+  let body = '';
+  for (const p of list) {
+    const steps = projectTasks(p.id);
+    const done = steps.filter(t => t.done_on).length;
+    const left = steps.filter(t => !t.done_on && t.due_date).map(t => t.due_date).sort()[0];
+    const days = left ? daysBetween(today(), left) : null;
+    const pct = steps.length ? Math.round(done / steps.length * 100) : 0;
+    body += `<div class="project">
+      <div class="p-head">
+        <b>${esc(p.title)}</b>
+        <span class="p-meta">${done} из ${steps.length}${left ? ` · ближайший срок ${dateLabel(left)}${days < 0 ? ' <span class="late">просрочено</span>' : days <= 2 ? ` <span class="warn">через ${days} дн.</span>` : ''}` : ''}</span>
+      </div>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      ${steps.map(t => taskRow(t, { date: true, noSection: true, done: !!t.done_on })).join('')}
+      ${steps.length && done === steps.length ? `<button class="link" data-act="p-archive" data-id="${p.id}">Всё готово — убрать в архив</button>` : ''}
+    </div>`;
+  }
+  return `<header class="top"><h1>Проекты</h1><div class="tools"><button class="pill" data-act="templates">Шаблоны</button>${MODE()}${GEAR}</div></header>
+    ${body || `<div class="empty">Проектов пока нет.<br>Проект — это набор задач за период, например «Отчётность — III кв. 2026».<br>Его создаёт <button class="link" data-act="templates">шаблон</button> — сам, когда заканчивается период.</div>`}`;
+}
+
+// Список шаблонов
+function openTemplates() {
+  $modal.dataset.kind = 'templates';
+  const rows = S.templates.map(t => `<button class="btn tpl-row" data-act="tpl-edit" data-id="${t.id}">
+      <b>${esc(t.title)}</b><span>${PERIODS[t.period]}${t.period === 'month' && t.months && t.months.length ? ': ' + t.months.map(m => MONTHS[m - 1].slice(0, 3)).join(', ') : ''} · шагов: ${(t.steps || []).length}</span></button>`).join('');
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet">
+    <h3>Шаблоны</h3>
+    <div class="msg" style="margin:-6px 0 12px">Шаблон сам создаёт проект с задачами, когда заканчивается месяц, квартал или год. Сроки шагов — числа месяца после конца периода.</div>
+    <div class="menu">${rows || '<div class="empty small">Шаблонов пока нет</div>'}</div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn main" data-act="tpl-new">+ Шаблон</button>
+      <button class="btn" data-act="tpl-example" data-v="report">+ Пример: квартальная отчётность</button>
+      <button class="btn" data-act="tpl-example" data-v="harvest">+ Пример: оценка урожая</button>
+    </div>
+    <div class="actions"><span></span><button class="btn" data-act="close">Закрыть</button></div>
+  </div></div>`;
+}
+
+const EXAMPLES = {
+  report: {
+    title: 'Квартальная отчётность', period: 'quarter', months: [], steps: [
+      { title: 'Кеш фло', due_day: 12, month: 1 },
+      { title: 'Аренда по МСФЗ 16', due_day: 12, month: 1 },
+      { title: 'Снять базу, посчитать ОКЗ', start_day: 12, due_day: 20, month: 1 },
+      { title: 'Авансы и обесценение', start_day: 13, due_day: 20, month: 1 },
+      { title: 'Залить в базу ОКЗ и аренду', due_day: 20, month: 1 },
+      { title: 'Подготовить отчётность', due_day: 25, month: 1 },
+      { title: 'Проверить и подать отчётность', due_day: 30, month: 1 },
+    ],
+  },
+  harvest: {
+    title: 'Оценка урожая на дату сбора', period: 'month', months: [7, 8, 9, 10], steps: [
+      { title: 'Оценка урожая на дату сбора', start_day: 10, month: 1 },
+    ],
+  },
+};
+
+// Окно шаблона. Шаги редактируются прямо в таблице.
+function openTemplate(tpl) {
+  const t = JSON.parse(JSON.stringify(tpl));
+  t.steps = t.steps && t.steps.length ? t.steps : [{ title: '', month: 1 }];
+  t.months = t.months || [];
+  S.tpl = t;
+  $modal.dataset.kind = 'template';
+  const work = secsOf('work');
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet wide">
+    <h3>${t.id ? 'Шаблон' : 'Новый шаблон'}</h3>
+    <div class="field"><input class="inp" id="t-title" placeholder="Название, например «Квартальная отчётность»" value="${esc(t.title || '')}"></div>
+    <div class="field seg">${Object.entries(PERIODS).map(([k, n]) => `<button class="pill" data-act="t-period" data-v="${k}">${n}</button>`).join('')}</div>
+    <div class="field" id="t-months-box"><label>В какие месяцы (по месяцу, за который считаем; не выбрано — каждый месяц)</label>
+      <div class="wds months">${MONTHS.map((m, i) => `<button class="pill" data-act="t-month" data-v="${i + 1}">${m.slice(0, 3)}</button>`).join('')}</div></div>
+    <div class="field"><label>Раздел для задач</label>
+      <select class="inp" id="t-section"><option value="">Без раздела</option>${work.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Шаги: «с» и «до» — числа месяца; «мес.» — какой по счёту месяц после конца периода (1 — следующий)</label>
+      <div id="t-steps"></div>
+      <button class="link" data-act="t-add">+ Шаг</button></div>
+    <div class="actions">
+      ${t.id ? '<button class="btn danger" data-act="t-delete">Удалить</button>' : '<span></span>'}
+      <div class="row"><button class="btn" data-act="close">Отмена</button><button class="btn main" data-act="t-save">Сохранить</button></div>
+    </div>
+  </div></div>`;
+  document.getElementById('t-section').value = t.section_id || (work[0] && !t.id ? work[0].id : '');
+  renderSteps();
+  syncTemplate();
+}
+
+function renderSteps() {
+  const num = (i, k, ph) => `<input class="inp num" type="number" min="1" max="31" data-step="${i}" data-k="${k}" placeholder="${ph}" value="${S.tpl.steps[i][k] || ''}">`;
+  document.getElementById('t-steps').innerHTML = '<div class="step head"><span>Шаг</span><span>с</span><span>до</span><span>мес.</span><span></span></div>'
+    + S.tpl.steps.map((s, i) => `<div class="step">
+      <input class="inp" data-step="${i}" data-k="title" placeholder="Что сделать" value="${esc(s.title || '')}">
+      ${num(i, 'start_day', 'с')}${num(i, 'due_day', 'до')}
+      <input class="inp num" type="number" min="1" max="12" data-step="${i}" data-k="month" title="Месяц после конца периода" value="${s.month || 1}">
+      <button class="icon small" data-act="t-del-step" data-v="${i}" title="Убрать шаг">✕</button>
+    </div>`).join('');
+}
+
+function syncTemplate() {
+  const t = S.tpl;
+  $modal.querySelectorAll('[data-act=t-period]').forEach(b => b.classList.toggle('on', b.dataset.v === t.period));
+  $modal.querySelectorAll('[data-act=t-month]').forEach(b => b.classList.toggle('on', t.months.includes(+b.dataset.v)));
+  document.getElementById('t-months-box').style.display = t.period === 'month' ? '' : 'none';
+}
+
+// Поля шагов сохраняются в S.tpl при вводе.
+document.addEventListener('input', ev => {
+  const i = ev.target.dataset.step;
+  if (i === undefined || !S.tpl) return;
+  const k = ev.target.dataset.k;
+  S.tpl.steps[i][k] = k === 'title' ? ev.target.value : parseInt(ev.target.value) || null;
+});
+
+async function saveTemplate() {
+  const t = S.tpl;
+  const title = document.getElementById('t-title').value.trim();
+  if (!title) return toast('Напиши название шаблона');
+  const row = {
+    title,
+    period: t.period,
+    months: t.period === 'month' && t.months.length ? [...t.months].sort((a, b) => a - b) : null,
+    section_id: document.getElementById('t-section').value || null,
+    steps: t.steps.filter(s => s.title && s.title.trim()).map(s => ({
+      title: s.title.trim(), start_day: s.start_day || null, due_day: s.due_day || null, month: s.month || 1,
+    })),
+  };
+  let tpl;
+  if (t.id) [tpl] = await call(sb.from('templates').update(row).eq('id', t.id).select());
+  else [tpl] = await call(sb.from('templates').insert(row).select());
+  if (!t.id) {
+    // за уже закончившийся период — спросить; дальше шаблон работает сам
+    const p = lastPeriod(tpl.period);
+    const fits = tpl.period !== 'month' || !tpl.months || !tpl.months.length || tpl.months.includes(p.month);
+    if (fits && confirm(`Создать задачи сейчас — за ${p.label}?\nДальше шаблон будет создавать их сам, когда закончится следующий период.`)) await createProject(tpl, p);
+    else await call(sb.from('templates').update({ last_period: p.key }).eq('id', tpl.id));
+  }
+  S.tpl = null;
+  closeModal();
+  await load();
+}
+
+async function deleteTemplate() {
+  if (!confirm('Удалить шаблон? Уже созданные проекты и задачи останутся.')) return;
+  await call(sb.from('templates').delete().eq('id', S.tpl.id));
+  S.tpl = null;
+  closeModal();
+  await load();
+}
+
 // ---------- нажатия ----------
 const byId = id => S.tasks.find(t => t.id === id);
-const BUSY = new Set(['s-pause', 'login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no', 'bulk-save', 'bulk-delete']);
+const BUSY = new Set(['t-save', 't-delete', 'p-archive', 's-pause', 'login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no', 'bulk-save', 'bulk-delete']);
 
 document.addEventListener('click', async ev => {
   const el = ev.target.closest('[data-act]');
@@ -913,6 +1191,18 @@ document.addEventListener('click', async ev => {
       case 'login': case 'signup': await auth(act); break;
       case 'logout': closeModal(); await sb.auth.signOut(); break;
       case 'settings': openSettings(); break;
+      case 'space': setSpace(S.space === 'work' ? 'personal' : 'work'); break;
+      case 'templates': openTemplates(); break;
+      case 'tpl-new': openTemplate({ period: 'quarter', months: [], steps: [] }); break;
+      case 'tpl-edit': openTemplate(S.templates.find(t => t.id === id)); break;
+      case 'tpl-example': openTemplate(EXAMPLES[v]); break;
+      case 't-period': S.tpl.period = v; syncTemplate(); break;
+      case 't-month': S.tpl.months = S.tpl.months.includes(+v) ? S.tpl.months.filter(m => m !== +v) : S.tpl.months.concat(+v); syncTemplate(); break;
+      case 't-add': S.tpl.steps.push({ title: '', month: 1 }); renderSteps(); break;
+      case 't-del-step': S.tpl.steps.splice(+v, 1); renderSteps(); break;
+      case 't-save': await saveTemplate(); break;
+      case 't-delete': await deleteTemplate(); break;
+      case 'p-archive': await call(sb.from('projects').update({ archived: true }).eq('id', id)); await load(); break;
       case 'pick-start': S.pick = new Set(); render(); break;
       case 'pick-end': S.pick = null; render(); break;
       case 'pick': S.pick.has(id) ? S.pick.delete(id) : S.pick.add(id); render(); break;
