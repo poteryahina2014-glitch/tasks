@@ -8,6 +8,8 @@
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; background: var(--bg); color: var(--text); }
+/* место под полосу прокрутки всегда занято — иначе при её появлении всё сдвигается */
+html { scrollbar-gutter: stable; }
 body { font: 16px/1.4 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; min-height: 100vh; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; border: 0; background: none; }
@@ -228,7 +230,7 @@ h2.group:hover .edit-sec, .edit-sec:focus { opacity: 1; }
   .fab { right: max(28px, calc(50% - 562px)); }
   .chips { flex-wrap: wrap; overflow: visible; }
   .split { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 24px; align-items: start; }
-  .side { flex-direction: column; overflow: visible; position: sticky; top: 76px; gap: 6px; padding-top: 18px; }
+  .side { flex-direction: column; overflow: visible; position: sticky; top: 64px; gap: 6px; padding-top: 18px; }
   .side-item { border-radius: 10px; justify-content: flex-start; width: 100%; }
   .side-item .name { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; }
 }

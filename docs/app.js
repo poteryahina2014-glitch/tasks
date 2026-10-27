@@ -940,7 +940,7 @@ document.addEventListener('click', async ev => {
         render();
         break;
       }
-      case 'section': S.section = id || null; render(); break;
+      case 'section': S.section = id || null; render(); scrollTo(0, 0); break;
       case 'new-section': openSection(null); break;
       case 'edit-section': openSection(S.sections.find(s => s.id === id)); break;
       case 's-color': $modal.querySelectorAll('[data-act=s-color]').forEach(b => b.classList.toggle('on', b === el)); break;
