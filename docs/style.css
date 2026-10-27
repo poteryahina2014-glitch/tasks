@@ -248,7 +248,14 @@ h2.group .off { text-transform: none; letter-spacing: 0; font-weight: 400; margi
 
 /* Режим «Работа»: другой акцентный цвет, чтобы сразу было видно, где ты */
 body.work { --accent: #7fd8e8; --sel: #24414f; }
-.pill.mode { white-space: nowrap; }
+.pill.mode { white-space: nowrap; min-width: 118px; text-align: center; }
+header .tools { margin-left: auto; flex-wrap: nowrap; }
+/* Месяц/Неделя — слева от режима; на узком экране уходит на вторую строку, чтобы режим и шестерёнка не сдвигались */
+header.top > .seg { margin-left: auto; }
+header.top > .seg + .tools { margin-left: 0; }
+@media (max-width: 520px) { header.top > .seg { order: 3; width: 100%; margin-left: 0; } header.top > .seg + .tools { margin-left: auto; } }
+@media (max-width: 520px) { header.top { align-items: flex-start; } header.top h1 { flex: 1 1 0; min-width: 0; margin-top: 4px; } header.top h1 .sub { display: block; margin-left: 0; } }
+@media (max-width: 520px) { .pill.mode { min-width: 0; } .pill.mode .txt { display: none; } }
 body.work .pill.mode { border-color: var(--accent); }
 @media (max-width: 520px) {
   nav.bottom { gap: 4px; }

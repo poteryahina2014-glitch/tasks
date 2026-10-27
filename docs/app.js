@@ -277,7 +277,7 @@ function renderToday() {
   const doneIds = [...new Set(S.logs.filter(l => l.status === 'done' && l.done_on === t0).map(l => l.task_id))];
   const doneToday = doneIds.map(id => S.tasks.find(t => t.id === id)).filter(Boolean);
 
-  let html = `<header class="top"><h1>Сегодня <span class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</span></h1>${MODE()}${GEAR}</header>`;
+  let html = `<header class="top"><h1>Сегодня <span class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</span></h1><div class="tools">${MODE()}${GEAR}</div></header>`;
   if (!due.length && !noDate.length && !doneToday.length && !events.length && !inWork.length) {
     html += '<div class="empty">Задач на сегодня нет.<br>Нажми «+», чтобы добавить.</div>';
   }
@@ -406,7 +406,7 @@ function renderCalendar() {
   const rest = items.filter(o => !timed.includes(o));
   const d = parse(S.day);
   return `<header class="top"><h1>Календарь</h1>
-      <div class="tools"><div class="seg"><button class="pill ${week ? '' : 'on'}" data-act="cal-mode" data-v="month">Месяц</button><button class="pill ${week ? 'on' : ''}" data-act="cal-mode" data-v="week">Неделя</button></div>${MODE()}${GEAR}</div>
+      <div class="seg"><button class="pill ${week ? '' : 'on'}" data-act="cal-mode" data-v="month">Месяц</button><button class="pill ${week ? 'on' : ''}" data-act="cal-mode" data-v="week">Неделя</button></div><div class="tools">${MODE()}${GEAR}</div>
     </header>
     <div class="chips">${filters.join('')}</div>
     <div class="cal-head">
@@ -939,7 +939,7 @@ async function togglePause(id) {
 
 // ---------- режимы «Личное / Работа» ----------
 const SPACES = { personal: '🏠 Личное', work: '💼 Работа' };
-const MODE = () => `<button class="pill mode" data-act="space" title="Переключить на «${S.space === 'work' ? 'Личное' : 'Работа'}»">${SPACES[S.space]}</button>`;
+const MODE = () => `<button class="pill mode" data-act="space" title="Переключить на «${S.space === 'work' ? 'Личное' : 'Работа'}»">${SPACES[S.space].replace(' ', ' <span class="txt">')}</span></button>`;
 
 function setSpace(space) {
   S.space = space;
