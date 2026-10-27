@@ -1,5 +1,5 @@
 // Нужен, чтобы приложение устанавливалось и открывалось без интернета.
-// Свои файлы — сначала из сети (так обновления приходят сами), без сети — из кэша.
+// Свои файлы — сначала из сети, мимо кэша браузера (GitHub Pages кэширует на 10 минут), без сети — из кэша.
 // Запросы к Supabase не трогаем.
 const CACHE = 'tasks-v1';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.json', 'icons/icon-192.png',
@@ -19,7 +19,7 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
   if (url.origin === location.origin) {
-    e.respondWith(fetch(e.request)
+    e.respondWith(fetch(e.request, { cache: 'no-cache' })
       .then(r => { const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); return r; })
       .catch(() => caches.match(e.request, { ignoreSearch: true })));
   } else if (url.hostname === 'cdn.jsdelivr.net') {

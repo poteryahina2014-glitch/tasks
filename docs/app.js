@@ -249,7 +249,7 @@ function renderToday() {
   const doneIds = [...new Set(S.logs.filter(l => l.status === 'done' && l.done_on === t0).map(l => l.task_id))];
   const doneToday = doneIds.map(id => S.tasks.find(t => t.id === id)).filter(Boolean);
 
-  let html = `<header class="top"><div><h1>Сегодня</h1><div class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</div></div>${GEAR}</header>`;
+  let html = `<header class="top"><h1>Сегодня <span class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</span></h1>${GEAR}</header>`;
   if (!due.length && !noDate.length && !doneToday.length && !events.length) {
     html += '<div class="empty">Задач на сегодня нет.<br>Нажми «+», чтобы добавить.</div>';
   }

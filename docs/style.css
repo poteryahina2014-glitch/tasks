@@ -184,6 +184,9 @@ header.cal-top { display: flex; align-items: center; justify-content: space-betw
 
 /* Заголовок с инструментами и шестерёнкой */
 header.top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+/* одна высота заголовка на всех экранах — чтобы ничего не прыгало при переключении */
+header.top { min-height: 64px; }
+header.top h1 .sub { font-size: 15px; font-weight: 400; margin-left: 6px; }
 header .tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .icon { width: 40px; height: 40px; border-radius: 50%; font-size: 20px; color: var(--muted); }
 .icon:hover { background: var(--button); color: var(--text); }
