@@ -258,8 +258,8 @@ header.top > .seg + .tools { margin-left: 0; }
 @media (max-width: 520px) { .pill.mode { min-width: 0; } .pill.mode .txt { display: none; } }
 body.work .pill.mode { border-color: var(--accent); }
 @media (max-width: 520px) {
-  nav.bottom { gap: 4px; }
-  nav.bottom .pill { padding: 6px 10px; font-size: 14px; }
+  nav.bottom { gap: 3px; padding-left: 6px; padding-right: 6px; justify-content: space-between; }
+  nav.bottom .pill { flex: 1 1 auto; min-width: 0; padding: 6px 6px; font-size: 13px; white-space: nowrap; text-align: center; }
 }
 
 /* Рабочие встречи в личном календаре — бледно */
@@ -287,3 +287,20 @@ body.work .pill.mode { border-color: var(--accent); }
 .icon.small { width: 32px; height: 32px; font-size: 14px; }
 .step.head { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
 .step.head span:not(:first-child) { text-align: center; }
+
+/* Задача залита бледным цветом своего раздела */
+.task.tinted { background: color-mix(in srgb, var(--sec) 16%, var(--card)); border-color: color-mix(in srgb, var(--sec) 40%, var(--border)); }
+.task.tinted.picked { border-color: var(--accent); background: var(--sel); }
+
+/* Быстрое меню по правой кнопке */
+#ctx { position: fixed; z-index: 60; display: none; min-width: 200px; max-width: 280px; max-height: calc(100vh - 16px); overflow-y: auto;
+  background: var(--top); border: 1px solid var(--border); border-radius: 12px; padding: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.45); }
+#ctx.show { display: block; }
+#ctx button { display: flex; align-items: center; width: 100%; text-align: left; background: none; border: 0; color: var(--text); font: inherit; font-size: 14px; padding: 7px 10px; border-radius: 8px; cursor: pointer; }
+#ctx button:hover { background: var(--card); }
+#ctx button.on { color: var(--accent); }
+#ctx button.on::after { content: '✓'; margin-left: auto; padding-left: 10px; }
+#ctx .ctx-title { color: var(--muted); font-size: 12px; padding: 4px 10px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ctx .ctx-sep { color: var(--muted); font-size: 12px; padding: 8px 10px 2px; }
+#ctx hr { border: 0; border-top: 1px solid var(--border); margin: 6px 4px; }
+.menu .btn.on { border-color: var(--accent); color: var(--accent); }

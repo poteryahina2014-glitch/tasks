@@ -28,6 +28,7 @@ const S = {
   templates: [],
   projects: [],
   tpl: null,              // шаблон в окне редактирования
+  showDone: localGet('done') === '1', // показывать выполненные («Сделано сегодня», отметки в календаре)
 };
 
 function loadCal() {
@@ -213,13 +214,13 @@ async function undo(t) {
 function render() {
   if (!S.user) return renderLogin();
   if (!S.loaded) { $app.innerHTML = '<div class="empty">Загружаю…</div>'; return; }
-  const views = { today: renderToday, calendar: renderCalendar, sections: renderSections, projects: renderProjects };
+  const views = { today: renderToday, nodate: renderNoDate, calendar: renderCalendar, sections: renderSections, projects: renderProjects };
   if (S.view === 'projects' && S.space !== 'work') S.view = 'today';
   document.body.className = 'v-' + S.view + (S.space === 'work' ? ' work' : '');
   $app.innerHTML = views[S.view]() + `
     ${S.pick ? pickBar() : '<button class="fab" data-act="new" title="Новая задача">+</button>'}
     <nav class="bottom">
-      ${[['today', 'Сегодня'], ['calendar', 'Календарь'], ['sections', 'Разделы']].concat(S.space === 'work' ? [['projects', 'Проекты']] : [])
+      ${[['today', 'Сегодня'], ['nodate', 'Без срока'], ['calendar', 'Календарь'], ['sections', 'Разделы']].concat(S.space === 'work' ? [['projects', 'Проекты']] : [])
         .map(([k, n]) => `<button class="pill ${S.view === k ? 'on' : ''}" data-act="view" data-v="${k}">${n}</button>`).join('')}
     </nav>`;
 }
@@ -232,7 +233,7 @@ function taskRow(t, opts = {}) {
   if (opts.date && due) meta.push(`<span class="${due < today() && !isEvent(t) ? 'late' : ''}">${t.start_date && !isEvent(t) ? 'до ' : ''}${dateLabel(due)}${t.end_date ? ' — ' + dateLabel(t.end_date) : ''}</span>`);
   if (t.start_time) meta.unshift(`<span class="time">${timeLabel(t)}</span>`);
   if (isEvent(t) && !opts.mark) opts = { ...opts, mark: '•', markStyle: 'border-color:var(--accent);color:var(--accent)' };
-  if (sec && !opts.noSection) meta.push(`<span><i class="dot" style="background:${esc(sec.color)}"></i>${esc(sec.name)}</span>`);
+  if (sec && !opts.noSection) meta.push(`<span>${esc(sec.name)}</span>`);
   const rep = repeatLabel(t);
   if (rep) meta.push(`<span>↻ ${esc(rep)}</span>`);
   if (t.kind === 'habit') {
@@ -251,7 +252,9 @@ function taskRow(t, opts = {}) {
   // drag — строка в «Разделах»: её можно перетаскивать и выбирать
   const dnd = opts.drag ? ` data-drag="${t.id}" data-sec="${t.section_id || ''}"${S.pick ? '' : ' draggable="true"'}` : '';
   const act = S.pick && opts.drag ? 'pick' : 'edit';
-  return `<div class="${cls}"${dnd}${S.pick && opts.drag ? ` data-act="pick" data-id="${t.id}"` : ''}>
+  // строка залита бледным цветом своего раздела
+  const tint = sec ? ` style="--sec:${esc(sec.color)}"` : '';
+  return `<div class="${cls}${sec ? ' tinted' : ''}"${tint}${dnd}${S.pick && opts.drag ? ` data-act="pick" data-id="${t.id}"` : ''}>
     ${check}
     <div class="body" data-act="${act}" data-id="${t.id}">
       <div class="title">${esc(t.title)}</div>
@@ -268,25 +271,36 @@ function renderToday() {
   const habits = due.filter(t => t.kind === 'habit');
   const tasks = due.filter(t => t.kind !== 'habit');
   const started = t => t.start_date && t.start_date <= t0;
-  const noDate = active().filter(t => !isEvent(t) && !t.due_date && !started(t));
   // начатые, но со сроком позже — «в работе»
   const inWork = active().filter(t => !isEvent(t) && started(t) && (!t.due_date || t.due_date > t0)).sort(byPos);
   const events = [...new Map((occurrences(t0, t0)[t0] || []).filter(o => isEvent(o.t) && spaceOf(o.t) === S.space).map(o => [o.t.id, o.t])).values()]
     .sort((a, b) => (a.start_time || '') < (b.start_time || '') ? -1 : 1);
   // сделано сегодня: последние отметки «done» сегодняшним числом
   const doneIds = [...new Set(S.logs.filter(l => l.status === 'done' && l.done_on === t0).map(l => l.task_id))];
-  const doneToday = doneIds.map(id => S.tasks.find(t => t.id === id)).filter(Boolean);
+  const doneToday = S.showDone ? doneIds.map(id => S.tasks.find(t => t.id === id)).filter(Boolean) : [];
 
   let html = `<header class="top"><h1>Сегодня <span class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</span></h1><div class="tools">${MODE()}${GEAR}</div></header>`;
-  if (!due.length && !noDate.length && !doneToday.length && !events.length && !inWork.length) {
+  if (!due.length && !doneToday.length && !events.length && !inWork.length) {
     html += '<div class="empty">Задач на сегодня нет.<br>Нажми «+», чтобы добавить.</div>';
   }
   if (events.length) html += '<h2>События</h2>' + events.map(t => taskRow(t)).join('');
   if (habits.length) html += '<h2>Привычки</h2>' + habits.map(t => taskRow(t)).join('');
   if (tasks.length) html += '<h2>Задачи</h2>' + tasks.map(t => taskRow(t)).join('');
   if (inWork.length) html += '<h2>В работе</h2>' + inWork.map(t => taskRow(t, { date: true })).join('');
-  if (noDate.length) html += '<h2>Без срока</h2>' + noDate.map(t => taskRow(t)).join('');
   if (doneToday.length) html += '<h2>Сделано сегодня</h2>' + doneToday.map(t => taskRow(t, { done: true })).join('');
+  return html;
+}
+
+// Задачи без срока — отдельная вкладка, по разделам.
+function renderNoDate() {
+  const list = active().filter(t => !isEvent(t) && !t.due_date).sort(byPos);
+  let html = `<header class="top"><h1>Без срока</h1><div class="tools">${MODE()}${GEAR}</div></header>`;
+  if (!list.length) return html + '<div class="empty">Задач без срока нет.</div>';
+  for (const [id, name, color] of mySecs().map(s => [s.id, s.name, s.color]).concat([[null, 'Без раздела', null]])) {
+    const rows = list.filter(t => (t.section_id || null) === id);
+    if (!rows.length) continue;
+    html += `<h2>${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}${esc(name)}</h2>` + rows.map(t => taskRow(t, { noSection: true })).join('');
+  }
   return html;
 }
 
@@ -330,7 +344,7 @@ function calVisible(o) {
 function dayItems(occ, d) {
   const seen = new Set();
   return (occ[d] || [])
-    .filter(o => o.kind !== 'moved' && calVisible(o) && !seen.has(o.t.id + o.kind) && seen.add(o.t.id + o.kind))
+    .filter(o => o.kind !== 'moved' && (o.kind !== 'done' || S.showDone) && calVisible(o) && !seen.has(o.t.id + o.kind) && seen.add(o.t.id + o.kind))
     .sort((a, b) => (a.t.start_time || '99') < (b.t.start_time || '99') ? -1 : (a.t.start_time || '99') > (b.t.start_time || '99') ? 1 : 0);
 }
 
@@ -641,6 +655,7 @@ function openSettings() {
   $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet">
     <h3>Настройки</h3>
     <div class="menu">
+      <button class="btn ${S.showDone ? 'on' : ''}" data-act="show-done">${S.showDone ? '✓ ' : ''}Показывать выполненные</button>
       <button class="btn" data-act="import">Загрузить задачи из файла</button>
       <button class="btn" data-act="logout">Выйти из аккаунта</button>
     </div>
@@ -1178,7 +1193,57 @@ async function deleteTemplate() {
 const byId = id => S.tasks.find(t => t.id === id);
 const BUSY = new Set(['t-save', 't-delete', 'p-archive', 's-pause', 'login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no', 'bulk-save', 'bulk-delete']);
 
+// ---------- быстрое меню (правая кнопка мыши / долгое нажатие на телефоне) ----------
+const $ctx = document.createElement('div');
+$ctx.id = 'ctx';
+document.body.appendChild($ctx);
+const hideCtx = () => $ctx.classList.remove('show');
+
+function openCtx(t, x, y) {
+  const t0 = today();
+  const t1 = addDays(t0, 1);
+  const item = (v, text, on) => `<button data-act="cm" data-id="${t.id}" data-v="${v}" class="${on ? 'on' : ''}">${text}</button>`;
+  const secs = mySecs().filter(s => !s.paused).map(s => [s.id, s.name, s.color]).concat([['', 'Без раздела', null]]);
+  $ctx.innerHTML = `<div class="ctx-title">${esc(t.title)}</div>`
+    + item('d:' + t0, 'На сегодня', t.due_date === t0)
+    + item('d:' + t1, 'На завтра', t.due_date === t1)
+    + (t.repeat_unit ? '' : item('d:', 'Без срока', !t.due_date))
+    + '<div class="ctx-sep">В раздел</div>'
+    + secs.map(([id, name, color]) => item('s:' + id, `${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}${esc(name)}`, (t.section_id || '') === id)).join('')
+    + '<hr>'
+    + `<button data-act="cm-edit" data-id="${t.id}">Изменить…</button>`;
+  $ctx.classList.add('show');
+  // не вылезать за край экрана
+  const w = $ctx.offsetWidth, h = $ctx.offsetHeight;
+  $ctx.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) + 'px';
+  $ctx.style.top = Math.max(8, Math.min(y, innerHeight - h - 8)) + 'px';
+}
+
+// Поменять срок (d:ГГГГ-ММ-ДД, d: — без срока) или раздел (s:id, s: — без раздела); с «Отменить».
+async function quick(t, v) {
+  const [k, val] = [v.slice(0, 2), v.slice(2) || null];
+  const row = k === 'd:' ? { due_date: val } : { section_id: val, space: S.space };
+  const old = Object.fromEntries(Object.keys(row).map(f => [f, t[f] ?? null]));
+  if (Object.keys(row).every(f => old[f] === row[f])) return;
+  await call(sb.from('tasks').update(row).eq('id', t.id));
+  await load();
+  const sec = k === 's:' && S.sections.find(s => s.id === val);
+  toast(k === 'd:' ? (val ? `Срок: ${dateLabel(val)}` : 'Без срока') : `В раздел «${sec ? sec.name : 'Без раздела'}»`,
+    async () => { await call(sb.from('tasks').update(old).eq('id', t.id)); await load(); });
+}
+
+document.addEventListener('contextmenu', ev => {
+  const el = ev.target.closest('.task [data-id]');
+  const t = el && byId(el.dataset.id);
+  if (!t || S.pick || $modal.dataset.kind) return;
+  ev.preventDefault();
+  openCtx(t, ev.clientX, ev.clientY);
+});
+addEventListener('scroll', hideCtx, { passive: true });
+addEventListener('resize', hideCtx);
+
 document.addEventListener('click', async ev => {
+  if (!ev.target.closest('#ctx')) hideCtx();
   const el = ev.target.closest('[data-act]');
   if (!el) return;
   const act = el.dataset.act;
@@ -1191,6 +1256,9 @@ document.addEventListener('click', async ev => {
       case 'login': case 'signup': await auth(act); break;
       case 'logout': closeModal(); await sb.auth.signOut(); break;
       case 'settings': openSettings(); break;
+      case 'show-done': S.showDone = !S.showDone; localSet('done', S.showDone ? '1' : ''); openSettings(); render(); break;
+      case 'cm': hideCtx(); await quick(byId(id), v); break;
+      case 'cm-edit': hideCtx(); openEdit(byId(id)); break;
       case 'space': setSpace(S.space === 'work' ? 'personal' : 'work'); break;
       case 'templates': openTemplates(); break;
       case 'tpl-new': openTemplate({ period: 'quarter', months: [], steps: [] }); break;
@@ -1288,6 +1356,7 @@ document.addEventListener('keydown', ev => {
   if (ev.key === 'Enter' && ev.target.id === 'pass') auth('login');
   if (ev.key === 'Enter' && ev.target.id === 'f-title') saveEdit();
   if (ev.key === 'Enter' && ev.target.id === 's-name') saveSection($modal.querySelector('[data-act=s-save]').dataset.id);
+  if (ev.key === 'Escape') hideCtx();
   if (ev.key === 'Escape' && $modal.dataset.kind && $modal.dataset.kind !== 'review') closeModal();
 });
 
