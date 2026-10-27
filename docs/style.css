@@ -237,3 +237,11 @@ h2.group:hover .edit-sec, .edit-sec:focus { opacity: 1; }
   .side-item { border-radius: 10px; justify-content: flex-start; width: 100%; }
   .side-item .name { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; }
 }
+
+/* Выключенный раздел */
+.side-item.paused { opacity: .5; }
+h2.group.paused { opacity: .7; }
+h2.group .off { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 6px; }
+.paused-note { color: var(--muted); font-size: 13px; padding: 4px 0 10px; }
+.paused-note .link { padding: 0 0 0 6px; font-size: 13px; }
+.paused-list { opacity: .5; }

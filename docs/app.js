@@ -126,7 +126,10 @@ async function call(promise) {
 }
 
 const sectionOf = t => S.sections.find(s => s.id === t.section_id);
-const active = () => S.tasks.filter(t => !t.done_on);
+// Задачи выключенного раздела нигде не показываются, кроме самого раздела в «Разделах».
+const pausedSec = id => !!(id && (S.sections.find(s => s.id === id) || {}).paused);
+const activeAll = () => S.tasks.filter(t => !t.done_on);
+const active = () => activeAll().filter(t => !pausedSec(t.section_id));
 const isEvent = t => t.kind === 'event';
 const hhmm = s => (s ? s.slice(0, 5) : '');
 const timeLabel = t => (t.start_time ? hhmm(t.start_time) + (t.end_time ? '–' + hhmm(t.end_time) : '') : '');
@@ -366,7 +369,7 @@ function renderCalendar() {
   }
 
   const filters = [`<button class="pill ${c.habits ? 'on' : ''}" data-act="cal-habits">Привычки</button>`]
-    .concat(S.sections.map(s => `<button class="pill ${c.hidden.includes(s.id) ? '' : 'on'}" data-act="cal-sec" data-id="${s.id}"><i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name)}</button>`))
+    .concat(S.sections.filter(s => !s.paused).map(s => `<button class="pill ${c.hidden.includes(s.id) ? '' : 'on'}" data-act="cal-sec" data-id="${s.id}"><i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name)}</button>`))
     .concat([`<button class="pill ${c.hidden.includes('none') ? '' : 'on'}" data-act="cal-sec" data-id="none">Без раздела</button>`]);
 
   const items = dayItems(occ, S.day);
@@ -398,14 +401,14 @@ function byPos(a, b) {
     || (a.created_at || '').localeCompare(b.created_at || '');
 }
 
-const sectionTasks = secId => active().filter(t => (t.section_id || null) === secId && !eventOver(t)).sort(byPos);
+const sectionTasks = secId => activeAll().filter(t => (t.section_id || null) === secId && !eventOver(t)).sort(byPos);
 
 function renderSections() {
   const sel = S.section;
   const count = id => sectionTasks(id).length;
   // слева (на телефоне — строкой сверху): разделы; на них можно бросать задачи
-  const item = (id, name, color, n) => `<button class="pill side-item ${sel === id ? 'on' : ''}" data-act="section" data-id="${id || ''}" data-drop-sec="${id || ''}">
-      ${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}<span class="name">${esc(name)}</span>${n ? `<span class="n">${n}</span>` : ''}</button>`;
+  const item = (id, name, color, n) => `<button class="pill side-item ${sel === id ? 'on' : ''} ${pausedSec(id) ? 'paused' : ''}" data-act="section" data-id="${id || ''}" data-drop-sec="${id || ''}">
+      ${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}<span class="name">${esc(name)}</span>${pausedSec(id) ? '<span class="n" title="Раздел выключен">⏸</span>' : n ? `<span class="n">${n}</span>` : ''}</button>`;
   const side = [`<button class="pill side-item ${sel === null ? 'on' : ''}" data-act="section" data-id="">Все<span class="n">${active().filter(t => !eventOver(t)).length}</span></button>`]
     .concat(S.sections.map(s => item(s.id, s.name, s.color, count(s.id))))
     .concat(count(null) ? [item('none', 'Без раздела', null, count(null))] : [])
@@ -417,9 +420,19 @@ function renderSections() {
   let body = '';
   for (const [id, name, color] of groups) {
     const list = sectionTasks(id);
+    const paused = pausedSec(id);
     if (sel === null && !list.length && id === null) continue;
-    const head = `<h2 class="group" data-drop-sec="${id || ''}">${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}${esc(name || '')}
+    const head = `<h2 class="group ${paused ? 'paused' : ''}" data-drop-sec="${id || ''}">${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}${esc(name || '')}
+      ${paused ? '<span class="off">⏸ выключен</span>' : ''}
       ${id ? `<button class="edit-sec" data-act="edit-section" data-id="${id}" title="Изменить раздел">✎</button>` : ''}</h2>`;
+    if (paused) {
+      // в «Все» задачи выключенного раздела свёрнуты; в самом разделе — видны, но бледные
+      body += head + `<div class="paused-note">Задачи этого раздела (${list.length}) скрыты в «Сегодня», календаре и утренней проверке.
+        <button class="link" data-act="s-pause" data-id="${id}">▶ Включить раздел</button></div>`;
+      if (sel === null) continue;
+      body += `<div class="paused-list">${list.map(t => taskRow(t, { date: true, noSection: true, drag: true })).join('')}</div>`;
+      continue;
+    }
     body += head + (list.map(t => taskRow(t, { date: true, noSection: true, drag: true })).join('')
       || `<div class="empty small" data-drop-sec="${id || ''}">Пусто${S.pick ? '' : ' — перетащи сюда задачу'}</div>`);
   }
@@ -796,7 +809,8 @@ function openSection(sec) {
     <div class="field"><input class="inp" id="s-name" placeholder="Название" value="${esc(sec?.name || '')}"></div>
     <div class="field seg">${SECTION_COLORS.map(c => `<button class="pill ${c === color ? 'on' : ''}" data-act="s-color" data-v="${c}"><i class="dot" style="background:${c};margin:0"></i></button>`).join('')}</div>
     <div class="actions">
-      ${sec ? `<button class="btn danger" data-act="s-delete" data-id="${sec.id}">Удалить</button>` : '<span></span>'}
+      ${sec ? `<div class="row"><button class="btn danger" data-act="s-delete" data-id="${sec.id}">Удалить</button>
+        <button class="btn" data-act="s-pause" data-id="${sec.id}" title="${sec.paused ? 'Снова показывать задачи раздела' : 'Временно скрыть задачи раздела, не удаляя'}">${sec.paused ? '▶ Включить' : '⏸ Выключить'}</button></div>` : '<span></span>'}
       <div class="row"><button class="btn" data-act="close">Отмена</button><button class="btn main" data-act="s-save" data-id="${sec?.id || ''}">Сохранить</button></div>
     </div></div></div>`;
   document.getElementById('s-name').focus();
@@ -860,9 +874,31 @@ document.addEventListener('change', async ev => {
   ev.target.value = '';
 });
 
+// Выключить / включить раздел. При включении устаревшие сроки переносятся вперёд:
+// повторяющиеся — на ближайший повтор не раньше сегодня, остальные — на сегодня,
+// чтобы утренняя проверка не спрашивала про всё время, пока раздел был выключен.
+async function togglePause(id) {
+  const sec = S.sections.find(s => s.id === id);
+  const paused = !sec.paused;
+  await call(sb.from('sections').update({ paused }).eq('id', id));
+  if (!paused) {
+    const t0 = today();
+    const late = S.tasks.filter(t => t.section_id === id && !t.done_on && !isEvent(t) && t.due_date && t.due_date < t0);
+    await Promise.all(late.map(t => {
+      let d = t.due_date;
+      if (!t.repeat_unit) d = t0;
+      for (let i = 0; i < 2000 && d < t0; i++) d = nextDue(d, t.repeat_every, t.repeat_unit, t.repeat_weekdays);
+      return call(sb.from('tasks').update({ due_date: d }).eq('id', t.id));
+    }));
+  }
+  closeModal();
+  await load();
+  toast(paused ? `Раздел «${sec.name}» выключен` : `Раздел «${sec.name}» включён`);
+}
+
 // ---------- нажатия ----------
 const byId = id => S.tasks.find(t => t.id === id);
-const BUSY = new Set(['login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no', 'bulk-save', 'bulk-delete']);
+const BUSY = new Set(['s-pause', 'login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no', 'bulk-save', 'bulk-delete']);
 
 document.addEventListener('click', async ev => {
   const el = ev.target.closest('[data-act]');
@@ -946,6 +982,7 @@ document.addEventListener('click', async ev => {
       case 's-color': $modal.querySelectorAll('[data-act=s-color]').forEach(b => b.classList.toggle('on', b === el)); break;
       case 's-save': await saveSection(id); break;
       case 's-delete': await deleteSection(id); break;
+      case 's-pause': await togglePause(id); break;
       case 'import': closeModal(); document.getElementById('import-file').click(); break;
       case 'r-yes': { const t = byId(id); await call(sb.rpc('complete_task', { p_task: id, p_done_on: t.due_date })); await load(); break; }
       case 'r-no': await call(sb.rpc('miss_task', { p_task: id, p_today: today() })); await load(); break;
