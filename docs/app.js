@@ -51,6 +51,11 @@ const addDays = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n); retu
 const isodow = s => (parse(s).getDay() + 6) % 7 + 1;
 const weekStart = s => addDays(s, 1 - isodow(s));
 const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 864e5);
+// n рабочих дней вперёд (пн–пт; праздники пока не учитываются)
+function addWorkDays(s, n) {
+  while (n > 0) { s = addDays(s, 1); if (isodow(s) <= 5) n--; }
+  return s;
+}
 
 function addMonths(s, n) {
   // как в Postgres: 31 января + 1 месяц = 28/29 февраля
@@ -200,8 +205,21 @@ async function load() {
   firstHelp();
 }
 
+// Подпункты задачи: [{t: текст, d: сделано}]
+const subsOf = t => Array.isArray(t.checklist) ? t.checklist : [];
+const cleanSubs = list => list.map(s => ({ t: (s.t || '').trim(), d: !!s.d })).filter(s => s.t);
+
+async function toggleSub(t, i) {
+  t.checklist = subsOf(t).map((s, k) => k === i ? { ...s, d: !s.d } : s);
+  render();
+  await call(sb.from('tasks').update({ checklist: t.checklist }).eq('id', t.id));
+}
+
 async function complete(t, doneOn = today()) {
   await call(sb.rpc('complete_task', { p_task: t.id, p_done_on: doneOn }));
+  // у повторяющейся задачи следующий раз подпункты снова не отмечены
+  if (t.repeat_unit && subsOf(t).some(s => s.d))
+    await call(sb.from('tasks').update({ checklist: subsOf(t).map(s => ({ ...s, d: false })) }).eq('id', t.id));
   await load();
   const next = S.tasks.find(x => x.id === t.id);
   const msg = next && !next.done_on && next.due_date ? `Готово! Следующий раз: ${dateLabel(next.due_date)}` : 'Готово!';
@@ -245,6 +263,12 @@ function taskRow(t, opts = {}) {
     if (st.total) meta.push(`<span class="stat">${st.done} из ${st.total} за 30 дн.</span>`);
   }
   if (opts.note) meta.unshift(`<span class="${opts.noteCls || ''}">${opts.note}</span>`);
+  const subs = subsOf(t);
+  if (subs.length) meta.push(`<span>☑ ${subs.filter(s => s.d).length} из ${subs.length}</span>`);
+  // подпункты видны под задачей и отмечаются прямо там (не в календарных отметках и не у сделанных)
+  const subList = subs.length && !opts.mark && !opts.done
+    ? `<div class="subs">${subs.map((s, i) => `<button class="sub ${s.d ? 'on' : ''}" data-act="sub" data-id="${t.id}" data-v="${i}"><i>${s.d ? '✓' : ''}</i><span>${esc(s.t)}</span></button>`).join('')}</div>`
+    : '';
   const picked = S.pick && S.pick.has(t.id);
   const cls = `task ${t.kind === 'habit' ? 'habit' : ''} ${opts.done ? 'done' : ''} ${picked ? 'picked' : ''} ${opts.busy ? 'busy' : ''}`;
   // mark — значок без действия (прошлые отметки и будущие повторы в календаре)
@@ -263,6 +287,7 @@ function taskRow(t, opts = {}) {
     <div class="body" data-act="${act}" data-id="${t.id}">
       <div class="title">${esc(t.title)}</div>
       ${meta.length ? `<div class="meta">${meta.join('')}</div>` : ''}
+      ${subList}
     </div>
   </div>`;
 }
@@ -853,7 +878,7 @@ function renderReview() {
 // ---------- окно задачи ----------
 function openEdit(t) {
   const isNew = !t.id;
-  S.edit = { ...t, remind_at_was: t.remind_at };
+  S.edit = { ...t, remind_at_was: t.remind_at, checklist: subsOf(t).map(s => ({ ...s })), had_subs: subsOf(t).length > 0 };
   const e = S.edit;
   const st = !isNew && e.kind === 'habit' ? habitStats(e) : null;
   $modal.dataset.kind = 'edit';
@@ -903,6 +928,9 @@ function openEdit(t) {
         <button class="pill" data-act="from" data-v="due">от старого срока</button>
         <button class="pill" data-act="from" data-v="done">от дня выполнения</button>
       </div></div>
+    <div class="field" id="f-subs-box"><label>Подпункты (письма, проверки и т.п.)</label>
+      <div id="f-subs"></div>
+      <button class="link" data-act="sub-add">+ Подпункт</button></div>
     <div class="field"><label>Раздел</label>
       <select class="inp" id="f-section"><option value="">Без раздела</option>
         ${mySecs().map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
@@ -916,6 +944,7 @@ function openEdit(t) {
   document.getElementById('f-section').value = e.section_id || '';
   document.getElementById('f-unit').onchange = ev => { e.repeat_unit = ev.target.value || null; syncEdit(); };
   document.getElementById('f-remind').onchange = ev => { e.remind_at = ev.target.value || null; syncEdit(); };
+  renderSubs();
   syncEdit();
   if (isNew) document.getElementById('f-title').focus();
 }
@@ -939,6 +968,36 @@ function syncEdit() {
   document.getElementById('f-startdate-box').style.display = isEvent(e) ? 'none' : '';
   document.getElementById('f-nodate').style.display = isEvent(e) ? 'none' : '';
   document.getElementById('f-date-label').textContent = isEvent(e) ? 'Дата' : 'Срок';
+  document.getElementById('f-subs-box').style.display = isEvent(e) ? 'none' : '';
+}
+
+// Подпункты в окне задачи: галочка, текст, ✕.
+function renderSubs() {
+  document.getElementById('f-subs').innerHTML = S.edit.checklist.map((s, i) => `<div class="subrow">
+      <button class="sub-box ${s.d ? 'on' : ''}" data-act="sub-m" data-v="${i}">${s.d ? '✓' : ''}</button>
+      <input class="inp" data-sub="${i}" placeholder="Что сделать" value="${esc(s.t)}">
+      <button class="icon small" data-act="sub-del" data-v="${i}" title="Убрать">✕</button>
+    </div>`).join('');
+}
+
+document.addEventListener('input', ev => {
+  const i = ev.target.dataset.sub;
+  if (i !== undefined && S.edit) S.edit.checklist[i].t = ev.target.value;
+});
+
+// Галочка в окне уже сохранённой задачи сохраняется сразу (даже если окно закроют без «Сохранить»).
+async function toggleSubModal(i) {
+  const e = S.edit;
+  e.checklist[i].d = !e.checklist[i].d;
+  renderSubs();
+  if (!e.id) return;
+  const t = byId(e.id);
+  const saved = subsOf(t).map(s => ({ ...s }));
+  if (saved[i] && saved[i].t === e.checklist[i].t.trim()) {
+    saved[i].d = e.checklist[i].d;
+    t.checklist = saved;
+    await call(sb.from('tasks').update({ checklist: saved }).eq('id', e.id));
+  }
 }
 
 function closeModal() {
@@ -973,6 +1032,8 @@ async function saveEdit() {
   if (hhmm(row.remind_at) !== hhmm(e.remind_at_was)) row.reminded_on = null;
   // пока база не обновлена (005_push.sql), не трогаем новые поля у задач без напоминания
   if (!row.remind_at && !e.remind_at_was) { delete row.remind_at; delete row.reminded_on; }
+  const subs = isEvent(e) ? [] : cleanSubs(e.checklist);
+  if (subs.length || e.had_subs) row.checklist = subs.length ? subs : null;
   const sec = S.sections.find(x => x.id === row.section_id);
   row.space = sec ? spaceOfSec(sec) : e.id ? e.space || S.space : S.space;
   if (!row.start_time) row.end_time = null;
@@ -1156,6 +1217,7 @@ async function createProject(tpl, p) {
     position: i,
     start_date: s.start_day ? dayAfter(p.end, s.month || 1, s.start_day) : null,
     due_date: s.due_day ? dayAfter(p.end, s.month || 1, s.due_day) : null,
+    ...(s.subs && s.subs.length ? { checklist: s.subs.map(x => ({ t: x, d: false })) } : {}),
   }));
   if (rows.length) await call(sb.from('tasks').insert(rows));
   // ручное создание за старый период не должно откатывать автосоздание назад
@@ -1163,7 +1225,9 @@ async function createProject(tpl, p) {
   return true;
 }
 
-// Новый период закончился — создать задачи по шаблонам (только за последний период, без «догонки»).
+// Новый период закончился (или закончится через lead_days рабочих дней) — создать задачи по шаблонам
+// (только за последний период, без «догонки»).
+const periodFor = tpl => lastPeriod(tpl.period, addWorkDays(today(), tpl.lead_days || 0));
 let generating = false;
 async function autoGenerate() {
   if (generating) return false;
@@ -1172,7 +1236,7 @@ async function autoGenerate() {
   try {
     for (const tpl of S.templates) {
       if (!tpl.last_period) continue; // первый раз создаётся вручную при сохранении шаблона
-      const p = lastPeriod(tpl.period);
+      const p = periodFor(tpl);
       if (tpl.period === 'month' && tpl.months && tpl.months.length && !tpl.months.includes(p.month)) continue;
       if (tpl.last_period >= p.key) continue;
       if (await createProject(tpl, p)) made = true;
@@ -1209,14 +1273,14 @@ function openTemplates() {
       <b>${esc(t.title)}</b><span>${PERIODS[t.period]}${t.period === 'month' && t.months && t.months.length ? ': ' + t.months.map(m => MONTHS[m - 1].slice(0, 3)).join(', ') : ''} · шагов: ${(t.steps || []).length}</span></button>`).join('');
   $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet">
     <h3>Шаблоны</h3>
-    <div class="msg" style="margin:-6px 0 12px">Шаблон сам создаёт проект с задачами, когда заканчивается месяц, квартал или год. Проект появляется в «Разделах», в разделе шаблона. Сроки шагов — числа месяца после конца периода.</div>
+    <div class="msg" style="margin:-6px 0 12px">Шаблон сам создаёт проект с задачами, когда заканчивается месяц, квартал или год (можно заранее — за несколько рабочих дней). Проект появляется в «Разделах», в разделе шаблона. Сроки шагов — числа месяца после конца периода.</div>
     <h2>Мои шаблоны</h2>
     <div class="menu">${rows || '<div class="empty small">Шаблонов пока нет</div>'}</div>
     <h2>Новый шаблон</h2>
     <div class="row">
       <button class="btn" data-act="tpl-new">С нуля</button>
       <button class="btn" data-act="tpl-example" data-v="report">Квартальная отчётность</button>
-      <button class="btn" data-act="tpl-example" data-v="harvest">Оценка урожая</button>
+      <button class="btn" data-act="tpl-example" data-v="monthly">Ежемесячные дела</button>
     </div>
     <div class="actions"><span></span><button class="btn" data-act="close">Закрыть</button></div>
   </div></div>`;
@@ -1224,7 +1288,7 @@ function openTemplates() {
 
 const EXAMPLES = {
   report: {
-    title: 'Квартальная отчётность', period: 'quarter', months: [], steps: [
+    title: 'Квартальная отчётность', period: 'quarter', months: [], lead_days: 3, steps: [
       { title: 'Кеш фло', due_day: 12, month: 1 },
       { title: 'Аренда по МСФЗ 16', due_day: 12, month: 1 },
       { title: 'Снять базу, посчитать ОКЗ', start_day: 12, due_day: 20, month: 1 },
@@ -1234,8 +1298,8 @@ const EXAMPLES = {
       { title: 'Проверить и подать отчётность', due_day: 30, month: 1 },
     ],
   },
-  harvest: {
-    title: 'Оценка урожая на дату сбора', period: 'month', months: [7, 8, 9, 10], steps: [
+  monthly: {
+    title: 'Ежемесячные дела', period: 'month', months: [], lead_days: 3, steps: [
       { title: 'Оценка урожая на дату сбора', start_day: 10, month: 1 },
     ],
   },
@@ -1246,6 +1310,7 @@ function openTemplate(tpl) {
   const t = JSON.parse(JSON.stringify(tpl));
   t.steps = t.steps && t.steps.length ? t.steps : [{ title: '', month: 1 }];
   t.months = t.months || [];
+  if (t.lead_days == null) t.lead_days = t.id ? 0 : 3;
   S.tpl = t;
   $modal.dataset.kind = 'template';
   const work = secsOf('work');
@@ -1255,9 +1320,11 @@ function openTemplate(tpl) {
     <div class="field seg">${Object.entries(PERIODS).map(([k, n]) => `<button class="pill" data-act="t-period" data-v="${k}">${n}</button>`).join('')}</div>
     <div class="field" id="t-months-box"><label>В какие месяцы (по месяцу, за который считаем; не выбрано — каждый месяц)</label>
       <div class="wds months">${MONTHS.map((m, i) => `<button class="pill" data-act="t-month" data-v="${i + 1}">${m.slice(0, 3)}</button>`).join('')}</div></div>
+    <div class="field"><label>Создавать заранее</label>
+      <div class="row">за <input class="inp num" id="t-lead" type="number" min="0" max="20" value="${t.lead_days}" style="max-width:70px"> рабочих дн. до конца периода (0 — на следующий день после конца)</div></div>
     <div class="field"><label>Раздел для задач</label>
       <select class="inp" id="t-section"><option value="">Без раздела</option>${work.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
-    <div class="field"><label>Шаги: «с» и «до» — числа месяца; «мес.» — какой по счёту месяц после конца периода (1 — следующий)</label>
+    <div class="field"><label>Шаги: «с» и «до» — числа месяца; «мес.» — какой по счёту месяц после конца периода (1 — следующий). У шага могут быть подзадачи — без своих сроков.</label>
       <div id="t-steps"></div>
       <button class="link" data-act="t-add">+ Шаг</button></div>
     ${t.id ? `<div class="field"><label>Создать задачи вручную (если не хочешь ждать конца периода)</label>
@@ -1282,7 +1349,13 @@ function renderSteps() {
       ${num(i, 'start_day', 'с')}${num(i, 'due_day', 'до')}
       <input class="inp num" type="number" min="1" max="12" data-step="${i}" data-k="month" title="Месяц после конца периода" value="${s.month || 1}">
       <button class="icon small" data-act="t-del-step" data-v="${i}" title="Убрать шаг">✕</button>
-    </div>`).join('');
+    </div>
+    <div class="t-subs">${(s.subs || []).map((x, j) => `<div class="subrow">
+        <span class="sub-dash">└</span>
+        <input class="inp" data-tstep="${i}" data-tsub="${j}" placeholder="Подзадача" value="${esc(x)}">
+        <button class="icon small" data-act="t-del-sub" data-v="${i}:${j}" title="Убрать">✕</button>
+      </div>`).join('')}
+      <button class="link small" data-act="t-add-sub" data-v="${i}">+ подзадача</button></div>`).join('');
 }
 
 function syncTemplate() {
@@ -1294,6 +1367,10 @@ function syncTemplate() {
 
 // Поля шагов сохраняются в S.tpl при вводе.
 document.addEventListener('input', ev => {
+  if (ev.target.dataset.tsub !== undefined && S.tpl) {
+    S.tpl.steps[ev.target.dataset.tstep].subs[ev.target.dataset.tsub] = ev.target.value;
+    return;
+  }
   const i = ev.target.dataset.step;
   if (i === undefined || !S.tpl) return;
   const k = ev.target.dataset.k;
@@ -1312,7 +1389,9 @@ async function saveTemplate(silent = false) {
     section_id: document.getElementById('t-section').value || null,
     steps: t.steps.filter(s => s.title && s.title.trim()).map(s => ({
       title: s.title.trim(), start_day: s.start_day || null, due_day: s.due_day || null, month: s.month || 1,
+      subs: (s.subs || []).map(x => x.trim()).filter(Boolean),
     })),
+    lead_days: Math.max(0, parseInt(document.getElementById('t-lead').value) || 0),
   };
   let tpl;
   if (t.id) [tpl] = await call(sb.from('templates').update(row).eq('id', t.id).select());
@@ -1320,7 +1399,7 @@ async function saveTemplate(silent = false) {
   if (silent) return tpl;
   if (!t.id) {
     // за уже закончившийся период — спросить; дальше шаблон работает сам
-    const p = lastPeriod(tpl.period);
+    const p = periodFor(tpl);
     const fits = tpl.period !== 'month' || !tpl.months || !tpl.months.length || tpl.months.includes(p.month);
     if (fits && confirm(`Создать задачи сейчас — за ${p.label}?\nДальше шаблон будет создавать их сам, когда закончится следующий период.`)) await createProject(tpl, p);
     else await call(sb.from('templates').update({ last_period: p.key }).eq('id', tpl.id));
@@ -1480,6 +1559,16 @@ document.addEventListener('click', async ev => {
       case 'view': S.view = v; S.pick = null; localSet('view', v); render(); scrollTo(0, 0); break;
       case 'done': el.classList.add('ok'); await complete(byId(id)); break;
       case 'undo': await undo(byId(id)); break;
+      case 'sub': await toggleSub(byId(id), +v); break;
+      case 'sub-m': await toggleSubModal(+v); break;
+      case 'sub-add':
+        S.edit.checklist.push({ t: '', d: false });
+        renderSubs();
+        $modal.querySelector(`[data-sub="${S.edit.checklist.length - 1}"]`).focus();
+        break;
+      case 'sub-del': S.edit.checklist.splice(+v, 1); renderSubs(); break;
+      case 't-add-sub': (S.tpl.steps[+v].subs ||= []).push(''); renderSteps(); break;
+      case 't-del-sub': { const [i, j] = v.split(':').map(Number); S.tpl.steps[i].subs.splice(j, 1); renderSteps(); break; }
       case 'edit': openEdit(byId(id)); break;
       case 'new': {
         const due = S.view === 'calendar' ? S.day : S.view === 'today' ? today() : null;
