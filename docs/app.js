@@ -231,6 +231,7 @@ async function toggleSub(t, i) {
 async function complete(t, doneOn = today()) {
   await call(sb.rpc('complete_task', { p_task: t.id, p_done_on: doneOn }));
   await resetRepeat(t);
+  if (t.pet) S.petJoy = { pet: t.pet, at: Date.now() }; // питомец радуется — сердечки
   await load();
   const next = S.tasks.find(x => x.id === t.id);
   const msg = next && !next.done_on && next.due_date ? `Готово! Следующий раз: ${dateLabel(next.due_date)}` : 'Готово!';
@@ -251,6 +252,7 @@ function render() {
   if (S.view === 'plan' && !planOn()) S.view = 'today';
   document.body.className = 'v-' + S.view + (S.space === 'work' ? ' work' : '');
   $app.innerHTML = views[S.view]() + `
+    ${renderPets()}
     ${S.pick ? pickBar() : '<button class="fab" data-act="new" title="Новая задача">+</button>'}
     <nav class="bottom">
       ${[['today', 'Сегодня'], ['nodate', 'Без срока'], ['calendar', 'Календарь'], ['sections', 'Разделы']]
@@ -269,6 +271,7 @@ function taskRow(t, opts = {}) {
   if (t.plan_date && t.due_date && !opts.date && !opts.done)
     meta.push(`<span class="${t.due_date < today() || t.plan_date > t.due_date ? 'late' : ''}">до ${dateLabel(t.due_date)}</span>`);
   if (t.estimate) meta.push(`<span>⏱ ${fmtH(t.estimate)} ч</span>`);
+  if (t.pet && PETS[t.pet]) meta.push(`<span>${PETS[t.pet].icon} ${esc(petName(t.pet))}</span>`);
   if (t.remind_at) meta.push(`<span>🔔 ${hhmm(t.remind_at)}</span>`);
   if (isEvent(t) && !opts.mark) opts = { ...opts, mark: '•', markStyle: 'border-color:var(--accent);color:var(--accent)' };
   if (sec && !opts.noSection) meta.push(`<span>${esc(sec.name)}</span>`);
@@ -709,6 +712,141 @@ document.addEventListener('drop', async e => {
   await call(sb.from('tasks').update({ plan_date: d }).eq('id', t.id));
 });
 
+// ---------- питомцы (личный режим, широкий экран) ----------
+const PETS = { cat: { icon: '🐱', def: 'Котик' }, bird: { icon: '🦜', def: 'Попугай' } };
+const petName = p => S.user?.user_metadata?.pets?.[p] || PETS[p].def;
+const MOODS = { happy: 'Доволен', meh: 'Немного грустит', sad: 'Очень грустит', faint: 'В обмороке!' };
+const moodOf = n => (n <= 0 ? 'happy' : n === 1 ? 'meh' : n <= 3 ? 'sad' : 'faint');
+
+// Насколько задача запущена: у привычки — сколько раз подряд пропущена,
+// у обычной — сколько дней прошло от первоначального срока (утренняя проверка переносит его на сегодня).
+function petLate(t) {
+  const logs = S.logs.filter(l => l.task_id === t.id);
+  let i = logs.length;
+  while (i > 0 && logs[i - 1].status !== 'done') i--;
+  const tail = logs.slice(i);
+  if (t.kind === 'habit') return tail.filter(l => l.status === 'missed').length + (t.due_date && t.due_date < today() ? 1 : 0);
+  const moved = tail.find(l => l.status === 'moved');
+  const since = moved ? moved.day : t.due_date;
+  return since && since < today() ? daysBetween(since, today()) : 0;
+}
+
+function petState(p) {
+  const late = activeAll().filter(t => t.pet === p && !pausedSec(t.section_id))
+    .map(t => [t, petLate(t)]).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+  return { mood: moodOf(late.length ? late[0][1] : 0), late };
+}
+
+async function renamePet(p) {
+  const name = prompt('Как зовут питомца?', petName(p));
+  if (name === null || !name.trim()) return;
+  const pets = { ...(S.user.user_metadata.pets || {}), [p]: name.trim() };
+  const { data, error } = await sb.auth.updateUser({ data: { pets } });
+  if (error) return toast('Не получилось сохранить: ' + error.message);
+  S.user = data.user;
+  render();
+}
+
+function renderPets() {
+  if (S.space !== 'personal' || S.view === 'plan' || !S.tasks.some(t => t.pet)) return '';
+  return Object.keys(PETS).map(p => {
+    const st = petState(p);
+    const joy = S.petJoy && S.petJoy.pet === p && Date.now() - S.petJoy.at < 4000;
+    const why = st.late.slice(0, 3).map(([t, n]) => `<li>${esc(t.title)} — ${t.kind === 'habit' ? `пропущено ${n} р.` : `${n} дн.`}</li>`).join('');
+    return `<aside class="pet ${p} m-${st.mood}">
+      ${joy ? '<div class="hearts"><span>♥</span><span>♥</span><span>♥</span></div>' : ''}
+      ${p === 'cat' ? catSVG(st.mood) : birdSVG(st.mood)}
+      <button class="pet-name" data-act="pet-name" data-v="${p}" title="Переименовать">${esc(petName(p))}</button>
+      <div class="pet-mood">${MOODS[st.mood]}</div>
+      ${why ? `<ul class="pet-why">${why}</ul>` : ''}
+    </aside>`;
+  }).join('');
+}
+
+// Глаза: открытые (с морганием), полуприкрытые, грустные со слезой, крестики.
+function petEyes(mood, xs, y, iris, lid) {
+  if (mood === 'faint') return xs.map(x => `<path d="M${x - 6} ${y - 6}l12 12M${x + 6} ${y - 6}l-12 12" stroke="#9aa1bd" stroke-width="3.5" stroke-linecap="round"/>`).join('');
+  const eye = x => iris
+    ? `<ellipse cx="${x}" cy="${y}" rx="10" ry="${mood === 'sad' ? 9 : 11}" fill="${iris}"/><ellipse cx="${x}" cy="${y + (mood === 'sad' ? 3 : 1)}" rx="${mood === 'sad' ? 4 : 3}" ry="${mood === 'sad' ? 5 : 8}" fill="#0a0a0a"/><circle cx="${x + 3}" cy="${y - 4}" r="2.2" fill="#fff"/>`
+    : `<circle cx="${x}" cy="${y}" r="5" fill="#16161c"/><circle cx="${x + 1.6}" cy="${y - 1.8}" r="1.5" fill="#fff"/>`;
+  let s = `<g class="${mood === 'happy' ? 'blink' : ''}">${xs.map(eye).join('')}</g>`;
+  const r = iris ? 12 : 6;
+  if (mood === 'meh') s += xs.map(x => `<rect x="${x - r}" y="${y - r - 1}" width="${r * 2}" height="${r + 1}" fill="${lid}"/>`).join('');
+  if (mood === 'sad') {
+    const [a, b] = xs;
+    s += `<path d="M${a - 10} ${y - r - 2}L${a + 8} ${y - r - 8}M${b + 10} ${y - r - 2}L${b - 8} ${y - r - 8}" stroke="${iris ? '#6a7090' : '#8a6d20'}" stroke-width="3" stroke-linecap="round"/>`
+      + `<path class="tear" d="M${a - 4} ${y + r}q-4 7 0 10q4-3 0-10z" fill="#8fb3ff"/>`;
+  }
+  return s;
+}
+
+const dizzy = (x, y) => `<g class="stars" style="transform-origin:${x}px ${y}px"><text x="${x - 22}" y="${y}" fill="#f2c26b" font-size="14">✦</text><text x="${x + 12}" y="${y - 6}" fill="#f2c26b" font-size="11">✦</text><text x="${x - 4}" y="${y - 16}" fill="#f2c26b" font-size="9">✦</text></g>`;
+
+// Чёрный кот, сидит анфас. В обмороке — лежит на боку.
+function catSVG(mood) {
+  const sad = mood === 'sad' || mood === 'faint';
+  const ears = sad
+    ? '<path d="M62 74L34 52L90 56Z" fill="#14141b"/><path d="M64 68L46 56L82 59Z" fill="#d98a9a" opacity=".6"/><path d="M138 74L166 52L110 56Z" fill="#14141b"/><path d="M136 68L154 56L118 59Z" fill="#d98a9a" opacity=".6"/>'
+    : '<path d="M62 78L60 28L96 55Z" fill="#14141b"/><path d="M67 68L66 42L87 57Z" fill="#d98a9a" opacity=".7"/><path d="M138 78L140 28L104 55Z" fill="#14141b"/><path d="M133 68L134 42L113 57Z" fill="#d98a9a" opacity=".7"/>';
+  const mouth = {
+    happy: '<path d="M100 103q-5 6-10 2M100 103q5 6 10 2" stroke="#8a90aa" stroke-width="2" fill="none" stroke-linecap="round"/>',
+    meh: '<path d="M93 108h14" stroke="#8a90aa" stroke-width="2" stroke-linecap="round"/>',
+    sad: '<path d="M90 112q10-8 20 0" stroke="#8a90aa" stroke-width="2" fill="none" stroke-linecap="round"/>',
+    faint: '<path d="M93 106q7 5 14 0" stroke="#8a90aa" stroke-width="2" fill="none"/><ellipse cx="103" cy="111" rx="4" ry="5" fill="#e8909f"/>',
+  }[mood];
+  const cat = `<path class="${mood === 'happy' ? 'tail' : ''}" d="M138 182C186 178 192 128 172 108C165 100 156 107 163 115C177 131 170 160 136 168Z" fill="#14141b"/>
+    <ellipse cx="100" cy="150" rx="48" ry="45" fill="#14141b"/>
+    <ellipse cx="100" cy="158" rx="24" ry="28" fill="#1f1f29"/>
+    <ellipse cx="80" cy="192" rx="14" ry="8" fill="#1b1b24"/><ellipse cx="120" cy="192" rx="14" ry="8" fill="#1b1b24"/>
+    ${ears}
+    <ellipse cx="100" cy="85" rx="44" ry="38" fill="#14141b"/>
+    ${petEyes(mood, [82, 118], 82, '#cde05a', '#14141b')}
+    <path d="M95 97h10l-5 6z" fill="#d98a9a"/>
+    ${mouth}
+    <path d="M72 100L40 94M72 104L40 106M128 100L160 94M128 104L160 106" stroke="#4a4f63" stroke-width="1.5" stroke-linecap="round"/>`;
+  return `<svg class="pet-svg" viewBox="0 0 200 210" aria-hidden="true">
+    <ellipse cx="100" cy="198" rx="72" ry="8" fill="#000" opacity=".3"/>
+    ${mood === 'faint' ? catLying() + dizzy(56, 112) : `<g class="${mood === 'happy' ? 'breathe' : ''}">${cat}</g>`}
+  </svg>`;
+}
+
+// Кот в обмороке: лежит пластом, голова на полу, хвост вытянут, язык наружу.
+const catLying = () => `<path d="M164 184C182 186 194 184 198 178" stroke="#14141b" stroke-width="12" fill="none" stroke-linecap="round"/>
+    <ellipse cx="116" cy="172" rx="60" ry="24" fill="#14141b"/>
+    <ellipse cx="150" cy="192" rx="16" ry="6" fill="#1b1b24"/><ellipse cx="96" cy="194" rx="16" ry="6" fill="#1b1b24"/>
+    <path d="M34 150L10 140L36 128Z" fill="#14141b"/><path d="M60 128L58 102L80 124Z" fill="#14141b"/>
+    <ellipse cx="54" cy="160" rx="36" ry="30" fill="#14141b"/>
+    ${petEyes('faint', [42, 66], 154)}
+    <path d="M51 170h8l-4 5z" fill="#d98a9a"/>
+    <path d="M47 178q8 5 16 0" stroke="#8a90aa" stroke-width="2" fill="none"/><ellipse cx="57" cy="183" rx="4" ry="5" fill="#e8909f"/>
+    <path d="M28 172L6 170M80 172L100 168" stroke="#4a4f63" stroke-width="1.5" stroke-linecap="round"/>`;
+
+// Корелла: серая, жёлтая голова с хохолком, оранжевые щёчки, на жёрдочке. В обмороке — лежит под жёрдочкой.
+function birdSVG(mood) {
+  const crest = {
+    happy: '<path d="M98 46Q92 18 110 4M94 48Q82 24 92 10M104 46Q110 26 126 18" stroke="#f3d36b" stroke-width="6" fill="none" stroke-linecap="round"/>',
+    meh: '<path d="M98 45Q104 22 124 16M94 47Q96 26 112 14M104 46Q116 32 132 30" stroke="#f3d36b" stroke-width="6" fill="none" stroke-linecap="round"/>',
+    sad: '<path d="M100 44Q118 38 134 46M96 46Q116 32 132 36M104 46Q120 44 132 54" stroke="#e2c45e" stroke-width="6" fill="none" stroke-linecap="round"/>',
+    faint: '<path d="M100 44Q118 40 130 52M96 46Q114 36 128 42" stroke="#e2c45e" stroke-width="6" fill="none" stroke-linecap="round"/>',
+  }[mood];
+  const bird = `<path d="M92 150L84 204L100 204L108 150Z" fill="#7d808d"/>
+    <ellipse cx="100" cy="115" rx="32" ry="44" fill="#9a9dab"/>
+    <ellipse cx="100" cy="125" rx="18" ry="28" fill="#aeb1bd"/>
+    <path d="M70 98Q62 140 92 166Q82 130 84 98Z" fill="#80838f"/><path d="M130 98Q138 140 108 166Q118 130 116 98Z" fill="#80838f"/>
+    <path d="M72 108Q70 128 82 144M128 108Q130 128 118 144" stroke="#eef0f4" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <path d="M90 154v8M110 154v8" stroke="#c9a9a0" stroke-width="4" stroke-linecap="round"/>
+    <g class="${mood === 'happy' ? 'crest' : ''}">${crest}</g>
+    <circle cx="100" cy="70" r="28" fill="#f3d36b"/>
+    <circle cx="82" cy="80" r="8" fill="#f08a3c"/><circle cx="118" cy="80" r="8" fill="#f08a3c"/>
+    ${petEyes(mood, [89, 111], 66, null, '#f3d36b')}
+    <path d="M94 76Q100 ${mood === 'faint' ? 88 : 92} 106 76Z" fill="#b8a898"/>`;
+  return `<svg class="pet-svg" viewBox="0 0 200 210" aria-hidden="true">
+    <path d="M22 164h156" stroke="#8a6a4a" stroke-width="9" stroke-linecap="round"/><path d="M150 164q10-12 22-10" stroke="#6f8f5a" stroke-width="4" fill="none" stroke-linecap="round"/>
+    <ellipse cx="100" cy="202" rx="70" ry="6" fill="#000" opacity=".3"/>
+    ${mood === 'faint' ? `<g transform="translate(96 190) rotate(90) scale(.66) translate(-104 -110)">${bird}</g>${dizzy(124, 182)}` : `<g class="${mood === 'happy' ? 'bob' : ''}">${bird}</g>`}
+  </svg>`;
+}
+
 // ---------- выбор нескольких задач ----------
 function pickBar() {
   const n = S.pick.size;
@@ -815,6 +953,7 @@ const HELP = [
   ['Подпункты', 'В окне задачи «+ Подпункт»: письма, проверки и т.п. Отмечаются прямо под задачей. В шаблоне у шага — «+ подзадача».'],
   ['План (работа, компьютер)', '«Срок» — дедлайн, «План» — день, когда делаешь, и сколько часов займёт. Во вкладке «План» неделя: задачи перетаскиваются по дням, вверху сумма часов вместе со встречами. Больше 8 ч — жёлтым, больше 11 ч — ⚠ красным.'],
   ['Порядок шагов', 'У задачи проекта — «Делать после» (в шаблоне — «после шагов: 1, 2»). Пока те шаги не сделаны, у задачи 🔒 «ждёт: …»; красный — если они запланированы позже. Ничего не запрещается.'],
+  ['Питомцы', 'В окне задачи (в личном режиме) — «Питомец». На широком экране по бокам сидят кот и попугай: доволен, если всё сделано, грустит от пропусков, после 4 дней — в обмороке. Нажми на имя, чтобы переименовать.'],
   ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных.'],
   ['Устройства', 'Всё хранится в облаке. Входи с той же почтой на телефоне и компьютере. На телефоне: Chrome → ⋮ → «Установить приложение».'],
 ];
@@ -1060,6 +1199,9 @@ function openEdit(t) {
     <div class="field" id="f-subs-box"><label>Подпункты (письма, проверки и т.п.)</label>
       <div id="f-subs"></div>
       <button class="link" data-act="sub-add">+ Подпункт</button></div>
+    ${S.space === 'personal' || e.pet ? `<div class="field" id="f-pet-box"><label>Питомец (грустит, если задача пропущена)</label>
+      <div class="row">${[['', 'Нет'], ...Object.keys(PETS).map(p => [p, PETS[p].icon + ' ' + esc(petName(p))])]
+        .map(([p, n]) => `<button class="pill" data-act="pet" data-v="${p}">${n}</button>`).join('')}</div></div>` : ''}
     <div class="field"><label>Раздел</label>
       <select class="inp" id="f-section"><option value="">Без раздела</option>
         ${mySecs().map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
@@ -1085,6 +1227,7 @@ function syncEdit() {
   q('[data-act=kind]').forEach(b => b.classList.toggle('on', b.dataset.v === e.kind));
   q('[data-act=from]').forEach(b => b.classList.toggle('on', b.dataset.v === e.repeat_from));
   q('[data-act=wd]').forEach(b => b.classList.toggle('on', (e.repeat_weekdays || []).includes(+b.dataset.v)));
+  q('[data-act=pet]').forEach(b => b.classList.toggle('on', b.dataset.v === (e.pet || '')));
   q('[data-act=after]').forEach(b => b.classList.toggle('on', (e.after_ids || []).includes(b.dataset.v)));
   const rem = hhmm(e.remind_at);
   q('[data-act=remind]').forEach(b => b.classList.toggle('on', b.dataset.v.slice(0, 5) === rem));
@@ -1170,6 +1313,7 @@ async function saveEdit() {
     row.plan_date = document.getElementById('f-plan').value || null;
     row.estimate = parseFloat(document.getElementById('f-est').value.replace(',', '.')) || null;
   } else if (e.plan_date || e.estimate) { row.plan_date = null; row.estimate = null; }
+  if (e.pet || (byId(e.id) || {}).pet) row.pet = e.pet || null;
   // «делать после» отправляем, только если поменяли
   const wasAfter = (byId(e.id) || {}).after_ids || [];
   const nowAfter = e.after_ids || [];
@@ -1756,6 +1900,8 @@ document.addEventListener('click', async ev => {
         syncEdit();
         break;
       case 'from': S.edit.repeat_from = v; syncEdit(); break;
+      case 'pet': S.edit.pet = v || null; syncEdit(); break;
+      case 'pet-name': await renamePet(v); break;
       case 'after': {
         const set = new Set(S.edit.after_ids || []);
         set.has(v) ? set.delete(v) : set.add(v);

@@ -366,3 +366,42 @@ body.work .pill.mode { border-color: var(--accent); }
 /* «План» занимает почти всю ширину большого экрана */
 @media (min-width: 900px) { body.v-plan #app { max-width: 1840px; } }
 @media (max-width: 520px) { .step { grid-template-columns: 14px minmax(0, 1fr) 40px 40px 40px 40px 28px; gap: 4px; } .inp.num { padding: 10px 2px; } }
+
+/* Питомцы по бокам (личный режим, очень широкий экран) */
+.pet { display: none; }
+@media (min-width: 1640px) {
+  .pet { display: block; position: fixed; top: 110px; width: 200px; text-align: center; z-index: 1; }
+  .pet.cat { left: calc((100vw - 1180px) / 4 - 100px); }
+  .pet.bird { right: calc((100vw - 1180px) / 4 - 100px); }
+}
+.pet-svg { width: 200px; height: 210px; display: block; overflow: visible; }
+.pet-name { font-weight: 700; font-size: 17px; color: var(--text); padding: 2px 8px; border-radius: 8px; }
+.pet-name:hover { background: var(--card); }
+.pet-mood { color: var(--good); font-size: 14px; }
+.pet.m-meh .pet-mood { color: var(--warn); }
+.pet.m-sad .pet-mood, .pet.m-faint .pet-mood { color: var(--bad); }
+.pet-why { list-style: none; padding: 0; margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+.pet-svg g, .pet-svg path { transform-box: view-box; }
+.pet .blink { animation: blink 5s infinite; transform-origin: 100px 80px; }
+.pet.bird .blink { transform-origin: 100px 66px; }
+@keyframes blink { 0%, 94%, 100% { transform: scaleY(1); } 97% { transform: scaleY(.1); } }
+.pet .tail { animation: tail 3s ease-in-out infinite; transform-origin: 140px 176px; }
+@keyframes tail { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(-9deg); } }
+.pet .breathe { animation: breathe 4s ease-in-out infinite; transform-origin: 100px 200px; }
+@keyframes breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.015, .985); } }
+.pet .bob { animation: bob 2.4s ease-in-out infinite; }
+@keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+.pet .crest { animation: crest 3.2s ease-in-out infinite; transform-origin: 100px 46px; }
+@keyframes crest { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(6deg); } }
+.pet .tear { animation: tear 2.4s ease-in infinite; }
+@keyframes tear { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(16px); opacity: 0; } }
+.pet .stars { animation: spin 3s linear infinite; transform-box: view-box; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.hearts { position: absolute; left: 0; right: 0; top: 10px; pointer-events: none; }
+.hearts span { position: absolute; color: var(--bad); font-size: 22px; animation: heart 2.2s ease-out forwards; opacity: 0; }
+.hearts span:nth-child(1) { left: 70px; }
+.hearts span:nth-child(2) { left: 100px; animation-delay: .3s; }
+.hearts span:nth-child(3) { left: 130px; animation-delay: .6s; }
+@keyframes heart { 0% { transform: translateY(40px) scale(.6); opacity: 0; } 20% { opacity: 1; } 100% { transform: translateY(-40px) scale(1.2); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .pet * { animation: none !important; } }
+.pet.cat .pet-svg { filter: drop-shadow(0 0 1.5px #5a6080); }
