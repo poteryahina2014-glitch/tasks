@@ -206,6 +206,9 @@ async function load() {
   firstHelp();
 }
 
+// Шаги проекта, которые надо сделать раньше и которые ещё не сделаны (удалённые не считаются)
+const waitsFor = t => (t.after_ids || []).map(byId).filter(x => x && !x.done_on);
+
 // Подпункты задачи: [{t: текст, d: сделано}]
 const subsOf = t => Array.isArray(t.checklist) ? t.checklist : [];
 const cleanSubs = list => list.map(s => ({ t: (s.t || '').trim(), d: !!s.d })).filter(s => s.t);
@@ -276,6 +279,12 @@ function taskRow(t, opts = {}) {
     if (st.total) meta.push(`<span class="stat">${st.done} из ${st.total} за 30 дн.</span>`);
   }
   if (opts.note) meta.unshift(`<span class="${opts.noteCls || ''}">${opts.note}</span>`);
+  // ждёт другие шаги проекта; красным — если они запланированы позже этой задачи
+  const waits = opts.done ? [] : waitsFor(t);
+  if (waits.length) {
+    const later = planDay(t) && waits.some(w => !planDay(w) || planDay(w) > planDay(t));
+    meta.unshift(`<span class="lock ${later ? 'late' : ''}" title="${later ? 'Эти шаги ещё не запланированы раньше' : ''}">🔒 ждёт: ${waits.map(w => esc(w.title)).join(', ')}</span>`);
+  }
   const subs = subsOf(t);
   if (subs.length) meta.push(`<span>☑ ${subs.filter(s => s.d).length} из ${subs.length}</span>`);
   // подпункты видны под задачей и отмечаются прямо там (не в календарных отметках и не у сделанных)
@@ -283,7 +292,7 @@ function taskRow(t, opts = {}) {
     ? `<div class="subs">${subs.map((s, i) => `<button class="sub ${s.d ? 'on' : ''}" data-act="sub" data-id="${t.id}" data-v="${i}"><i>${s.d ? '✓' : ''}</i><span>${esc(s.t)}</span></button>`).join('')}</div>`
     : '';
   const picked = S.pick && S.pick.has(t.id);
-  const cls = `task ${t.kind === 'habit' ? 'habit' : ''} ${opts.done ? 'done' : ''} ${picked ? 'picked' : ''} ${opts.busy ? 'busy' : ''}`;
+  const cls = `task ${t.kind === 'habit' ? 'habit' : ''} ${waits.length ? 'locked' : ''} ${opts.done ? 'done' : ''} ${picked ? 'picked' : ''} ${opts.busy ? 'busy' : ''}`;
   // mark — значок без действия (прошлые отметки и будущие повторы в календаре)
   const check = S.pick && opts.drag
     ? `<div class="check pick">${picked ? '✓' : ''}</div>`
@@ -652,7 +661,7 @@ function renderPlan() {
   return `<header class="top"><h1>План</h1>
       <div class="seg"><button class="pill" data-act="pweek" data-n="-1">‹</button><button class="pill" data-act="pweek" data-n="0">${label}</button><button class="pill" data-act="pweek" data-n="1">›</button></div>
       <div class="tools">${MODE()}${GEAR}</div></header>
-    <div class="plan" style="grid-template-columns:repeat(${days.length}, minmax(0, 1fr)) 250px">
+    <div class="plan" style="grid-template-columns:repeat(${days.length}, minmax(0, 1fr)) minmax(250px, 1.4fr)">
       ${cols}
       <div class="pcol unplanned" data-pday="">
         <div class="phead"><b>Не распланировано</b><span class="hours">${free.length}</span></div>
@@ -805,6 +814,7 @@ const HELP = [
   ['🏠 / 💼', 'Личное и работа отдельно, переключатель вверху. В работе есть «Шаблоны»: повторяющиеся проекты из шагов (например, квартальная отчётность), создаются сами.'],
   ['Подпункты', 'В окне задачи «+ Подпункт»: письма, проверки и т.п. Отмечаются прямо под задачей. В шаблоне у шага — «+ подзадача».'],
   ['План (работа, компьютер)', '«Срок» — дедлайн, «План» — день, когда делаешь, и сколько часов займёт. Во вкладке «План» неделя: задачи перетаскиваются по дням, вверху сумма часов вместе со встречами. Больше 8 ч — жёлтым, больше 11 ч — ⚠ красным.'],
+  ['Порядок шагов', 'У задачи проекта — «Делать после» (в шаблоне — «после шагов: 1, 2»). Пока те шаги не сделаны, у задачи 🔒 «ждёт: …»; красный — если они запланированы позже. Ничего не запрещается.'],
   ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных.'],
   ['Устройства', 'Всё хранится в облаке. Входи с той же почтой на телефоне и компьютере. На телефоне: Chrome → ⋮ → «Установить приложение».'],
 ];
@@ -1045,6 +1055,8 @@ function openEdit(t) {
         <button class="pill" data-act="from" data-v="due">от старого срока</button>
         <button class="pill" data-act="from" data-v="done">от дня выполнения</button>
       </div></div>
+    ${e.project_id && projectTasks(e.project_id).some(x => x.id !== e.id) ? `<div class="field"><label>Делать после (шаги этого проекта)</label>
+      <div class="wds after">${projectTasks(e.project_id).filter(x => x.id !== e.id).map(x => `<button class="pill" data-act="after" data-v="${x.id}">${x.done_on ? '✓ ' : ''}${esc(x.title)}</button>`).join('')}</div></div>` : ''}
     <div class="field" id="f-subs-box"><label>Подпункты (письма, проверки и т.п.)</label>
       <div id="f-subs"></div>
       <button class="link" data-act="sub-add">+ Подпункт</button></div>
@@ -1073,6 +1085,7 @@ function syncEdit() {
   q('[data-act=kind]').forEach(b => b.classList.toggle('on', b.dataset.v === e.kind));
   q('[data-act=from]').forEach(b => b.classList.toggle('on', b.dataset.v === e.repeat_from));
   q('[data-act=wd]').forEach(b => b.classList.toggle('on', (e.repeat_weekdays || []).includes(+b.dataset.v)));
+  q('[data-act=after]').forEach(b => b.classList.toggle('on', (e.after_ids || []).includes(b.dataset.v)));
   const rem = hhmm(e.remind_at);
   q('[data-act=remind]').forEach(b => b.classList.toggle('on', b.dataset.v.slice(0, 5) === rem));
   document.getElementById('f-remind').value = rem;
@@ -1157,6 +1170,10 @@ async function saveEdit() {
     row.plan_date = document.getElementById('f-plan').value || null;
     row.estimate = parseFloat(document.getElementById('f-est').value.replace(',', '.')) || null;
   } else if (e.plan_date || e.estimate) { row.plan_date = null; row.estimate = null; }
+  // «делать после» отправляем, только если поменяли
+  const wasAfter = (byId(e.id) || {}).after_ids || [];
+  const nowAfter = e.after_ids || [];
+  if (nowAfter.length !== wasAfter.length || nowAfter.some(x => !wasAfter.includes(x))) row.after_ids = nowAfter.length ? nowAfter : null;
   const subs = isEvent(e) ? [] : cleanSubs(e.checklist);
   if (subs.length || e.had_subs) row.checklist = subs.length ? subs : null;
   const sec = S.sections.find(x => x.id === row.section_id);
@@ -1334,7 +1351,8 @@ async function createProject(tpl, p) {
     if (error.code !== '23505') toast('Ошибка: ' + error.message);
     return false;
   }
-  const rows = (tpl.steps || []).filter(s => s.title).map((s, i) => ({
+  const steps = (tpl.steps || []).filter(s => s.title);
+  const rows = steps.map((s, i) => ({
     title: s.title,
     project_id: data[0].id,
     section_id: tpl.section_id,
@@ -1345,7 +1363,13 @@ async function createProject(tpl, p) {
     ...(s.subs && s.subs.length ? { checklist: s.subs.map(x => ({ t: x, d: false })) } : {}),
     ...(s.hours ? { estimate: s.hours } : {}),
   }));
-  if (rows.length) await call(sb.from('tasks').insert(rows));
+  if (rows.length) {
+    const made = (await call(sb.from('tasks').insert(rows).select('id,position'))) || [];
+    // «после шагов» (номера) → id созданных задач
+    const idAt = n => (made.find(x => x.position === n - 1) || {}).id;
+    await Promise.all(steps.map((s, i) => [s, idAt(i + 1)]).filter(([s, id]) => id && s.after && s.after.length)
+      .map(([s, id]) => call(sb.from('tasks').update({ after_ids: s.after.map(idAt).filter(Boolean) }).eq('id', id))));
+  }
   // ручное создание за старый период не должно откатывать автосоздание назад
   if (!tpl.last_period || p.key > tpl.last_period) await call(sb.from('templates').update({ last_period: p.key }).eq('id', tpl.id));
   return true;
@@ -1419,9 +1443,9 @@ const EXAMPLES = {
       { title: 'Аренда по МСФЗ 16', due_day: 12, month: 1 },
       { title: 'Снять базу, посчитать ОКЗ', start_day: 12, due_day: 20, month: 1 },
       { title: 'Авансы и обесценение', start_day: 13, due_day: 20, month: 1 },
-      { title: 'Залить в базу ОКЗ и аренду', due_day: 20, month: 1 },
-      { title: 'Подготовить отчётность', due_day: 25, month: 1 },
-      { title: 'Проверить и подать отчётность', due_day: 30, month: 1 },
+      { title: 'Залить в базу ОКЗ и аренду', due_day: 20, month: 1, after: [2, 3] },
+      { title: 'Подготовить отчётность', due_day: 25, month: 1, after: [1, 4, 5] },
+      { title: 'Проверить и подать отчётность', due_day: 30, month: 1, after: [6] },
     ],
   },
   monthly: {
@@ -1469,8 +1493,9 @@ function openTemplate(tpl) {
 
 function renderSteps() {
   const num = (i, k, ph) => `<input class="inp num" type="number" min="1" max="31" data-step="${i}" data-k="${k}" placeholder="${ph}" value="${S.tpl.steps[i][k] || ''}">`;
-  document.getElementById('t-steps').innerHTML = '<div class="step head"><span>Шаг</span><span>с</span><span>до</span><span>мес.</span><span>часов</span><span></span></div>'
+  document.getElementById('t-steps').innerHTML = '<div class="step head"><span>№</span><span>Шаг</span><span>с</span><span>до</span><span>мес.</span><span>часов</span><span></span></div>'
     + S.tpl.steps.map((s, i) => `<div class="step">
+      <span class="step-n">${i + 1}</span>
       <input class="inp" data-step="${i}" data-k="title" placeholder="Что сделать" value="${esc(s.title || '')}">
       ${num(i, 'start_day', 'с')}${num(i, 'due_day', 'до')}
       <input class="inp num" type="number" min="1" max="12" data-step="${i}" data-k="month" title="Месяц после конца периода" value="${s.month || 1}">
@@ -1482,7 +1507,8 @@ function renderSteps() {
         <input class="inp" data-tstep="${i}" data-tsub="${j}" placeholder="Подзадача" value="${esc(x)}">
         <button class="icon small" data-act="t-del-sub" data-v="${i}:${j}" title="Убрать">✕</button>
       </div>`).join('')}
-      <button class="link small" data-act="t-add-sub" data-v="${i}">+ подзадача</button></div>`).join('');
+      <div class="row t-after"><button class="link small" data-act="t-add-sub" data-v="${i}">+ подзадача</button>
+        <label>после шагов <input class="inp" data-step="${i}" data-k="after" placeholder="напр. 1, 2" value="${(s.after || []).join(', ')}"></label></div></div>`).join('');
 }
 
 function syncTemplate() {
@@ -1501,6 +1527,10 @@ document.addEventListener('input', ev => {
   const i = ev.target.dataset.step;
   if (i === undefined || !S.tpl) return;
   const k = ev.target.dataset.k;
+  if (k === 'after') {
+    S.tpl.steps[i].after = [...new Set(ev.target.value.split(/[^0-9]+/).map(Number).filter(n => n >= 1 && n !== +i + 1))];
+    return;
+  }
   S.tpl.steps[i][k] = k === 'title' ? ev.target.value : k === 'hours' ? parseFloat(ev.target.value) || null : parseInt(ev.target.value) || null;
 });
 
@@ -1514,10 +1544,11 @@ async function saveTemplate(silent = false) {
     period: t.period,
     months: t.period === 'month' && t.months.length ? [...t.months].sort((a, b) => a - b) : null,
     section_id: document.getElementById('t-section').value || null,
-    steps: t.steps.filter(s => s.title && s.title.trim()).map(s => ({
+    steps: t.steps.filter(s => s.title && s.title.trim()).map((s, _, all) => ({
       title: s.title.trim(), start_day: s.start_day || null, due_day: s.due_day || null, month: s.month || 1,
       subs: (s.subs || []).map(x => x.trim()).filter(Boolean),
       hours: s.hours || null,
+      after: (s.after || []).filter(n => n <= all.length),
     })),
     lead_days: Math.max(0, parseInt(document.getElementById('t-lead').value) || 0),
   };
@@ -1659,7 +1690,14 @@ document.addEventListener('click', async ev => {
       case 't-period': S.tpl.period = v; syncTemplate(); break;
       case 't-month': S.tpl.months = S.tpl.months.includes(+v) ? S.tpl.months.filter(m => m !== +v) : S.tpl.months.concat(+v); syncTemplate(); break;
       case 't-add': S.tpl.steps.push({ title: '', month: 1 }); renderSteps(); break;
-      case 't-del-step': S.tpl.steps.splice(+v, 1); renderSteps(); break;
+      case 't-del-step': {
+        // номера в «после шагов» сдвигаются вместе со шагами
+        const n = +v + 1;
+        S.tpl.steps.splice(+v, 1);
+        S.tpl.steps.forEach(s => { if (s.after) s.after = s.after.filter(x => x !== n).map(x => (x > n ? x - 1 : x)); });
+        renderSteps();
+        break;
+      }
       case 't-save': await saveTemplate(); break;
       case 't-delete': await deleteTemplate(); break;
       case 't-run': await runTemplate(); break;
@@ -1718,6 +1756,13 @@ document.addEventListener('click', async ev => {
         syncEdit();
         break;
       case 'from': S.edit.repeat_from = v; syncEdit(); break;
+      case 'after': {
+        const set = new Set(S.edit.after_ids || []);
+        set.has(v) ? set.delete(v) : set.add(v);
+        S.edit.after_ids = [...set];
+        syncEdit();
+        break;
+      }
       case 'remind': S.edit.remind_at = v || null; syncEdit(); break;
       case 'wd': {
         const set = new Set(S.edit.repeat_weekdays || []);

@@ -291,12 +291,20 @@ body.work .pill.mode { border-color: var(--accent); }
 .tpl-row span { color: var(--muted); font-size: 13px; }
 .sheet.wide { max-width: 760px; }
 .wds.months { flex-wrap: wrap; }
-.step { display: grid; grid-template-columns: minmax(0, 1fr) 58px 58px 58px 58px 32px; gap: 6px; margin-bottom: 6px; align-items: center; }
+.step { display: grid; grid-template-columns: 20px minmax(0, 1fr) 58px 58px 58px 58px 32px; gap: 6px; margin-bottom: 6px; align-items: center; }
 .inp.num { padding: 10px 6px; text-align: center; }
 .icon.small { width: 32px; height: 32px; font-size: 14px; }
 .step.head { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
 .step.head span:not(:first-child) { text-align: center; }
-.t-subs { margin: -2px 0 10px 18px; }
+.t-subs { margin: -2px 0 10px 26px; }
+.step-n { color: var(--muted); font-size: 13px; text-align: right; }
+.t-after { justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
+.t-after label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.t-after .inp { width: 110px; padding: 6px 8px; }
+.task.locked { opacity: .75; }
+.task .meta .lock { color: var(--warn); }
+.task .meta .lock.late { color: var(--bad); }
+.wds.after { flex-wrap: wrap; }
 .link.small { font-size: 13px; padding: 2px 0; }
 .sub-dash { color: var(--muted); text-align: center; }
 
@@ -355,3 +363,6 @@ body.work .pill.mode { border-color: var(--accent); }
 .pcol .sub { font-size: 13px; }
 .pcol .task .check { width: 24px; height: 24px; flex: none; }
 .pcol .task[draggable] { cursor: grab; }
+/* «План» занимает почти всю ширину большого экрана */
+@media (min-width: 900px) { body.v-plan #app { max-width: 1840px; } }
+@media (max-width: 520px) { .step { grid-template-columns: 14px minmax(0, 1fr) 40px 40px 40px 40px 28px; gap: 4px; } .inp.num { padding: 10px 2px; } }
