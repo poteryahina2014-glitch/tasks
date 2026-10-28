@@ -197,6 +197,7 @@ async function load() {
   if (await autoGenerate()) return load(); // закончился период — шаблоны создали задачи
   render();
   renderReview();
+  firstHelp();
 }
 
 async function complete(t, doneOn = today()) {
@@ -655,7 +656,39 @@ async function deleteBulk() {
 }
 
 // ---------- настройки (шестерёнка) ----------
-const GEAR = '<button class="icon" data-act="settings" title="Настройки">⚙</button>';
+const GEAR = '<button class="icon" data-act="help" title="Справка">?</button><button class="icon" data-act="settings" title="Настройки">⚙</button>';
+
+// ---------- справка ----------
+const HELP = [
+  ['Сегодня', 'Всё, что нужно сделать сегодня: привычки, задачи (и просроченные), события. Кружок — отметить. Нажать на отметку ещё раз — отменить.'],
+  ['Новая задача', '«+» внизу. Вид: <b>задача</b>, <b>привычка</b> (вода, зарядка) или <b>событие</b> (встреча, его не отмечают). Можно указать срок, время, повтор, напоминание и раздел.'],
+  ['Повтор', 'Каждый день / неделю / месяц / N дней или по дням недели. «От выполнения»: следующий срок считается от дня, когда сделали, а не от старого срока.'],
+  ['Утренняя проверка', 'Утром спросит, что сделано из вчерашнего. Несделанная задача переедет на сегодня. У привычки засчитается пропуск, видно статистику «X из 30 дней».'],
+  ['Календарь', 'Месяц или неделя, фильтры по разделам. Нажми на день: там расписание и свободное время между делами.'],
+  ['Разделы', 'Папки для задач. ✎ у раздела: название, цвет, «выключить» на время (задачи прячутся, но не удаляются). «Выбрать» меняет сразу несколько задач. На компьютере задачи можно перетаскивать мышкой.'],
+  ['Быстрое меню', 'Долгое нажатие на задачу (на компьютере — правая кнопка): на сегодня, на завтра, в другой раздел.'],
+  ['🏠 / 💼', 'Личное и работа отдельно, переключатель вверху. В работе есть «Шаблоны»: повторяющиеся проекты из шагов (например, квартальная отчётность), создаются сами.'],
+  ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных.'],
+  ['Устройства', 'Всё хранится в облаке. Входи с той же почтой на телефоне и компьютере. На телефоне: Chrome → ⋮ → «Установить приложение».'],
+];
+
+function openHelp(first = false) {
+  $modal.dataset.kind = 'help';
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet help">
+    <h3>${first ? 'Добро пожаловать! Коротко о главном' : 'Справка'}</h3>
+    ${HELP.map(([h, t]) => `<div class="help-item"><b>${h}</b><div>${t}</div></div>`).join('')}
+    ${first ? '<div class="msg">Эту справку всегда можно открыть снова: «?» вверху.</div>' : ''}
+    <div class="actions"><span></span><button class="btn main" data-act="close">Понятно</button></div>
+  </div></div>`;
+}
+
+// Новому пользователю (ещё ничего нет) справка показывается один раз; отметка — в аккаунте.
+function firstHelp() {
+  if (S.helpShown || S.user?.user_metadata?.help_seen || S.tasks.length || S.sections.length || $modal.dataset.kind) return;
+  S.helpShown = true;
+  openHelp(true);
+  sb.auth.updateUser({ data: { help_seen: true } }).then(({ data }) => { if (data?.user) S.user = data.user; });
+}
 
 function openSettings() {
   $modal.dataset.kind = 'settings';
@@ -1402,6 +1435,7 @@ document.addEventListener('click', async ev => {
       case 'logout': closeModal(); await sb.auth.signOut(); break;
       case 'set-name': await setName(); break;
       case 'settings': openSettings(); break;
+      case 'help': openHelp(); break;
       case 'show-done': S.showDone = !S.showDone; localSet('done', S.showDone ? '1' : ''); openSettings(); render(); break;
       case 'push-on': await pushOn(); break;
       case 'push-off': await pushOff(); break;
