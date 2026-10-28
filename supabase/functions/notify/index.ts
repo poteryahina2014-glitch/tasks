@@ -68,7 +68,10 @@ const due = (at: string, now: number) => now >= minutes(at) && now < minutes(at)
 async function send(subs: any[], msg: object) {
   for (const s of subs) {
     try {
-      await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify(msg));
+      // urgency high — Android будит телефон сразу (с обычной срочностью копит до открытия приложения);
+      // TTL час — если телефон был выключен, старые напоминания потом не сыплются пачкой
+      await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify(msg),
+        { urgency: 'high', TTL: 3600 });
     } catch (e: any) {
       // устройство отписалось или приложение удалено — подписка больше не нужна
       if (e.statusCode === 404 || e.statusCode === 410) await db.from('push_subs').delete().eq('id', s.id);
