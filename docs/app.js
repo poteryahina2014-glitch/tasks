@@ -245,6 +245,7 @@ async function undo(t) {
 
 // ---------- экраны ----------
 function render() {
+  updatePets();
   if (!S.user) return renderLogin();
   if (!S.loaded) { $app.innerHTML = '<div class="empty">Загружаю…</div>'; return; }
   const views = { today: renderToday, nodate: renderNoDate, calendar: renderCalendar, sections: renderSections, plan: renderPlan };
@@ -252,7 +253,6 @@ function render() {
   if (S.view === 'plan' && !planOn()) S.view = 'today';
   document.body.className = 'v-' + S.view + (S.space === 'work' ? ' work' : '');
   $app.innerHTML = views[S.view]() + `
-    ${renderPets()}
     ${S.pick ? pickBar() : '<button class="fab" data-act="new" title="Новая задача">+</button>'}
     <nav class="bottom">
       ${[['today', 'Сегодня'], ['nodate', 'Без срока'], ['calendar', 'Календарь'], ['sections', 'Разделы']]
@@ -747,20 +747,61 @@ async function renamePet(p) {
   render();
 }
 
-function renderPets() {
-  if (S.space !== 'personal' || S.view === 'plan' || !S.tasks.some(t => t.pet)) return '';
-  return Object.keys(PETS).map(p => {
-    const st = petState(p);
-    const joy = S.petJoy && S.petJoy.pet === p && Date.now() - S.petJoy.at < 4000;
-    const why = st.late.slice(0, 3).map(([t, n]) => `<li>${esc(t.title)} — ${t.kind === 'habit' ? `пропущено ${n} р.` : `${n} дн.`}</li>`).join('');
-    return `<aside class="pet ${p} m-${st.mood}">
-      ${joy ? '<div class="hearts"><span>♥</span><span>♥</span><span>♥</span></div>' : ''}
-      ${p === 'cat' ? catSVG(st.mood) : birdSVG(st.mood)}
-      <button class="pet-name" data-act="pet-name" data-v="${p}" title="Переименовать">${esc(petName(p))}</button>
-      <div class="pet-mood">${MOODS[st.mood]}</div>
-      ${why ? `<ul class="pet-why">${why}</ul>` : ''}
-    </aside>`;
-  }).join('');
+// Питомцы живут в своём слое позади задач (#pets): при перерисовке экрана анимации не сбрасываются.
+const P = { cat: { side: 'left', moving: false, dir: 'right' }, bird: { side: 'right', moving: false } };
+const MOVE_MS = { cat: 16000, bird: 3200 };
+let $pets = null;
+const petsShown = () => !!(S.user && S.loaded && S.space === 'personal' && S.view !== 'plan' && S.tasks.some(t => t.pet));
+
+function updatePets() {
+  if (!$pets) {
+    if (!petsShown()) return;
+    $pets = document.createElement('div');
+    $pets.id = 'pets';
+    $pets.innerHTML = `<div class="perch left">${perchSVG()}</div><div class="perch right">${perchSVG(true)}</div>
+      <aside class="pet cat"></aside><aside class="pet bird"></aside>`;
+    document.body.prepend($pets);
+    petsLoop();
+  }
+  $pets.hidden = !petsShown();
+  if (!$pets.hidden) Object.keys(PETS).forEach(fillPet);
+}
+
+// Перерисовать питомца, только если что-то поменялось (настроение, поза, подписи).
+function fillPet(p) {
+  const el = $pets.querySelector('.pet.' + p);
+  const st = petState(p);
+  const pose = P[p].moving ? (p === 'cat' ? 'walk' : 'fly') : st.mood;
+  el.className = `pet ${p} m-${st.mood} ${P[p].side}${P[p].moving ? ' moving' : ''}`;
+  const joy = S.petJoy && S.petJoy.pet === p && Date.now() - S.petJoy.at < 4000 ? S.petJoy.at : 0;
+  const why = st.late.slice(0, 3).map(([t, n]) => `<li>${esc(t.title)} — ${t.kind === 'habit' ? `пропущено ${n} р.` : `${n} дн.`}</li>`).join('');
+  const sig = JSON.stringify([pose, P[p].dir, petName(p), why, joy]);
+  if (el.dataset.sig === sig) return;
+  el.dataset.sig = sig;
+  const pic = pose === 'walk' ? catWalkSVG(P[p].dir === 'left') : pose === 'fly' ? birdFlySVG() : p === 'cat' ? catSVG(pose) : birdSVG(pose);
+  const text = `<button class="pet-name" data-act="pet-name" data-v="${p}" title="Переименовать">${esc(petName(p))}</button>
+      <div class="pet-mood">${MOODS[st.mood]}</div>${why ? `<ul class="pet-why">${why}</ul>` : ''}`;
+  el.innerHTML = (joy ? '<div class="hearts"><span>♥</span><span>♥</span><span>♥</span></div>' : '')
+    + (p === 'cat' ? `<div class="pet-text">${text}</div>${pic}` : pic + `<div class="pet-text">${text}</div>`);
+}
+
+// Иногда кот проходит позади задач на другую сторону, а Яша перелетает на другую ветку.
+function petsLoop() {
+  setTimeout(() => { petMove(); petsLoop(); }, 25000 + Math.random() * 35000);
+}
+
+function petMove(p = Math.random() < .5 ? 'cat' : 'bird') {
+  if (!$pets || $pets.hidden || document.hidden || P[p].moving) return;
+  const mood = petState(p).mood;
+  if (mood === 'faint' || mood === 'sad' || (p === 'bird' && mood !== 'happy')) return; // грустным не до прогулок
+  const to = P[p].side === 'left' ? 'right' : 'left';
+  P[p].moving = true;
+  P[p].dir = to;
+  fillPet(p);
+  void $pets.querySelector('.pet.' + p).offsetWidth; // зафиксировать старое место, чтобы сработал плавный переход
+  P[p].side = to;
+  fillPet(p);
+  setTimeout(() => { P[p].moving = false; fillPet(p); }, MOVE_MS[p]);
 }
 
 // Глаза: открытые (с морганием), полуприкрытые, грустные со слезой, крестики.
@@ -821,6 +862,46 @@ const catLying = () => `<path d="M164 184C182 186 194 184 198 178" stroke="#1414
     <path d="M47 178q8 5 16 0" stroke="#8a90aa" stroke-width="2" fill="none"/><ellipse cx="57" cy="183" rx="4" ry="5" fill="#e8909f"/>
     <path d="M28 172L6 170M80 172L100 168" stroke="#4a4f63" stroke-width="1.5" stroke-linecap="round"/>`;
 
+// Кот идёт (вид сбоку, мордой вправо; left — развернуть влево). Лапы шагают, хвост покачивается.
+function catWalkSVG(left) {
+  const leg = (x, cls) => `<rect class="leg ${cls}" x="${x}" y="96" width="13" height="46" rx="6.5" fill="#14141b" style="transform-origin:${x + 6.5}px 100px"/>`;
+  return `<svg class="pet-svg walk" viewBox="0 0 260 160" aria-hidden="true" style="${left ? 'transform:scaleX(-1)' : ''}">
+    <ellipse cx="135" cy="150" rx="95" ry="7" fill="#000" opacity=".3"/>
+    <g class="stride">
+      <path class="wtail" d="M66 84C34 74 30 34 46 22" stroke="#14141b" stroke-width="11" fill="none" stroke-linecap="round" style="transform-origin:66px 84px"/>
+      ${leg(74, 'a')}${leg(94, 'b')}${leg(166, 'b')}${leg(186, 'a')}
+      <ellipse cx="132" cy="92" rx="72" ry="32" fill="#14141b"/>
+      <path d="M186 52L190 20L210 44Z" fill="#14141b"/><path d="M190 46L192 28L203 42Z" fill="#d98a9a" opacity=".7"/>
+      <path d="M212 46L228 18L232 50Z" fill="#14141b"/><path d="M216 44L226 28L228 46Z" fill="#d98a9a" opacity=".7"/>
+      <circle cx="208" cy="72" r="30" fill="#14141b"/>
+      <g class="blink" style="transform-origin:220px 66px"><ellipse cx="220" cy="66" rx="7" ry="8" fill="#cde05a"/><ellipse cx="222" cy="67" rx="2.2" ry="6" fill="#0a0a0a"/><circle cx="223" cy="63" r="1.6" fill="#fff"/></g>
+      <path d="M234 76l3 5h-6z" fill="#d98a9a"/>
+      <path d="M232 82L258 76M232 85L258 88" stroke="#4a4f63" stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+  </svg>`;
+}
+
+// Яша в полёте: крылья раскрыты и машут, лапки поджаты.
+const birdFlySVG = () => `<svg class="pet-svg fly" viewBox="0 0 200 210" aria-hidden="true">
+    <path d="M94 150L90 196L104 196L106 150Z" fill="#7d808d"/>
+    <g class="wing l" style="transform-origin:76px 100px"><path d="M76 96Q34 60 6 58Q30 92 86 112Z" fill="#80838f"/><path d="M60 82Q36 70 18 66" stroke="#eef0f4" stroke-width="5" fill="none" stroke-linecap="round"/></g>
+    <g class="wing r" style="transform-origin:124px 100px"><path d="M124 96Q166 60 194 58Q170 92 114 112Z" fill="#80838f"/><path d="M140 82Q164 70 182 66" stroke="#eef0f4" stroke-width="5" fill="none" stroke-linecap="round"/></g>
+    <ellipse cx="100" cy="115" rx="30" ry="42" fill="#9a9dab"/>
+    <ellipse cx="100" cy="125" rx="17" ry="26" fill="#aeb1bd"/>
+    <path d="M98 46Q104 22 124 16M94 47Q96 26 112 14M104 46Q116 32 132 30" stroke="#f3d36b" stroke-width="6" fill="none" stroke-linecap="round"/>
+    <circle cx="100" cy="70" r="28" fill="#f3d36b"/>
+    <circle cx="82" cy="80" r="8" fill="#f08a3c"/><circle cx="118" cy="80" r="8" fill="#f08a3c"/>
+    ${petEyes('happy', [89, 111], 66, null, '#f3d36b')}
+    <path d="M94 76Q100 92 106 76Z" fill="#b8a898"/>
+  </svg>`;
+
+// Ветка для Яши (с двух сторон экрана; flip — зеркально)
+const perchSVG = flip => `<svg class="pet-svg" viewBox="0 0 200 210" aria-hidden="true" style="${flip ? 'transform:scaleX(-1)' : ''}">
+    <path d="M4 170Q60 160 180 164" stroke="#8a6a4a" stroke-width="9" fill="none" stroke-linecap="round"/>
+    <path d="M150 164q10-14 24-12M40 166q-6-14 6-22" stroke="#6f8f5a" stroke-width="4" fill="none" stroke-linecap="round"/>
+    <ellipse cx="174" cy="150" rx="7" ry="4" fill="#6f8f5a" transform="rotate(-30 174 150)"/><ellipse cx="47" cy="143" rx="6" ry="3.5" fill="#6f8f5a" transform="rotate(60 47 143)"/>
+  </svg>`;
+
 // Корелла: серая, жёлтая голова с хохолком, оранжевые щёчки, на жёрдочке. В обмороке — лежит под жёрдочкой.
 function birdSVG(mood) {
   const crest = {
@@ -841,7 +922,6 @@ function birdSVG(mood) {
     ${petEyes(mood, [89, 111], 66, null, '#f3d36b')}
     <path d="M94 76Q100 ${mood === 'faint' ? 88 : 92} 106 76Z" fill="#b8a898"/>`;
   return `<svg class="pet-svg" viewBox="0 0 200 210" aria-hidden="true">
-    <path d="M22 164h156" stroke="#8a6a4a" stroke-width="9" stroke-linecap="round"/><path d="M150 164q10-12 22-10" stroke="#6f8f5a" stroke-width="4" fill="none" stroke-linecap="round"/>
     <ellipse cx="100" cy="202" rx="70" ry="6" fill="#000" opacity=".3"/>
     ${mood === 'faint' ? `<g transform="translate(96 190) rotate(90) scale(.66) translate(-104 -110)">${bird}</g>${dizzy(124, 182)}` : `<g class="${mood === 'happy' ? 'bob' : ''}">${bird}</g>`}
   </svg>`;

@@ -367,14 +367,39 @@ body.work .pill.mode { border-color: var(--accent); }
 @media (min-width: 900px) { body.v-plan #app { max-width: 1840px; } }
 @media (max-width: 520px) { .step { grid-template-columns: 14px minmax(0, 1fr) 40px 40px 40px 40px 28px; gap: 4px; } .inp.num { padding: 10px 2px; } }
 
-/* Питомцы по бокам (личный режим, очень широкий экран) */
-.pet { display: none; }
-@media (min-width: 1640px) {
-  .pet { display: block; position: fixed; top: 110px; width: 200px; text-align: center; z-index: 1; }
-  .pet.cat { left: calc((100vw - 1180px) / 4 - 100px); }
-  .pet.bird { right: calc((100vw - 1180px) / 4 - 100px); }
-}
+/* Питомцы — свой слой позади задач (личный режим, очень широкий экран) */
+#pets { display: none; }
+@media (min-width: 1640px) { #pets:not([hidden]) { display: block; } }
+#app { position: relative; z-index: 1; }
+#pets > * { position: fixed; z-index: 0; text-align: center; }
+#pets > .pet.moving { z-index: 2; pointer-events: none; }
 .pet-svg { width: 200px; height: 210px; display: block; overflow: visible; }
+/* Яша наверху на ветке; ветки с обеих сторон */
+.perch, .pet.bird { top: 70px; width: 200px; }
+.perch.left, .pet.bird.left { left: calc((100vw - 1180px) / 4 - 100px); }
+.perch.right, .pet.bird.right { left: calc(100vw - (100vw - 1180px) / 4 - 100px); }
+.pet.bird.moving { transition: left 3.2s ease-in-out; }
+.pet.bird.moving .pet-svg { animation: arc 3.2s ease-in-out; }
+@keyframes arc { 50% { transform: translateY(-70px); } }
+.pet .wing { animation: flap .22s ease-in-out infinite alternate; }
+.pet .wing.r { animation-name: flapr; }
+@keyframes flap { from { transform: rotate(-22deg); } to { transform: rotate(14deg); } }
+@keyframes flapr { from { transform: rotate(22deg); } to { transform: rotate(-14deg); } }
+/* Тимофей крупнее и внизу; подписи над ним */
+.pet.cat { bottom: 74px; width: 280px; display: flex; flex-direction: column; align-items: center; }
+.pet.cat .pet-svg { width: 280px; height: 294px; }
+.pet.cat .pet-svg.walk { width: 300px; height: 185px; }
+.pet.cat.left { left: calc((100vw - 1180px) / 4 - 140px); }
+.pet.cat.right { left: calc(100vw - (100vw - 1180px) / 4 - 140px); }
+.pet.cat.moving { transition: left 16s linear; opacity: .8; }
+.pet.cat.moving .pet-svg { filter: drop-shadow(0 0 2px #9aa1bd); } /* идёт «сквозь» задачи полупрозрачным */
+.pet .stride { animation: stride .5s ease-in-out infinite; }
+@keyframes stride { 50% { transform: translateY(-3px); } }
+.pet .leg.a { animation: legA .5s ease-in-out infinite alternate; }
+.pet .leg.b { animation: legA .5s ease-in-out infinite alternate-reverse; }
+@keyframes legA { from { transform: rotate(-20deg); } to { transform: rotate(20deg); } }
+.pet .wtail { animation: tail 1.2s ease-in-out infinite; }
+.pet.moving .pet-text { visibility: hidden; }
 .pet-name { font-weight: 700; font-size: 17px; color: var(--text); padding: 2px 8px; border-radius: 8px; }
 .pet-name:hover { background: var(--card); }
 .pet-mood { color: var(--good); font-size: 14px; }
