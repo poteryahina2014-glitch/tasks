@@ -291,7 +291,7 @@ body.work .pill.mode { border-color: var(--accent); }
 .tpl-row span { color: var(--muted); font-size: 13px; }
 .sheet.wide { max-width: 760px; }
 .wds.months { flex-wrap: wrap; }
-.step { display: grid; grid-template-columns: minmax(0, 1fr) 58px 58px 58px 32px; gap: 6px; margin-bottom: 6px; align-items: center; }
+.step { display: grid; grid-template-columns: minmax(0, 1fr) 58px 58px 58px 58px 32px; gap: 6px; margin-bottom: 6px; align-items: center; }
 .inp.num { padding: 10px 6px; text-align: center; }
 .icon.small { width: 32px; height: 32px; font-size: 14px; }
 .step.head { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
@@ -331,3 +331,27 @@ body.work .pill.mode { border-color: var(--accent); }
 .wds.remind { flex-wrap: wrap; align-items: center; }
 .wds.remind .inp { width: auto; padding: 6px 8px; }
 .wds.remind .inp.on { border-color: var(--accent); }
+
+/* План недели (рабочий режим, компьютер) */
+.plan { display: grid; gap: 10px; align-items: start; }
+.pcol { min-height: 160px; background: color-mix(in srgb, var(--card) 45%, transparent); border: 1px solid var(--border); border-radius: 12px; padding: 8px; }
+.pcol.today { border-color: var(--accent); }
+.pcol.past { opacity: .7; }
+.pcol.unplanned { position: sticky; top: 72px; max-height: calc(100vh - 150px); overflow-y: auto; }
+.phead { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; font-size: 14px; margin-bottom: 4px; }
+.hours { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.hours.warn { color: var(--warn); }
+.hours.over { color: var(--bad); font-weight: 700; }
+.pbar { height: 4px; background: var(--track); border-radius: 2px; margin-bottom: 8px; overflow: hidden; }
+.pbar i { display: block; height: 100%; background: var(--good); }
+.pbar.warn i { background: var(--warn); }
+.pbar.over i { background: var(--bad); }
+.pnote { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+.meet { font-size: 13px; padding: 6px 8px; margin-bottom: 6px; border-left: 3px solid var(--accent); background: var(--card); border-radius: 6px; cursor: pointer; }
+.meet .time { color: var(--accent); font-weight: 600; }
+.pcol .task { padding: 8px; gap: 8px; margin-bottom: 6px; }
+.pcol .task .title { font-size: 14px; overflow-wrap: break-word; hyphens: auto; }
+.pcol .task .meta { font-size: 12px; gap: 2px 8px; }
+.pcol .sub { font-size: 13px; }
+.pcol .task .check { width: 24px; height: 24px; flex: none; }
+.pcol .task[draggable] { cursor: grab; }

@@ -153,6 +153,7 @@ const busyEvents = () => (S.space === 'personal'
   ? activeAll().filter(t => isEvent(t) && spaceOf(t) === 'work' && !pausedSec(t.section_id)) : []);
 const isEvent = t => t.kind === 'event';
 const hhmm = s => (s ? s.slice(0, 5) : '');
+const fmtH = h => String(Math.round(h * 10) / 10).replace('.', ','); // 2.5 → «2,5»
 // готовые часы для «Напомнить»
 const REMIND_TIMES = ['07:00', '09:00', '12:00', '14:00', '17:00', '20:00'];
 const timeLabel = t => (t.start_time ? hhmm(t.start_time) + (t.end_time ? '–' + hhmm(t.end_time) : '') : '');
@@ -209,6 +210,15 @@ async function load() {
 const subsOf = t => Array.isArray(t.checklist) ? t.checklist : [];
 const cleanSubs = list => list.map(s => ({ t: (s.t || '').trim(), d: !!s.d })).filter(s => s.t);
 
+// У повторяющейся задачи следующий раз подпункты снова не отмечены и план не назначен.
+async function resetRepeat(t) {
+  if (!t.repeat_unit) return;
+  const upd = {};
+  if (subsOf(t).some(s => s.d)) upd.checklist = subsOf(t).map(s => ({ ...s, d: false }));
+  if (t.plan_date) upd.plan_date = null;
+  if (Object.keys(upd).length) await call(sb.from('tasks').update(upd).eq('id', t.id));
+}
+
 async function toggleSub(t, i) {
   t.checklist = subsOf(t).map((s, k) => k === i ? { ...s, d: !s.d } : s);
   render();
@@ -217,9 +227,7 @@ async function toggleSub(t, i) {
 
 async function complete(t, doneOn = today()) {
   await call(sb.rpc('complete_task', { p_task: t.id, p_done_on: doneOn }));
-  // у повторяющейся задачи следующий раз подпункты снова не отмечены
-  if (t.repeat_unit && subsOf(t).some(s => s.d))
-    await call(sb.from('tasks').update({ checklist: subsOf(t).map(s => ({ ...s, d: false })) }).eq('id', t.id));
+  await resetRepeat(t);
   await load();
   const next = S.tasks.find(x => x.id === t.id);
   const msg = next && !next.done_on && next.due_date ? `Готово! Следующий раз: ${dateLabel(next.due_date)}` : 'Готово!';
@@ -235,14 +243,15 @@ async function undo(t) {
 function render() {
   if (!S.user) return renderLogin();
   if (!S.loaded) { $app.innerHTML = '<div class="empty">Загружаю…</div>'; return; }
-  const views = { today: renderToday, nodate: renderNoDate, calendar: renderCalendar, sections: renderSections };
+  const views = { today: renderToday, nodate: renderNoDate, calendar: renderCalendar, sections: renderSections, plan: renderPlan };
   if (!views[S.view]) S.view = 'sections'; // была вкладка «Проекты» — теперь проекты живут в «Разделах»
+  if (S.view === 'plan' && !planOn()) S.view = 'today';
   document.body.className = 'v-' + S.view + (S.space === 'work' ? ' work' : '');
   $app.innerHTML = views[S.view]() + `
     ${S.pick ? pickBar() : '<button class="fab" data-act="new" title="Новая задача">+</button>'}
     <nav class="bottom">
       ${[['today', 'Сегодня'], ['nodate', 'Без срока'], ['calendar', 'Календарь'], ['sections', 'Разделы']]
-        .map(([k, n]) => `<button class="pill ${S.view === k ? 'on' : ''}" data-act="view" data-v="${k}">${n}</button>`).join('')}
+        .concat(planOn() ? [['plan', 'План']] : []).map(([k, n]) => `<button class="pill ${S.view === k ? 'on' : ''}" data-act="view" data-v="${k}">${n}</button>`).join('')}
     </nav>`;
 }
 
@@ -253,6 +262,10 @@ function taskRow(t, opts = {}) {
   if (t.start_date && !isEvent(t) && t.start_date > today()) meta.push(`<span>с ${dateLabel(t.start_date)}</span>`);
   if (opts.date && due) meta.push(`<span class="${due < today() && !isEvent(t) ? 'late' : ''}">${t.start_date && !isEvent(t) ? 'до ' : ''}${dateLabel(due)}${t.end_date ? ' — ' + dateLabel(t.end_date) : ''}</span>`);
   if (t.start_time) meta.unshift(`<span class="time">${timeLabel(t)}</span>`);
+  // у запланированной задачи дедлайн виден всегда; красный — прошёл или план позже него
+  if (t.plan_date && t.due_date && !opts.date && !opts.done)
+    meta.push(`<span class="${t.due_date < today() || t.plan_date > t.due_date ? 'late' : ''}">до ${dateLabel(t.due_date)}</span>`);
+  if (t.estimate) meta.push(`<span>⏱ ${fmtH(t.estimate)} ч</span>`);
   if (t.remind_at) meta.push(`<span>🔔 ${hhmm(t.remind_at)}</span>`);
   if (isEvent(t) && !opts.mark) opts = { ...opts, mark: '•', markStyle: 'border-color:var(--accent);color:var(--accent)' };
   if (sec && !opts.noSection) meta.push(`<span>${esc(sec.name)}</span>`);
@@ -278,7 +291,8 @@ function taskRow(t, opts = {}) {
       ? `<div class="check" style="${opts.markStyle || ''}">${opts.mark}</div>`
       : `<button class="check" data-act="${opts.done ? 'undo' : 'done'}" data-id="${t.id}" title="${opts.done ? 'Отменить' : 'Сделано'}">✓</button>`;
   // drag — строка в «Разделах»: её можно перетаскивать и выбирать
-  const dnd = opts.drag ? ` data-drag="${t.id}" data-sec="${t.section_id || ''}"${S.pick ? '' : ' draggable="true"'}` : '';
+  const dnd = opts.drag ? ` data-drag="${t.id}" data-sec="${t.section_id || ''}"${S.pick ? '' : ' draggable="true"'}`
+    : opts.plan ? ` data-plan="${t.id}" draggable="true"` : ''; // plan — карточка в «Плане», тащится по дням
   const act = S.pick && opts.drag ? 'pick' : 'edit';
   // строка залита бледным цветом своего раздела
   const tint = sec ? ` style="--sec:${esc(sec.color)}"` : '';
@@ -295,13 +309,13 @@ function taskRow(t, opts = {}) {
 function renderToday() {
   const now = new Date();
   const t0 = today();
-  const due = active().filter(t => !isEvent(t) && t.due_date && t.due_date <= t0)
+  const due = active().filter(t => !isEvent(t) && reviewDay(t) && reviewDay(t) <= t0)
     .sort((a, b) => (a.start_time || '99') < (b.start_time || '99') ? -1 : 1);
   const habits = due.filter(t => t.kind === 'habit');
   const tasks = due.filter(t => t.kind !== 'habit');
   const started = t => t.start_date && t.start_date <= t0;
   // начатые, но со сроком позже — «в работе»
-  const inWork = active().filter(t => !isEvent(t) && started(t) && (!t.due_date || t.due_date > t0)).sort(byPos);
+  const inWork = active().filter(t => !isEvent(t) && !t.plan_date && started(t) && (!t.due_date || t.due_date > t0)).sort(byPos);
   const events = [...new Map((occurrences(t0, t0)[t0] || []).filter(o => isEvent(o.t) && spaceOf(o.t) === S.space).map(o => [o.t.id, o.t])).values()]
     .sort((a, b) => (a.start_time || '') < (b.start_time || '') ? -1 : 1);
   // сделано сегодня: последние отметки «done» сегодняшним числом
@@ -590,6 +604,102 @@ async function moveTask(id, secId, targetId, after) {
   await Promise.all(changes.map(([cid, upd]) => call(sb.from('tasks').update(upd).eq('id', cid))));
 }
 
+// ---------- план недели (рабочий режим, только компьютер) ----------
+const DAY_NORM = 8, DAY_MAX = 11; // часов в день: до 8 — обычно, до 11 — плотно, больше — перегруз
+const planOn = () => S.space === 'work' && matchMedia('(min-width: 900px)').matches;
+// не сделано в запланированный день — переезжает на сегодня
+const planDay = t => (t.plan_date && t.plan_date < today() ? today() : t.plan_date);
+const minutes = s => +s.slice(0, 2) * 60 + +s.slice(3, 5);
+const planTasks = () => active().filter(t => !isEvent(t) && t.kind !== 'habit');
+
+// Загрузка дня: встречи (события со временем), запланированные задачи, уже сделанное; сумма часов.
+function dayLoad(d, occ) {
+  const t0 = today();
+  const tasks = planTasks().filter(t => planDay(t) === d).sort(byPos);
+  const meets = [...new Map((occ[d] || []).filter(o => isEvent(o.t) && o.t.start_time && o.t.end_time).map(o => [o.t.id, o.t])).values()]
+    .sort((a, b) => (a.start_time < b.start_time ? -1 : 1));
+  const done = d <= t0 ? [...new Set(S.logs.filter(l => l.status === 'done' && l.done_on === d).map(l => l.task_id))]
+    .map(byId).filter(t => t && spaceOf(t) === S.space && t.kind !== 'habit' && !isEvent(t)) : [];
+  const h = meets.reduce((s, t) => s + Math.max(0, minutes(t.end_time) - minutes(t.start_time)) / 60, 0)
+    + tasks.concat(done).reduce((s, t) => s + (+t.estimate || 0), 0);
+  return { tasks, meets, done, h, noEst: tasks.filter(t => !t.estimate).length };
+}
+
+const loadCls = h => (h > DAY_MAX ? 'over' : h > DAY_NORM ? 'warn' : '');
+
+function renderPlan() {
+  const t0 = today();
+  const ws = S.planWeek || weekStart(t0);
+  const occ = occurrences(ws, addDays(ws, 6));
+  // пн–пт; суббота и воскресенье — только если на них что-то есть
+  const days = [...Array(7)].map((_, i) => addDays(ws, i)).filter((d, i) => i < 5 || dayLoad(d, occ).tasks.length || dayLoad(d, occ).meets.length);
+  const cols = days.map(d => {
+    const L = dayLoad(d, occ);
+    const cls = loadCls(L.h);
+    const pd = parse(d);
+    return `<div class="pcol ${d === t0 ? 'today' : ''} ${d < t0 ? 'past' : ''}" data-pday="${d}">
+      <div class="phead"><b>${WD[isodow(d) - 1]}, ${pd.getDate()} ${MONTHS_OF[pd.getMonth()].slice(0, 3)}</b>
+        <span class="hours ${cls}" title="Рабочий день ${DAY_NORM} ч, больше ${DAY_MAX} ч — перегруз">${cls === 'over' ? '⚠ ' : ''}${fmtH(L.h)} ч</span></div>
+      <div class="pbar ${cls}"><i style="width:${Math.min(100, L.h / DAY_MAX * 100)}%"></i></div>
+      ${L.noEst ? `<div class="pnote">без оценки: ${L.noEst}</div>` : ''}
+      ${L.meets.map(t => `<div class="meet" data-act="edit" data-id="${t.id}"><span class="time">${timeLabel(t)}</span> ${esc(t.title)}</div>`).join('')}
+      ${L.tasks.map(t => taskRow(t, { plan: true, noSection: true, ...(t.plan_date < t0 ? { note: 'план был ' + dateLabel(t.plan_date), noteCls: 'late' } : {}) })).join('')}
+      ${L.done.map(t => taskRow(t, { done: true, noSection: true })).join('')}
+    </div>`;
+  }).join('');
+  const free = planTasks().filter(t => !t.plan_date).sort((a, b) => ((a.due_date || '9') < (b.due_date || '9') ? -1 : 1));
+  const label = ws === weekStart(t0) ? 'Эта неделя' : `${dateLabel(ws)} — ${dateLabel(addDays(ws, 6))}`;
+  return `<header class="top"><h1>План</h1>
+      <div class="seg"><button class="pill" data-act="pweek" data-n="-1">‹</button><button class="pill" data-act="pweek" data-n="0">${label}</button><button class="pill" data-act="pweek" data-n="1">›</button></div>
+      <div class="tools">${MODE()}${GEAR}</div></header>
+    <div class="plan" style="grid-template-columns:repeat(${days.length}, minmax(0, 1fr)) 250px">
+      ${cols}
+      <div class="pcol unplanned" data-pday="">
+        <div class="phead"><b>Не распланировано</b><span class="hours">${free.length}</span></div>
+        <div class="pnote">Перетащи задачу на день. Обратно сюда — снять план.</div>
+        ${free.map(t => taskRow(t, { plan: true, date: true, noSection: true })).join('') || '<div class="empty small">Всё распланировано</div>'}
+      </div>
+    </div>`;
+}
+
+// Перетаскивание карточек «Плана» между днями
+let planId = null;
+document.addEventListener('dragstart', e => {
+  const c = e.target.closest && e.target.closest('[data-plan]');
+  if (!c) return;
+  planId = c.dataset.plan;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', planId);
+  c.classList.add('dragging');
+});
+document.addEventListener('dragend', () => { planId = null; });
+document.addEventListener('dragover', e => {
+  if (!planId) return;
+  const col = e.target.closest('[data-pday]');
+  clearDrop();
+  if (!col || (col.dataset.pday && col.dataset.pday < today())) return;
+  e.preventDefault();
+  col.classList.add('drop-in');
+});
+document.addEventListener('drop', async e => {
+  if (!planId) return;
+  const col = e.target.closest('[data-pday]');
+  const t = byId(planId);
+  clearDrop();
+  if (!col || !t) return;
+  e.preventDefault();
+  const d = col.dataset.pday || null;
+  if (d && d < today()) return;
+  if ((t.plan_date || null) === d) return;
+  t.plan_date = d;
+  render();
+  if (d) {
+    const h = dayLoad(d, occurrences(d, d)).h;
+    if (h > DAY_MAX) toast(`⚠ ${dateLabel(d)}: ${fmtH(h)} ч — больше ${DAY_MAX}`);
+  }
+  await call(sb.from('tasks').update({ plan_date: d }).eq('id', t.id));
+});
+
 // ---------- выбор нескольких задач ----------
 function pickBar() {
   const n = S.pick.size;
@@ -693,6 +803,8 @@ const HELP = [
   ['Разделы', 'Папки для задач. ✎ у раздела: название, цвет, «выключить» на время (задачи прячутся, но не удаляются). «Выбрать» меняет сразу несколько задач. На компьютере задачи можно перетаскивать мышкой.'],
   ['Быстрое меню', 'Долгое нажатие на задачу (на компьютере — правая кнопка): на сегодня, на завтра, в другой раздел.'],
   ['🏠 / 💼', 'Личное и работа отдельно, переключатель вверху. В работе есть «Шаблоны»: повторяющиеся проекты из шагов (например, квартальная отчётность), создаются сами.'],
+  ['Подпункты', 'В окне задачи «+ Подпункт»: письма, проверки и т.п. Отмечаются прямо под задачей. В шаблоне у шага — «+ подзадача».'],
+  ['План (работа, компьютер)', '«Срок» — дедлайн, «План» — день, когда делаешь, и сколько часов займёт. Во вкладке «План» неделя: задачи перетаскиваются по дням, вверху сумма часов вместе со встречами. Больше 8 ч — жёлтым, больше 11 ч — ⚠ красным.'],
   ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных.'],
   ['Устройства', 'Всё хранится в облаке. Входи с той же почтой на телефоне и компьютере. На телефоне: Chrome → ⋮ → «Установить приложение».'],
 ];
@@ -850,9 +962,11 @@ function authError(e) {
 }
 
 // ---------- утренняя проверка ----------
+// Запланированная задача живёт по плану: в проверку попадает, когда прошёл день плана (не дедлайн).
+const reviewDay = t => t.plan_date || t.due_date;
 function reviewList() {
   const t0 = today();
-  return active().filter(t => !isEvent(t) && t.due_date && t.due_date < t0).sort((a, b) => a.due_date < b.due_date ? -1 : 1);
+  return active().filter(t => !isEvent(t) && reviewDay(t) && reviewDay(t) < t0).sort((a, b) => reviewDay(a) < reviewDay(b) ? -1 : 1);
 }
 
 function renderReview() {
@@ -861,13 +975,13 @@ function renderReview() {
     if ($modal.dataset.kind === 'review') { $modal.innerHTML = ''; $modal.dataset.kind = ''; }
     return;
   }
-  const onlyYesterday = list.every(t => t.due_date === addDays(today(), -1));
+  const onlyYesterday = list.every(t => reviewDay(t) === addDays(today(), -1));
   $modal.dataset.kind = 'review';
   $modal.innerHTML = `<div class="overlay"><div class="sheet review">
     <h3>Привет${userName() ? ', ' + esc(userName()) : ''}! ${onlyYesterday ? 'Что из вчерашнего получилось сделать?' : 'Что из этого получилось сделать?'}</h3>
     ${list.map(t => `<div class="task ${t.kind === 'habit' ? 'habit' : ''}">
       <div class="body"><div class="title">${esc(t.title)}</div>
-        <div class="meta"><span>${dateLabel(t.due_date)}</span><span>${t.kind === 'habit' ? 'привычка' : 'задача'}</span></div></div>
+        <div class="meta"><span>${t.plan_date ? 'план: ' : ''}${dateLabel(reviewDay(t))}</span><span>${t.kind === 'habit' ? 'привычка' : 'задача'}</span>${t.plan_date && t.due_date ? `<span>дедлайн ${dateLabel(t.due_date)}</span>` : ''}</div></div>
       <div class="yn">
         <button class="btn good" data-act="r-yes" data-id="${t.id}">Сделано</button>
         <button class="btn" data-act="r-no" data-id="${t.id}" title="${t.kind === 'habit' && t.repeat_unit ? 'Засчитать пропуск' : 'Перенести на сегодня'}">Не сделано</button>
@@ -901,6 +1015,9 @@ function openEdit(t) {
       </div></div>
     <div class="field" id="f-startdate-box"><label>Начать с (можно не указывать)</label>
       <input class="inp" id="f-startdate" type="date" value="${e.start_date || ''}"></div>
+    <div class="field" id="f-plan-box"><label>План: в какой день делаю («Срок» выше — дедлайн)</label>
+      <div class="row"><input class="inp" id="f-plan" type="date" value="${e.plan_date || ''}" style="flex:1">
+        займёт <input class="inp num" id="f-est" type="number" min="0" step="0.5" value="${e.estimate || ''}" style="max-width:70px"> ч</div></div>
     <div class="field" id="f-end-box"><label>По какое число (если событие на несколько дней)</label>
       <input class="inp" id="f-enddate" type="date" value="${e.end_date || ''}"></div>
     <div class="field"><label>Время (можно не указывать)</label>
@@ -969,7 +1086,11 @@ function syncEdit() {
   document.getElementById('f-nodate').style.display = isEvent(e) ? 'none' : '';
   document.getElementById('f-date-label').textContent = isEvent(e) ? 'Дата' : 'Срок';
   document.getElementById('f-subs-box').style.display = isEvent(e) ? 'none' : '';
+  document.getElementById('f-plan-box').style.display = planFields(e) ? '' : 'none';
 }
+
+// План и оценка часов — у обычных задач рабочего режима
+const planFields = e => !isEvent(e) && e.kind !== 'habit' && (S.space === 'work' || (e.id && spaceOf(e) === 'work'));
 
 // Подпункты в окне задачи: галочка, текст, ✕.
 function renderSubs() {
@@ -1032,6 +1153,10 @@ async function saveEdit() {
   if (hhmm(row.remind_at) !== hhmm(e.remind_at_was)) row.reminded_on = null;
   // пока база не обновлена (005_push.sql), не трогаем новые поля у задач без напоминания
   if (!row.remind_at && !e.remind_at_was) { delete row.remind_at; delete row.reminded_on; }
+  if (planFields(e)) {
+    row.plan_date = document.getElementById('f-plan').value || null;
+    row.estimate = parseFloat(document.getElementById('f-est').value.replace(',', '.')) || null;
+  } else if (e.plan_date || e.estimate) { row.plan_date = null; row.estimate = null; }
   const subs = isEvent(e) ? [] : cleanSubs(e.checklist);
   if (subs.length || e.had_subs) row.checklist = subs.length ? subs : null;
   const sec = S.sections.find(x => x.id === row.section_id);
@@ -1218,6 +1343,7 @@ async function createProject(tpl, p) {
     start_date: s.start_day ? dayAfter(p.end, s.month || 1, s.start_day) : null,
     due_date: s.due_day ? dayAfter(p.end, s.month || 1, s.due_day) : null,
     ...(s.subs && s.subs.length ? { checklist: s.subs.map(x => ({ t: x, d: false })) } : {}),
+    ...(s.hours ? { estimate: s.hours } : {}),
   }));
   if (rows.length) await call(sb.from('tasks').insert(rows));
   // ручное создание за старый период не должно откатывать автосоздание назад
@@ -1343,11 +1469,12 @@ function openTemplate(tpl) {
 
 function renderSteps() {
   const num = (i, k, ph) => `<input class="inp num" type="number" min="1" max="31" data-step="${i}" data-k="${k}" placeholder="${ph}" value="${S.tpl.steps[i][k] || ''}">`;
-  document.getElementById('t-steps').innerHTML = '<div class="step head"><span>Шаг</span><span>с</span><span>до</span><span>мес.</span><span></span></div>'
+  document.getElementById('t-steps').innerHTML = '<div class="step head"><span>Шаг</span><span>с</span><span>до</span><span>мес.</span><span>часов</span><span></span></div>'
     + S.tpl.steps.map((s, i) => `<div class="step">
       <input class="inp" data-step="${i}" data-k="title" placeholder="Что сделать" value="${esc(s.title || '')}">
       ${num(i, 'start_day', 'с')}${num(i, 'due_day', 'до')}
       <input class="inp num" type="number" min="1" max="12" data-step="${i}" data-k="month" title="Месяц после конца периода" value="${s.month || 1}">
+      <input class="inp num" type="number" min="0" step="0.5" data-step="${i}" data-k="hours" title="Сколько примерно часов займёт" placeholder="ч" value="${s.hours || ''}">
       <button class="icon small" data-act="t-del-step" data-v="${i}" title="Убрать шаг">✕</button>
     </div>
     <div class="t-subs">${(s.subs || []).map((x, j) => `<div class="subrow">
@@ -1374,7 +1501,7 @@ document.addEventListener('input', ev => {
   const i = ev.target.dataset.step;
   if (i === undefined || !S.tpl) return;
   const k = ev.target.dataset.k;
-  S.tpl.steps[i][k] = k === 'title' ? ev.target.value : parseInt(ev.target.value) || null;
+  S.tpl.steps[i][k] = k === 'title' ? ev.target.value : k === 'hours' ? parseFloat(ev.target.value) || null : parseInt(ev.target.value) || null;
 });
 
 // silent — только сохранить и вернуть шаблон (для «Создать задачи»), без вопросов и закрытия окна
@@ -1390,6 +1517,7 @@ async function saveTemplate(silent = false) {
     steps: t.steps.filter(s => s.title && s.title.trim()).map(s => ({
       title: s.title.trim(), start_day: s.start_day || null, due_day: s.due_day || null, month: s.month || 1,
       subs: (s.subs || []).map(x => x.trim()).filter(Boolean),
+      hours: s.hours || null,
     })),
     lead_days: Math.max(0, parseInt(document.getElementById('t-lead').value) || 0),
   };
@@ -1560,6 +1688,7 @@ document.addEventListener('click', async ev => {
       case 'done': el.classList.add('ok'); await complete(byId(id)); break;
       case 'undo': await undo(byId(id)); break;
       case 'sub': await toggleSub(byId(id), +v); break;
+      case 'pweek': S.planWeek = +el.dataset.n ? addDays(S.planWeek || weekStart(today()), 7 * el.dataset.n) : null; render(); break;
       case 'sub-m': await toggleSubModal(+v); break;
       case 'sub-add':
         S.edit.checklist.push({ t: '', d: false });
@@ -1623,8 +1752,13 @@ document.addEventListener('click', async ev => {
       case 's-delete': await deleteSection(id); break;
       case 's-pause': await togglePause(id); break;
       case 'import': closeModal(); document.getElementById('import-file').click(); break;
-      case 'r-yes': { const t = byId(id); await call(sb.rpc('complete_task', { p_task: id, p_done_on: t.due_date })); await load(); break; }
-      case 'r-no': await call(sb.rpc('miss_task', { p_task: id, p_today: today() })); await load(); break;
+      case 'r-yes': { const t = byId(id); await call(sb.rpc('complete_task', { p_task: id, p_done_on: reviewDay(t) })); await resetRepeat(t); await load(); break; }
+      // запланированная задача: «не сделано» переносит план на сегодня, дедлайн не трогаем
+      case 'r-no':
+        if (byId(id).plan_date) await call(sb.from('tasks').update({ plan_date: today() }).eq('id', id));
+        else await call(sb.rpc('miss_task', { p_task: id, p_today: today() }));
+        await load();
+        break;
     }
   } catch (e) {
     console.error(e);
