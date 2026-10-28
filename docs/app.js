@@ -458,7 +458,7 @@ function renderSections() {
     .concat(mySecs().map(s => item(s.id, s.name, s.color, count(s.id))))
     .concat(count(null) ? [item('none', 'Без раздела', null, count(null))] : [])
     .concat(['<button class="pill side-item add" data-act="new-section">+ Раздел</button>'])
-    .concat(S.space === 'work' ? ['<button class="pill side-item add" data-act="templates">⟳ Шаблоны</button>'] : []);
+    .concat(S.space === 'work' ? ['<button class="pill side-item add tpl-btn" data-act="templates">⟳ Шаблоны</button>'] : []);
 
   const groups = sel === null
     ? mySecs().map(s => [s.id, s.name, s.color]).concat([[null, 'Без раздела', null]])
@@ -663,6 +663,7 @@ function openSettings() {
     <h3>Настройки</h3>
     <div class="menu">
       <button class="btn ${S.showDone ? 'on' : ''}" data-act="show-done">${S.showDone ? '✓ ' : ''}Показывать выполненные</button>
+      <button class="btn" data-act="set-name">Имя для приветствия: ${userName() ? esc(userName()) : 'не задано'}</button>
       <button class="btn" data-act="import">Загрузить задачи из файла</button>
       <button class="btn" data-act="logout">Выйти из аккаунта</button>
     </div>
@@ -671,6 +672,17 @@ function openSettings() {
     <div class="actions"><span></span><button class="btn" data-act="close">Закрыть</button></div>
   </div></div>`;
   renderPush();
+}
+
+// Имя для приветствия — у каждого своё, хранится в аккаунте (user_metadata), база не нужна.
+const userName = () => (S.user?.user_metadata?.name || '').trim();
+async function setName() {
+  const name = prompt('Как тебя зовут? (для приветствия)', userName());
+  if (name === null) return;
+  const { data, error } = await sb.auth.updateUser({ data: { name: name.trim() } });
+  if (error) return toast('Не получилось сохранить: ' + error.message);
+  S.user = data.user;
+  openSettings();
 }
 
 // ---------- уведомления ----------
@@ -753,6 +765,7 @@ function renderLogin(msg = '', err = false) {
     <h1>Задачи</h1>
     <div class="field"><label>Почта</label><input class="inp" id="email" type="email" autocomplete="email"></div>
     <div class="field"><label>Пароль</label><input class="inp" id="pass" type="password" autocomplete="current-password"></div>
+    <div class="field"><label>Имя для приветствия (только при регистрации)</label><input class="inp" id="name" autocomplete="given-name"></div>
     <div class="row"><button class="btn main" data-act="login">Войти</button><button class="btn" data-act="signup">Зарегистрироваться</button></div>
     <div class="msg ${err ? 'err' : ''}">${esc(msg)}</div>
   </div>`;
@@ -764,7 +777,7 @@ async function auth(kind) {
   if (!email || !password) return renderLogin('Введи почту и пароль', true);
   const { data, error } = kind === 'login'
     ? await sb.auth.signInWithPassword({ email, password })
-    : await sb.auth.signUp({ email, password });
+    : await sb.auth.signUp({ email, password, options: { data: { name: document.getElementById('name').value.trim() } } });
   if (error) return renderLogin(authError(error), true);
   if (kind === 'signup' && !data.session) renderLogin('Готово! Открой письмо от Supabase, подтверди почту и потом войди.');
 }
@@ -793,13 +806,13 @@ function renderReview() {
   const onlyYesterday = list.every(t => t.due_date === addDays(today(), -1));
   $modal.dataset.kind = 'review';
   $modal.innerHTML = `<div class="overlay"><div class="sheet review">
-    <h3>Привет, ${esc(CONFIG.name)}! ${onlyYesterday ? 'Что из вчерашнего ты успела сделать?' : 'Что из этого ты успела сделать?'}</h3>
+    <h3>Привет${userName() ? ', ' + esc(userName()) : ''}! ${onlyYesterday ? 'Что из вчерашнего получилось сделать?' : 'Что из этого получилось сделать?'}</h3>
     ${list.map(t => `<div class="task ${t.kind === 'habit' ? 'habit' : ''}">
       <div class="body"><div class="title">${esc(t.title)}</div>
         <div class="meta"><span>${dateLabel(t.due_date)}</span><span>${t.kind === 'habit' ? 'привычка' : 'задача'}</span></div></div>
       <div class="yn">
-        <button class="btn good" data-act="r-yes" data-id="${t.id}">Сделала</button>
-        <button class="btn" data-act="r-no" data-id="${t.id}" title="${t.kind === 'habit' && t.repeat_unit ? 'Засчитать пропуск' : 'Перенести на сегодня'}">Не сделала</button>
+        <button class="btn good" data-act="r-yes" data-id="${t.id}">Сделано</button>
+        <button class="btn" data-act="r-no" data-id="${t.id}" title="${t.kind === 'habit' && t.repeat_unit ? 'Засчитать пропуск' : 'Перенести на сегодня'}">Не сделано</button>
       </div></div>`).join('')}
   </div></div>`;
 }
@@ -999,7 +1012,7 @@ async function importFile(file) {
   const tasks = data.tasks || [];
   const newSecs = (data.sections || []).filter(s => !S.sections.some(x => x.name === s.name));
   if (!tasks.length) return toast('В файле нет задач');
-  if (!confirm(`Загрузить ${tasks.length} задач и ${newSecs.length} новых разделов?\nЕсли уже загружала этот файл, задачи повторятся.`)) return;
+  if (!confirm(`Загрузить ${tasks.length} задач и ${newSecs.length} новых разделов?\nЕсли этот файл уже загружали, задачи повторятся.`)) return;
   if (newSecs.length) {
     await call(sb.from('sections').insert(newSecs.map((s, i) => ({ name: s.name, color: s.color, position: S.sections.length + i }))));
   }
@@ -1169,8 +1182,8 @@ function openTemplates() {
     <h2>Новый шаблон</h2>
     <div class="row">
       <button class="btn" data-act="tpl-new">С нуля</button>
-      <button class="btn" data-act="tpl-example" data-v="report">По заготовке: квартальная отчётность</button>
-      <button class="btn" data-act="tpl-example" data-v="harvest">По заготовке: оценка урожая</button>
+      <button class="btn" data-act="tpl-example" data-v="report">Квартальная отчётность</button>
+      <button class="btn" data-act="tpl-example" data-v="harvest">Оценка урожая</button>
     </div>
     <div class="actions"><span></span><button class="btn" data-act="close">Закрыть</button></div>
   </div></div>`;
@@ -1387,6 +1400,7 @@ document.addEventListener('click', async ev => {
     switch (act) {
       case 'login': case 'signup': await auth(act); break;
       case 'logout': closeModal(); await sb.auth.signOut(); break;
+      case 'set-name': await setName(); break;
       case 'settings': openSettings(); break;
       case 'show-done': S.showDone = !S.showDone; localSet('done', S.showDone ? '1' : ''); openSettings(); render(); break;
       case 'push-on': await pushOn(); break;
