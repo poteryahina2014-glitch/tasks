@@ -29,6 +29,9 @@ const S = {
   projects: [],
   tpl: null,              // шаблон в окне редактирования
   showDone: localGet('done') === '1', // показывать выполненные («Сделано сегодня», отметки в календаре)
+  noDate: localGet('nodate') === '1', // «Разделы»: только задачи без срока
+  hRange: +localGet('hrange') || 30,  // «Привычки»: за сколько дней статистика
+  hLogs: null,            // история привычек за год (грузится, когда открыта вкладка)
 };
 
 function loadCal() {
@@ -200,6 +203,7 @@ async function load() {
   S.templates = templates;
   S.projects = projects;
   S.loaded = true;
+  S.hLogs = null;
   if (await autoGenerate()) return load(); // закончился период — шаблоны создали задачи
   render();
   renderReview();
@@ -246,56 +250,58 @@ async function undo(t) {
 // ---------- экраны ----------
 function render() {
   updatePets();
+  updateDust();
   if (!S.user) return renderLogin();
   if (!S.loaded) { $app.innerHTML = '<div class="empty">Загружаю…</div>'; return; }
-  const views = { today: renderToday, nodate: renderNoDate, calendar: renderCalendar, sections: renderSections, plan: renderPlan };
+  const views = { today: renderToday, calendar: renderCalendar, sections: renderSections, habits: renderHabits, plan: renderPlan };
+  if (S.view === 'nodate') { S.view = 'sections'; S.noDate = true; } // вкладки «Без срока» нет — это фильтр в «Разделах»
   if (!views[S.view]) S.view = 'sections'; // была вкладка «Проекты» — теперь проекты живут в «Разделах»
   if (S.view === 'plan' && !planOn()) S.view = 'today';
   document.body.className = 'v-' + S.view + (S.space === 'work' ? ' work' : '');
-  $app.innerHTML = views[S.view]() + `
+  $app.innerHTML = views[S.view]() + meterCard('side') + `
     ${S.pick ? pickBar() : '<button class="fab" data-act="new" title="Новая задача">+</button>'}
     <nav class="bottom">
-      ${[['today', 'Сегодня'], ['nodate', 'Без срока'], ['calendar', 'Календарь'], ['sections', 'Разделы']]
+      ${[['today', 'Сегодня'], ['calendar', 'Календарь'], ['sections', 'Разделы'], ['habits', 'Привычки']]
         .concat(planOn() ? [['plan', 'План']] : []).map(([k, n]) => `<button class="pill ${S.view === k ? 'on' : ''}" data-act="view" data-v="${k}">${n}</button>`).join('')}
     </nav>`;
 }
 
 function taskRow(t, opts = {}) {
   const sec = sectionOf(t);
+  // слева — только название (и то, что важно прочитать: «ждёт», пометка); остальные отметки — справа
   const meta = [];
+  const tags = [];
   const due = upcoming(t);
-  if (t.start_date && !isEvent(t) && t.start_date > today()) meta.push(`<span>с ${dateLabel(t.start_date)}</span>`);
-  if (opts.date && due) meta.push(`<span class="${due < today() && !isEvent(t) ? 'late' : ''}">${t.start_date && !isEvent(t) ? 'до ' : ''}${dateLabel(due)}${t.end_date ? ' — ' + dateLabel(t.end_date) : ''}</span>`);
-  if (t.start_time) meta.unshift(`<span class="time">${timeLabel(t)}</span>`);
+  if (t.start_time) tags.push(`<span class="time">${timeLabel(t)}</span>`);
+  if (t.start_date && !isEvent(t) && t.start_date > today()) tags.push(`<span>с ${dateLabel(t.start_date)}</span>`);
+  if (opts.date && due) tags.push(`<span class="${due < today() && !isEvent(t) ? 'late' : ''}">${t.start_date && !isEvent(t) ? 'до ' : ''}${dateLabel(due)}${t.end_date ? ' — ' + dateLabel(t.end_date) : ''}</span>`);
   // у запланированной задачи дедлайн виден всегда; красный — прошёл или план позже него
   if (t.plan_date && t.due_date && !opts.date && !opts.done)
-    meta.push(`<span class="${t.due_date < today() || t.plan_date > t.due_date ? 'late' : ''}">до ${dateLabel(t.due_date)}</span>`);
-  if (t.estimate) meta.push(`<span>⏱ ${fmtH(t.estimate)} ч</span>`);
-  if (t.pet && PETS[t.pet]) meta.push(`<span>${PETS[t.pet].icon} ${esc(petName(t.pet))}</span>`);
-  if (t.remind_at) meta.push(`<span>🔔 ${hhmm(t.remind_at)}</span>`);
+    tags.push(`<span class="${t.due_date < today() || t.plan_date > t.due_date ? 'late' : ''}">до ${dateLabel(t.due_date)}</span>`);
+  if (t.estimate) tags.push(`<span>⏱ ${fmtH(t.estimate)} ч</span>`);
   if (isEvent(t) && !opts.mark) opts = { ...opts, mark: '•', markStyle: 'border-color:var(--accent);color:var(--accent)' };
-  if (sec && !opts.noSection) meta.push(`<span>${esc(sec.name)}</span>`);
+  if (sec && !opts.noSection) tags.push(`<span>${esc(sec.name)}</span>`);
   const rep = repeatLabel(t);
-  if (rep) meta.push(`<span>↻ ${esc(rep)}</span>`);
-  if (t.kind === 'habit') {
-    const st = habitStats(t);
-    if (st.total) meta.push(`<span class="stat">${st.done} из ${st.total} за 30 дн.</span>`);
-  }
-  if (opts.note) meta.unshift(`<span class="${opts.noteCls || ''}">${opts.note}</span>`);
+  if (rep) tags.push(`<span>↻ ${esc(rep)}</span>`);
+  const subs = subsOf(t);
+  if (subs.length) tags.push(`<span>☑ ${subs.filter(s => s.d).length}/${subs.length}</span>`);
+  if (t.remind_at) tags.push(`<span>🔔 ${hhmm(t.remind_at)}</span>`);
+  if (t.decor && DECOR[t.decor]) tags.push(`<span title="${DECOR[t.decor].name}">${DECOR[t.decor].icon}</span>`);
+  if (t.pet && PETS[t.pet]) tags.push(`<span title="${esc(petName(t.pet))}">${PETS[t.pet].icon}</span>`);
+  if (opts.note) meta.push(`<span class="${opts.noteCls || ''}">${opts.note}</span>`);
   // ждёт другие шаги проекта; красным — если они запланированы позже этой задачи
   const waits = opts.done ? [] : waitsFor(t);
   if (waits.length) {
     const later = planDay(t) && waits.some(w => !planDay(w) || planDay(w) > planDay(t));
     meta.unshift(`<span class="lock ${later ? 'late' : ''}" title="${later ? 'Эти шаги ещё не запланированы раньше' : ''}">🔒 ждёт: ${waits.map(w => esc(w.title)).join(', ')}</span>`);
   }
-  const subs = subsOf(t);
-  if (subs.length) meta.push(`<span>☑ ${subs.filter(s => s.d).length} из ${subs.length}</span>`);
   // подпункты видны под задачей и отмечаются прямо там (не в календарных отметках и не у сделанных)
   const subList = subs.length && !opts.mark && !opts.done
     ? `<div class="subs">${subs.map((s, i) => `<button class="sub ${s.d ? 'on' : ''}" data-act="sub" data-id="${t.id}" data-v="${i}"><i>${s.d ? '✓' : ''}</i><span>${esc(s.t)}</span></button>`).join('')}</div>`
     : '';
   const picked = S.pick && S.pick.has(t.id);
-  const cls = `task ${t.kind === 'habit' ? 'habit' : ''} ${waits.length ? 'locked' : ''} ${opts.done ? 'done' : ''} ${picked ? 'picked' : ''} ${opts.busy ? 'busy' : ''}`;
+  const dusty = !opts.done && t.decor === 'dust' && petLate(t) >= DUST_DAYS;
+  const cls = `task ${t.kind === 'habit' ? 'habit' : ''} ${waits.length ? 'locked' : ''} ${opts.done ? 'done' : ''} ${picked ? 'picked' : ''} ${opts.busy ? 'busy' : ''} ${dusty ? 'dusty' : ''}`;
   // mark — значок без действия (прошлые отметки и будущие повторы в календаре)
   const check = S.pick && opts.drag
     ? `<div class="check pick">${picked ? '✓' : ''}</div>`
@@ -315,6 +321,8 @@ function taskRow(t, opts = {}) {
       ${meta.length ? `<div class="meta">${meta.join('')}</div>` : ''}
       ${subList}
     </div>
+    ${tags.length ? `<div class="tags" data-act="${act}" data-id="${t.id}">${tags.join('')}</div>` : ''}
+    ${dusty ? WEB : ''}
   </div>`;
 }
 
@@ -335,6 +343,7 @@ function renderToday() {
   const doneToday = S.showDone ? doneIds.map(id => S.tasks.find(t => t.id === id)).filter(Boolean) : [];
 
   let html = `<header class="top"><h1>Сегодня <span class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</span></h1><div class="tools">${MODE()}${GEAR}</div></header>`;
+  html += meterCard('top');
   if (!due.length && !doneToday.length && !events.length && !inWork.length) {
     html += '<div class="empty">Задач на сегодня нет.<br>Нажми «+», чтобы добавить.</div>';
   }
@@ -346,20 +355,6 @@ function renderToday() {
   return html;
 }
 
-// Задачи без срока — отдельная вкладка, по разделам.
-function renderNoDate() {
-  const list = active().filter(t => !isEvent(t) && !t.due_date).sort(byPos);
-  let html = `<header class="top"><h1>Без срока</h1><div class="tools">${MODE()}${GEAR}</div></header>`;
-  if (!list.length) return html + '<div class="empty">Задач без срока нет.</div>';
-  for (const [id, name, color] of mySecs().map(s => [s.id, s.name, s.color]).concat([[null, 'Без раздела', null]])) {
-    const rows = list.filter(t => (t.section_id || null) === id);
-    if (!rows.length) continue;
-    html += `<h2>${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}${esc(name)}</h2>` + rows.map(t => taskRow(t, { noSection: true })).join('');
-  }
-  return html;
-}
-
-// Что стоит на дни from…to: сроки, будущие повторы, события (и на несколько дней), прошлые отметки.
 function occurrences(from, to) {
   const map = {};
   const add = (d, item) => (map[d] = map[d] || []).push(item);
@@ -498,7 +493,9 @@ function byPos(a, b) {
     || (a.created_at || '').localeCompare(b.created_at || '');
 }
 
-const sectionTasks = secId => activeAll().filter(t => (t.section_id || null) === secId && spaceOf(t) === S.space && !eventOver(t)).sort(byPos);
+// фильтр «Без срока» — только задачи без даты
+const noDateOk = t => !S.noDate || (!isEvent(t) && !t.due_date);
+const sectionTasks = secId => activeAll().filter(t => (t.section_id || null) === secId && spaceOf(t) === S.space && !eventOver(t) && noDateOk(t)).sort(byPos);
 
 function renderSections() {
   const sel = S.section;
@@ -506,7 +503,7 @@ function renderSections() {
   // слева (на телефоне — строкой сверху): разделы; на них можно бросать задачи
   const item = (id, name, color, n) => `<button class="pill side-item ${sel === id ? 'on' : ''} ${pausedSec(id) ? 'paused' : ''}" data-act="section" data-id="${id || ''}" data-drop-sec="${id || ''}">
       ${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}<span class="name">${esc(name)}</span>${pausedSec(id) ? '<span class="n" title="Раздел выключен">⏸</span>' : n ? `<span class="n">${n}</span>` : ''}</button>`;
-  const side = [`<button class="pill side-item ${sel === null ? 'on' : ''}" data-act="section" data-id="">Все<span class="n">${active().filter(t => !eventOver(t)).length}</span></button>`]
+  const side = [`<button class="pill side-item ${sel === null ? 'on' : ''}" data-act="section" data-id="">Все<span class="n">${active().filter(t => !eventOver(t) && noDateOk(t)).length}</span></button>`]
     .concat(mySecs().map(s => item(s.id, s.name, s.color, count(s.id))))
     .concat(count(null) ? [item('none', 'Без раздела', null, count(null))] : [])
     .concat(['<button class="pill side-item add" data-act="new-section">+ Раздел</button>'])
@@ -519,10 +516,10 @@ function renderSections() {
   for (const [id, name, color] of groups) {
     const all = sectionTasks(id);
     // задачи проектов — отдельными блоками с прогрессом вверху раздела
-    const projs = S.projects.filter(p => !p.archived && ((p.section_id || null) === id || all.some(t => t.project_id === p.id)));
+    const projs = S.noDate ? [] : S.projects.filter(p => !p.archived && ((p.section_id || null) === id || all.some(t => t.project_id === p.id)));
     const list = all.filter(t => !projs.some(p => p.id === t.project_id));
     const paused = pausedSec(id);
-    if (sel === null && !all.length && !projs.length && id === null) continue;
+    if (sel === null && !all.length && !projs.length && (id === null || S.noDate)) continue;
     const head = `<h2 class="group ${paused ? 'paused' : ''}" data-drop-sec="${id || ''}">${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}${esc(name || '')}
       ${paused ? '<span class="off">⏸ выключен</span>' : ''}
       ${id ? `<button class="edit-sec" data-act="edit-section" data-id="${id}" title="Изменить раздел">✎</button>` : ''}</h2>`;
@@ -535,12 +532,13 @@ function renderSections() {
       continue;
     }
     body += head + projs.map(p => projectBlock(p, all)).join('') + (list.map(t => taskRow(t, { date: true, noSection: true, drag: true })).join('')
-      || (projs.length ? '' : `<div class="empty small" data-drop-sec="${id || ''}">Пусто${S.pick ? '' : ' — перетащи сюда задачу'}</div>`));
+      || (projs.length ? '' : `<div class="empty small" data-drop-sec="${id || ''}">${S.noDate ? 'Задач без срока нет' : 'Пусто' + (S.pick ? '' : ' — перетащи сюда задачу')}</div>`));
   }
   const tools = S.pick
     ? '<button class="pill" data-act="pick-all">Выбрать все</button>'
     : '<button class="pill" data-act="pick-start">Выбрать</button>';
-  return `<header class="top"><h1>Разделы</h1><div class="tools">${tools}${MODE()}${GEAR}</div></header>
+  const filter = `<button class="pill ${S.noDate ? 'on' : ''}" data-act="nodate" title="Показать только задачи без срока">Без срока</button>`;
+  return `<header class="top"><h1>Разделы</h1><div class="tools">${filter}${tools}${MODE()}${GEAR}</div></header>
     <div class="split">
       <nav class="side">${side.join('')}</nav>
       <div class="main">${body || '<div class="empty">Здесь пока пусто</div>'}</div>
@@ -712,6 +710,123 @@ document.addEventListener('drop', async e => {
   await call(sb.from('tasks').update({ plan_date: d }).eq('id', t.id));
 });
 
+// ---------- привычки: как получалось следовать ----------
+// История за год грузится, когда открыта вкладка (в обычной загрузке — только 2 месяца).
+async function loadHabitLogs(ids) {
+  S.hLogs = [];
+  if (!ids.length) return;
+  S.hLogs = await call(sb.from('task_log').select('task_id,day,status').in('task_id', ids).gte('day', addDays(today(), -365)).order('id'));
+  if (S.view === 'habits') render();
+}
+
+// Дни привычки за последние n дней: 'done' / 'missed' / '' (не нужно было или ещё не отмечено)
+function habitDays(t, n) {
+  const st = {};
+  for (const l of (S.hLogs && S.hLogs.length ? S.hLogs : S.logs)) if (l.task_id === t.id && (l.status === 'done' || l.status === 'missed')) st[l.day] = l.status;
+  const days = [];
+  for (let i = n - 1; i >= 0; i--) { const d = addDays(today(), -i); days.push([d, st[d] || '']); }
+  return days;
+}
+
+function habitCard(t) {
+  const days = habitDays(t, S.hRange);
+  const marked = days.filter(([, s]) => s);
+  const done = marked.filter(([, s]) => s === 'done').length;
+  // серии считаются по отмеченным дням (дни, когда привычка не нужна, не прерывают серию)
+  let best = 0, run = 0;
+  for (const [, s] of marked) { run = s === 'done' ? run + 1 : 0; best = Math.max(best, run); }
+  const pct = marked.length ? Math.round(done / marked.length * 100) : 0;
+  const sec = sectionOf(t);
+  const fmt = d => `${parse(d).getDate()} ${MONTHS_OF[parse(d).getMonth()]}`;
+  return `<div class="hcard"${sec ? ` style="--sec:${esc(sec.color)}"` : ''} data-act="edit" data-id="${t.id}">
+    <div class="hhead"><b>${esc(t.title)}</b><span class="tags">${repeatLabel(t) ? '↻ ' + esc(repeatLabel(t)) : ''}${sec ? ' · ' + esc(sec.name) : ''}</span></div>
+    ${marked.length ? `<div class="hnums">
+      <div><b>${done} из ${marked.length}</b><span>сделано</span></div>
+      <div><b class="${pct >= 80 ? 'ok' : pct >= 50 ? 'mid' : 'low'}">${pct}%</b><span>получилось</span></div>
+      <div><b>${run}</b><span>подряд сейчас</span></div>
+      <div><b>${best}</b><span>лучшая серия</span></div>
+      <div><b>${marked.length - done}</b><span>пропусков</span></div>
+    </div>` : '<div class="hint">Пока нет отметок за это время.</div>'}
+    <div class="hgrid r${S.hRange}">${days.map(([d, s]) => `<i class="${s}" title="${fmt(d)}${s === 'done' ? ' — сделано' : s === 'missed' ? ' — пропущено' : ''}"></i>`).join('')}</div>
+  </div>`;
+}
+
+function renderHabits() {
+  const list = activeAll().filter(t => t.kind === 'habit' && spaceOf(t) === S.space).sort(byPos);
+  if (!S.hLogs) loadHabitLogs(list.map(t => t.id));
+  const ranges = [[30, '30 дней'], [90, '3 месяца'], [365, 'год']];
+  let html = `<header class="top"><h1>Привычки</h1>
+    <div class="seg">${ranges.map(([n, l]) => `<button class="pill ${S.hRange === n ? 'on' : ''}" data-act="h-range" data-v="${n}">${l}</button>`).join('')}</div>
+    <div class="tools">${MODE()}${GEAR}</div></header>`;
+  if (!list.length) return html + '<div class="empty">Привычек пока нет.<br>В окне задачи выбери вид «Привычка».</div>';
+  html += '<div class="legend"><i class="done"></i> сделано <i class="missed"></i> пропущено <i></i> не нужно было / ещё не отмечено</div>';
+  return html + list.map(habitCard).join('');
+}
+
+// ---------- картинки у задач ----------
+const DECOR = {
+  dust: { icon: '🕸', name: 'Пыль и паутина', hint: 'Пыль и паутина — если задача просрочена на 4 дня и больше (уборка).' },
+  meter: { icon: '🔢', name: 'Счётчики', hint: 'Счётчики — когда подошёл срок (или «Начать с»), сбоку появляется картинка «Пора передать показания».' },
+};
+const DUST_DAYS = 4;
+
+// Паутинка в углу строки задачи
+const WEB = `<svg class="web" viewBox="0 0 60 60" aria-hidden="true"><g stroke="#cfd3e6" stroke-width="1" fill="none" opacity=".75">
+  <path d="M60 0L4 56M60 0L28 58M60 0L58 4M60 0L46 60M60 0L2 30M60 0L30 2"/>
+  <path d="M48 0Q50 10 60 12M36 0Q40 20 60 24M22 0Q30 30 60 38M10 2Q22 40 58 52"/></g>
+  <path d="M46 26v8" stroke="#cfd3e6" stroke-width=".8"/><circle cx="46" cy="36" r="2.6" fill="#2a2b36" stroke="#cfd3e6" stroke-width=".6"/></svg>`;
+
+// Насколько запущена уборка: 0 — чисто, 1 — паутина в углу, 2 — паутина в обоих углах и много пыли
+function dustLevel() {
+  const n = Math.max(0, ...active().filter(t => t.decor === 'dust').map(petLate));
+  return n >= DUST_DAYS * 2 ? 2 : n >= DUST_DAYS ? 1 : 0;
+}
+
+// Паутина по углам экрана и летающая пыль — свой слой поверх всего, мышку не ловит.
+let $dust = null;
+function updateDust() {
+  const lvl = S.user && S.loaded && S.view !== 'plan' ? dustLevel() : 0;
+  if (!$dust) {
+    if (!lvl) return;
+    $dust = document.createElement('div');
+    $dust.id = 'dust';
+    document.body.append($dust);
+  }
+  if ($dust.dataset.lvl === String(lvl)) return;
+  $dust.dataset.lvl = lvl;
+  const motes = Array.from({ length: lvl === 2 ? 26 : 12 }, () =>
+    `<i style="left:${Math.random() * 100}%;top:${Math.random() * 100}%;animation-delay:-${(Math.random() * 14).toFixed(1)}s;animation-duration:${(10 + Math.random() * 8).toFixed(1)}s;--s:${(2 + Math.random() * 3).toFixed(1)}px"></i>`).join('');
+  $dust.innerHTML = lvl ? `<svg class="corner r" viewBox="0 0 60 60">${WEB.slice(WEB.indexOf('<g'), -6)}</svg>${lvl === 2 ? `<svg class="corner l" viewBox="0 0 60 60">${WEB.slice(WEB.indexOf('<g'), -6)}</svg>` : ''}${motes}` : '';
+}
+
+// Счётчики: подошёл срок — картинка сбоку (на телефоне — вверху «Сегодня»)
+// where: 'side' — сбоку на широком экране (на всех вкладках), 'top' — вверху «Сегодня» на остальных экранах
+function meterCard(where) {
+  const t0 = today();
+  const due = active().filter(t => t.decor === 'meter' && !isEvent(t) && ((reviewDay(t) && reviewDay(t) <= t0) || (t.start_date && t.start_date <= t0)));
+  if (!due.length || S.view === 'plan') return '';
+  return `<aside class="meter-card ${where}">
+    ${meterSVG()}
+    <div class="meter-text"><b>Пора передать показания!</b>
+      ${due.map(t => `<div class="meter-task"><button class="check" data-act="done" data-id="${t.id}" title="Передала">✓</button>
+        <button class="link" data-act="edit" data-id="${t.id}">${esc(t.title)}</button></div>`).join('')}</div>
+  </aside>`;
+}
+
+// Счётчик: окошко с цифрами (последняя крутится), колёсико и стрелка
+const meterSVG = () => `<svg class="meter-svg" viewBox="0 0 160 120" aria-hidden="true">
+  <rect x="6" y="10" width="148" height="100" rx="16" fill="#3a3d4d" stroke="#5a5f78" stroke-width="2"/>
+  <rect x="6" y="10" width="148" height="22" rx="11" fill="#4a4e63"/>
+  <text x="80" y="26" text-anchor="middle" fill="#cfd3e6" font-size="11" font-family="sans-serif">м³</text>
+  <rect x="18" y="42" width="124" height="30" rx="5" fill="#16161c"/>
+  ${[0, 1, 2, 3].map(i => `<rect x="${22 + i * 24}" y="45" width="20" height="24" rx="3" fill="#f2f2f5"/><text x="${32 + i * 24}" y="63" text-anchor="middle" font-size="17" font-weight="700" font-family="monospace" fill="#16161c">${'0472'[i]}</text>`).join('')}
+  <rect x="118" y="45" width="20" height="24" rx="3" fill="#e05a5a"/>
+  <svg x="118" y="45" width="20" height="24" viewBox="0 0 20 24"><g class="roll">${[8, 9, 0, 1].map((d, i) => `<text x="10" y="${18 + i * 24}" text-anchor="middle" font-size="17" font-weight="700" font-family="monospace" fill="#fff">${d}</text>`).join('')}</g></svg>
+  <circle cx="44" cy="92" r="11" fill="#16161c"/><g class="spin-wheel" style="transform-origin:44px 92px"><path d="M44 83v18M35 92h18M38 86l12 12M50 86l-12 12" stroke="#8fb3ff" stroke-width="2.4"/></g>
+  <circle cx="116" cy="92" r="11" fill="#f2f2f5"/><path class="needle" d="M116 92l0 -9" stroke="#e05a5a" stroke-width="2.4" stroke-linecap="round" style="transform-origin:116px 92px"/>
+  <text x="80" y="97" text-anchor="middle" fill="#9aa1bd" font-size="9" font-family="sans-serif">ГАЗ · ВОДА</text>
+</svg>`;
+
 // ---------- питомцы (личный режим, широкий экран) ----------
 const PETS = { cat: { icon: '🐱', def: 'Котик' }, bird: { icon: '🦜', def: 'Попугай' } };
 const petName = p => S.user?.user_metadata?.pets?.[p] || PETS[p].def;
@@ -772,7 +887,8 @@ function fillPet(p) {
   const el = $pets.querySelector('.pet.' + p);
   const st = petState(p);
   const pose = P[p].moving ? (p === 'cat' ? 'walk' : 'fly') : st.mood;
-  el.className = `pet ${p} m-${st.mood} ${P[p].side}${P[p].moving ? ' moving' : ''}`;
+  const arrived = P[p].arrived && Date.now() - P[p].arrived < 1500; // только что пришёл — садится
+  el.className = `pet ${p} m-${st.mood} ${P[p].side}${P[p].moving ? ' moving' : ''}${arrived ? ' arrived' : ''}`;
   const joy = S.petJoy && S.petJoy.pet === p && Date.now() - S.petJoy.at < 4000 ? S.petJoy.at : 0;
   const why = st.late.slice(0, 3).map(([t, n]) => `<li>${esc(t.title)} — ${t.kind === 'habit' ? `пропущено ${n} р.` : `${n} дн.`}</li>`).join('');
   const sig = JSON.stringify([pose, P[p].dir, petName(p), why, joy]);
@@ -801,7 +917,7 @@ function petMove(p = Math.random() < .5 ? 'cat' : 'bird') {
   void $pets.querySelector('.pet.' + p).offsetWidth; // зафиксировать старое место, чтобы сработал плавный переход
   P[p].side = to;
   fillPet(p);
-  setTimeout(() => { P[p].moving = false; fillPet(p); }, MOVE_MS[p]);
+  setTimeout(() => { P[p].moving = false; P[p].arrived = Date.now(); fillPet(p); }, MOVE_MS[p]);
 }
 
 // Глаза: открытые (с морганием), полуприкрытые, грустные со слезой, крестики.
@@ -1025,15 +1141,17 @@ const HELP = [
   ['Сегодня', 'Всё, что нужно сделать сегодня: привычки, задачи (и просроченные), события. Кружок — отметить. Нажать на отметку ещё раз — отменить.'],
   ['Новая задача', '«+» внизу. Вид: <b>задача</b>, <b>привычка</b> (вода, зарядка) или <b>событие</b> (встреча, его не отмечают). Можно указать срок, время, повтор, напоминание и раздел.'],
   ['Повтор', 'Каждый день / неделю / месяц / N дней или по дням недели. «От выполнения»: следующий срок считается от дня, когда сделали, а не от старого срока.'],
-  ['Утренняя проверка', 'Утром спросит, что сделано из вчерашнего. Несделанная задача переедет на сегодня. У привычки засчитается пропуск, видно статистику «X из 30 дней».'],
+  ['Утренняя проверка', 'Утром спросит, что сделано из вчерашнего. Несделанная задача переедет на сегодня. У привычки засчитается пропуск.'],
+  ['Привычки', 'Вкладка со статистикой: сколько дней из 30 / 3 месяцев / года получилось, серия подряд, лучшая серия, пропуски и квадратики по дням.'],
   ['Календарь', 'Месяц или неделя, фильтры по разделам. Нажми на день: там расписание и свободное время между делами.'],
-  ['Разделы', 'Папки для задач. ✎ у раздела: название, цвет, «выключить» на время (задачи прячутся, но не удаляются). «Выбрать» меняет сразу несколько задач. На компьютере задачи можно перетаскивать мышкой.'],
+  ['Разделы', 'Папки для задач. ✎ у раздела: название, цвет, «выключить» на время (задачи прячутся, но не удаляются). «Без срока» вверху — показать только задачи без даты. «Выбрать» меняет сразу несколько задач. На компьютере задачи можно перетаскивать мышкой.'],
   ['Быстрое меню', 'Долгое нажатие на задачу (на компьютере — правая кнопка): на сегодня, на завтра, в другой раздел.'],
   ['🏠 / 💼', 'Личное и работа отдельно, переключатель вверху. В работе есть «Шаблоны»: повторяющиеся проекты из шагов (например, квартальная отчётность), создаются сами.'],
   ['Подпункты', 'В окне задачи «+ Подпункт»: письма, проверки и т.п. Отмечаются прямо под задачей. В шаблоне у шага — «+ подзадача».'],
   ['План (работа, компьютер)', '«Срок» — дедлайн, «План» — день, когда делаешь, и сколько часов займёт. Во вкладке «План» неделя: задачи перетаскиваются по дням, вверху сумма часов вместе со встречами. Больше 8 ч — жёлтым, больше 11 ч — ⚠ красным.'],
   ['Порядок шагов', 'У задачи проекта — «Делать после» (в шаблоне — «после шагов: 1, 2»). Пока те шаги не сделаны, у задачи 🔒 «ждёт: …»; красный — если они запланированы позже. Ничего не запрещается.'],
   ['Питомцы', 'В окне задачи (в личном режиме) — «Питомец». На широком экране по бокам сидят кот и попугай: доволен, если всё сделано, грустит от пропусков, после 4 дней — в обмороке. Нажми на имя, чтобы переименовать.'],
+  ['Картинки', 'В окне задачи — «Картинка». 🕸 Пыль и паутина: уборка просрочена на 4+ дня — появляется паутина и летает пыль. 🔢 Счётчики: подошёл срок — вверху «Сегодня» (на компьютере сбоку) картинка «Пора передать показания».'],
   ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных.'],
   ['Устройства', 'Всё хранится в облаке. Входи с той же почтой на телефоне и компьютере. На телефоне: Chrome → ⋮ → «Установить приложение».'],
 ];
@@ -1282,6 +1400,10 @@ function openEdit(t) {
     ${S.space === 'personal' || e.pet ? `<div class="field" id="f-pet-box"><label>Питомец (грустит, если задача пропущена)</label>
       <div class="row">${[['', 'Нет'], ...Object.keys(PETS).map(p => [p, PETS[p].icon + ' ' + esc(petName(p))])]
         .map(([p, n]) => `<button class="pill" data-act="pet" data-v="${p}">${n}</button>`).join('')}</div></div>` : ''}
+    ${S.space === 'personal' || e.decor ? `<div class="field" id="f-decor-box"><label>Картинка</label>
+      <div class="row">${[['', 'Нет'], ...Object.entries(DECOR).map(([k, d]) => [k, d.icon + ' ' + d.name])]
+        .map(([k, n]) => `<button class="pill" data-act="decor" data-v="${k}">${n}</button>`).join('')}</div>
+      <div class="hint">${Object.values(DECOR).map(d => d.icon + ' ' + d.hint).join('<br>')}</div></div>` : ''}
     <div class="field"><label>Раздел</label>
       <select class="inp" id="f-section"><option value="">Без раздела</option>
         ${mySecs().map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
@@ -1308,6 +1430,7 @@ function syncEdit() {
   q('[data-act=from]').forEach(b => b.classList.toggle('on', b.dataset.v === e.repeat_from));
   q('[data-act=wd]').forEach(b => b.classList.toggle('on', (e.repeat_weekdays || []).includes(+b.dataset.v)));
   q('[data-act=pet]').forEach(b => b.classList.toggle('on', b.dataset.v === (e.pet || '')));
+  q('[data-act=decor]').forEach(b => b.classList.toggle('on', b.dataset.v === (e.decor || '')));
   q('[data-act=after]').forEach(b => b.classList.toggle('on', (e.after_ids || []).includes(b.dataset.v)));
   const rem = hhmm(e.remind_at);
   q('[data-act=remind]').forEach(b => b.classList.toggle('on', b.dataset.v.slice(0, 5) === rem));
@@ -1394,6 +1517,7 @@ async function saveEdit() {
     row.estimate = parseFloat(document.getElementById('f-est').value.replace(',', '.')) || null;
   } else if (e.plan_date || e.estimate) { row.plan_date = null; row.estimate = null; }
   if (e.pet || (byId(e.id) || {}).pet) row.pet = e.pet || null;
+  if (e.decor || (byId(e.id) || {}).decor) row.decor = e.decor || null; // пока 010 не запущен, у задач без картинки поле не отправляем
   // «делать после» отправляем, только если поменяли
   const wasAfter = (byId(e.id) || {}).after_ids || [];
   const nowAfter = e.after_ids || [];
@@ -1946,6 +2070,9 @@ document.addEventListener('click', async ev => {
         break;
       }
       case 'b-from': S.bulk.from = v; syncBulk(); break;
+      case 'nodate': S.noDate = !S.noDate; localSet('nodate', S.noDate ? '1' : ''); render(); break;
+      case 'h-range': S.hRange = +v; localSet('hrange', v); render(); break;
+      case 'decor': S.edit.decor = v || null; syncEdit(); break;
       case 'view': S.view = v; S.pick = null; localSet('view', v); render(); scrollTo(0, 0); break;
       case 'done': el.classList.add('ok'); await complete(byId(id)); break;
       case 'undo': await undo(byId(id)); break;
