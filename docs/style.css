@@ -426,6 +426,13 @@ body { --appw: 1180px; }
 .pet-name { font-weight: 700; font-size: 17px; color: var(--text); padding: 2px 8px; border-radius: 8px; }
 .pet-name:hover { background: var(--card); }
 .pet-mood { color: var(--good); font-size: 14px; }
+/* настроение и «почему» — подсказкой при наведении на питомца */
+.pet-text { position: relative; }
+.pet-tip { display: none; position: absolute; left: 50%; translate: -50% 0; width: 230px; z-index: 5; text-align: center;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; box-shadow: 0 6px 20px #0006; }
+.pet.cat .pet-tip { bottom: 100%; margin-bottom: 6px; }
+.pet.bird .pet-tip { top: 100%; margin-top: 6px; }
+.pet:hover .pet-tip { display: block; }
 .pet.m-meh .pet-mood { color: var(--warn); }
 .pet.m-sad .pet-mood, .pet.m-faint .pet-mood { color: var(--bad); }
 .pet-why { list-style: none; padding: 0; margin: 6px 0 0; color: var(--muted); font-size: 13px; }

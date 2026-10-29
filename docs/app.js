@@ -919,7 +919,7 @@ function fillPet(p) {
   el.dataset.sig = sig;
   const pic = pose === 'walk' ? catWalkSVG(P[p].dir === 'left') : pose === 'fly' ? birdFlySVG() : p === 'cat' ? catSVG(pose) : birdSVG(pose);
   const text = `<button class="pet-name" data-act="pet-name" data-v="${p}" title="Переименовать">${esc(petName(p))}</button>
-      <div class="pet-mood">${MOODS[st.mood]}</div>${why ? `<ul class="pet-why">${why}</ul>` : ''}`;
+      <div class="pet-tip"><div class="pet-mood">${MOODS[st.mood]}</div>${why ? `<ul class="pet-why">${why}</ul>` : ''}</div>`; // видно при наведении
   el.innerHTML = (joy ? '<div class="hearts"><span>♥</span><span>♥</span><span>♥</span></div>' : '')
     + (p === 'cat' ? `<div class="pet-text">${text}</div>${pic}` : pic + `<div class="pet-text">${text}</div>`);
 }
