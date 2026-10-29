@@ -235,7 +235,7 @@ async function toggleSub(t, i) {
 async function complete(t, doneOn = today()) {
   await call(sb.rpc('complete_task', { p_task: t.id, p_done_on: doneOn }));
   await resetRepeat(t);
-  if (t.pet) S.petJoy = { pet: t.pet, at: Date.now() }; // питомец радуется — сердечки
+  if (t.pet) S.petJoy = { pets: petsOf(t), at: Date.now() }; // питомцы радуются — сердечки
   await load();
   const next = S.tasks.find(x => x.id === t.id);
   const msg = next && !next.done_on && next.due_date ? `Готово! Следующий раз: ${dateLabel(next.due_date)}` : 'Готово!';
@@ -287,7 +287,7 @@ function taskRow(t, opts = {}) {
   if (subs.length) tags.push(`<span>☑ ${subs.filter(s => s.d).length}/${subs.length}</span>`);
   if (t.remind_at) tags.push(`<span>🔔 ${hhmm(t.remind_at)}</span>`);
   if (t.decor && DECOR[t.decor]) tags.push(`<span title="${DECOR[t.decor].name}">${DECOR[t.decor].icon}</span>`);
-  if (t.pet && PETS[t.pet]) tags.push(`<span title="${esc(petName(t.pet))}">${PETS[t.pet].icon}</span>`);
+  if (petsOf(t).length) tags.push(`<span title="${petsOf(t).map(p => esc(petName(p))).join(' и ')}">${petsOf(t).map(p => PETS[p].icon).join('')}</span>`);
   if (opts.note) meta.push(`<span class="${opts.noteCls || ''}">${opts.note}</span>`);
   // ждёт другие шаги проекта; красным — если они запланированы позже этой задачи
   const waits = opts.done ? [] : waitsFor(t);
@@ -828,6 +828,8 @@ const meterSVG = () => `<svg class="meter-svg" viewBox="0 0 160 120" aria-hidden
 
 // ---------- питомцы (личный режим, широкий экран) ----------
 const PETS = { cat: { icon: '🐱', def: 'Котик' }, bird: { icon: '🦜', def: 'Попугай' } };
+// У задачи может быть один питомец или оба ('both' — общая забота: вода, миски)
+const petsOf = t => (t.pet === 'both' ? ['cat', 'bird'] : PETS[t.pet] ? [t.pet] : []);
 const petName = p => S.user?.user_metadata?.pets?.[p] || PETS[p].def;
 const MOODS = { happy: 'Доволен', meh: 'Немного грустит', sad: 'Очень грустит', faint: 'В обмороке!' };
 const moodOf = n => (n >= lim('faint') ? 'faint' : n >= lim('sad') ? 'sad' : n >= lim('meh') ? 'meh' : 'happy');
@@ -868,7 +870,7 @@ function petLate(t) {
 }
 
 function petState(p) {
-  const late = activeAll().filter(t => t.pet === p && !pausedSec(t.section_id))
+  const late = activeAll().filter(t => petsOf(t).includes(p) && !pausedSec(t.section_id))
     .map(t => [t, petLate(t)]).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
   return { mood: moodOf(late.length ? late[0][1] : 0), late };
 }
@@ -910,7 +912,7 @@ function fillPet(p) {
   const pose = P[p].moving ? (p === 'cat' ? 'walk' : 'fly') : st.mood;
   const arrived = P[p].arrived && Date.now() - P[p].arrived < 1500; // только что пришёл — садится
   el.className = `pet ${p} m-${st.mood} ${P[p].side}${P[p].moving ? ' moving' : ''}${arrived ? ' arrived' : ''}`;
-  const joy = S.petJoy && S.petJoy.pet === p && Date.now() - S.petJoy.at < 4000 ? S.petJoy.at : 0;
+  const joy = S.petJoy && S.petJoy.pets.includes(p) && Date.now() - S.petJoy.at < 4000 ? S.petJoy.at : 0;
   const why = st.late.slice(0, 3).map(([t, n]) => `<li>${esc(t.title)} — ${t.kind === 'habit' ? `пропущено ${n} р.` : `${n} дн.`}</li>`).join('');
   const sig = JSON.stringify([pose, P[p].dir, petName(p), why, joy]);
   if (el.dataset.sig === sig) return;
@@ -1423,7 +1425,7 @@ function openEdit(t) {
     <div class="field" id="f-subs-box"><label>Подпункты (письма, проверки и т.п.)</label>
       <div id="f-subs"></div>
       <button class="link" data-act="sub-add">+ Подпункт</button></div>
-    ${S.space === 'personal' || e.pet ? `<div class="field" id="f-pet-box"><label>Питомец (грустит, если задача пропущена)</label>
+    ${S.space === 'personal' || e.pet ? `<div class="field" id="f-pet-box"><label>Питомец (грустит, если задача пропущена; можно выбрать обоих)</label>
       <div class="row">${[['', 'Нет'], ...Object.keys(PETS).map(p => [p, PETS[p].icon + ' ' + esc(petName(p))])]
         .map(([p, n]) => `<button class="pill" data-act="pet" data-v="${p}">${n}</button>`).join('')}</div></div>` : ''}
     ${S.space === 'personal' || e.decor ? `<div class="field" id="f-decor-box"><label>Картинка</label>
@@ -1455,7 +1457,7 @@ function syncEdit() {
   q('[data-act=kind]').forEach(b => b.classList.toggle('on', b.dataset.v === e.kind));
   q('[data-act=from]').forEach(b => b.classList.toggle('on', b.dataset.v === e.repeat_from));
   q('[data-act=wd]').forEach(b => b.classList.toggle('on', (e.repeat_weekdays || []).includes(+b.dataset.v)));
-  q('[data-act=pet]').forEach(b => b.classList.toggle('on', b.dataset.v === (e.pet || '')));
+  q('[data-act=pet]').forEach(b => b.classList.toggle('on', b.dataset.v ? petsOf(e).includes(b.dataset.v) : !e.pet));
   q('[data-act=decor]').forEach(b => b.classList.toggle('on', b.dataset.v === (e.decor || '')));
   q('[data-act=after]').forEach(b => b.classList.toggle('on', (e.after_ids || []).includes(b.dataset.v)));
   const rem = hhmm(e.remind_at);
@@ -2134,7 +2136,12 @@ document.addEventListener('click', async ev => {
         syncEdit();
         break;
       case 'from': S.edit.repeat_from = v; syncEdit(); break;
-      case 'pet': S.edit.pet = v || null; syncEdit(); break;
+      case 'pet': { // кот и попугай включаются по отдельности, оба сразу — 'both'
+        const on = v ? (petsOf(S.edit).includes(v) ? petsOf(S.edit).filter(p => p !== v) : petsOf(S.edit).concat(v)) : [];
+        S.edit.pet = on.length === 2 ? 'both' : on[0] || null;
+        syncEdit();
+        break;
+      }
       case 'pet-name': await renamePet(v); break;
       case 'after': {
         const set = new Set(S.edit.after_ids || []);
