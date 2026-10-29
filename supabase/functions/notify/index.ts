@@ -97,9 +97,11 @@ Deno.serve(async req => {
   const users = [...new Set((subs || []).map(s => s.user_id))];
   let sent = 0;
   for (const uid of users) {
-    const mySubs = subs!.filter(s => s.user_id === uid);
+    // подписки «Задач» и «Корзинки» разные (app в push_subs, у старых — 'tasks')
+    const mySubs = subs!.filter(s => s.user_id === uid && (s.app || 'tasks') === 'tasks');
+    const korzSubs = subs!.filter(s => s.user_id === uid && s.app === 'korzinka');
     const { data: pref } = await db.from('prefs').select('*').eq('user_id', uid).maybeSingle();
-    const p = pref || { tz: 'Europe/Kyiv', daily_on: true, daily_time: '20:00:00', last_daily: null };
+    const p = pref || { tz: 'Europe/Kyiv', daily_on: true, daily_time: '20:00:00', last_daily: null, korz_time: '10:00:00', korz_last: null };
     const now = localNow(p.tz);
     const [{ data: tasks }, { data: secs }] = await Promise.all([
       db.from('tasks').select('*').eq('user_id', uid).is('done_on', null),
@@ -124,6 +126,18 @@ Deno.serve(async req => {
       if (left.length) {
         const names = left.slice(0, 6).map(t => '• ' + t.title).join('\n') + (left.length > 6 ? `\nи ещё ${left.length - 6}` : '');
         await send(mySubs, { title: `Не сделано сегодня: ${left.length}`, body: names, tag: 'daily' });
+        sent++;
+      }
+    }
+
+    // Корзинка: раз в день — что в заначке пора пересчитать
+    if (korzSubs.length && p.korz_last !== now.day && due((p as any).korz_time || '10:00', now.min)) {
+      await db.from('prefs').upsert({ user_id: uid, korz_last: now.day });
+      const { data: items } = await db.from('k_items').select('name,norm,check_every,checked_at').eq('user_id', uid).gt('norm', 0);
+      const late = (items || []).filter(i => !i.checked_at || Date.now() - Date.parse(i.checked_at) > (i.check_every || 14) * 864e5);
+      if (late.length) {
+        const names = late.slice(0, 6).map(i => '• ' + i.name).join('\n') + (late.length > 6 ? `\nи ещё ${late.length - 6}` : '');
+        await send(korzSubs, { title: `Пора пересчитать запасы: ${late.length}`, body: names, tag: 'korz-stock' });
         sent++;
       }
     }
