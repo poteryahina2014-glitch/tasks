@@ -300,7 +300,7 @@ function taskRow(t, opts = {}) {
     ? `<div class="subs">${subs.map((s, i) => `<button class="sub ${s.d ? 'on' : ''}" data-act="sub" data-id="${t.id}" data-v="${i}"><i>${s.d ? '✓' : ''}</i><span>${esc(s.t)}</span></button>`).join('')}</div>`
     : '';
   const picked = S.pick && S.pick.has(t.id);
-  const dusty = !opts.done && t.decor === 'dust' && petLate(t) >= DUST_DAYS;
+  const dusty = !opts.done && t.decor === 'dust' && petLate(t) >= lim('dust');
   const cls = `task ${t.kind === 'habit' ? 'habit' : ''} ${waits.length ? 'locked' : ''} ${opts.done ? 'done' : ''} ${picked ? 'picked' : ''} ${opts.busy ? 'busy' : ''} ${dusty ? 'dusty' : ''}`;
   // mark — значок без действия (прошлые отметки и будущие повторы в календаре)
   const check = S.pick && opts.drag
@@ -765,10 +765,9 @@ function renderHabits() {
 
 // ---------- картинки у задач ----------
 const DECOR = {
-  dust: { icon: '🕸', name: 'Пыль и паутина', hint: 'Пыль и паутина — если задача просрочена на 4 дня и больше (уборка).' },
+  dust: { icon: '🕸', name: 'Пыль и паутина', get hint() { return `Пыль и паутина — если задача просрочена на ${lim('dust')} дн. и больше (уборка).`; } },
   meter: { icon: '🔢', name: 'Счётчики', hint: 'Счётчики — когда подошёл срок (или «Начать с»), сбоку появляется картинка «Пора передать показания».' },
 };
-const DUST_DAYS = 4;
 
 // Паутинка в углу строки задачи
 const WEB = `<svg class="web" viewBox="0 0 60 60" aria-hidden="true"><g stroke="#cfd3e6" stroke-width="1" fill="none" opacity=".75">
@@ -779,7 +778,7 @@ const WEB = `<svg class="web" viewBox="0 0 60 60" aria-hidden="true"><g stroke="
 // Насколько запущена уборка: 0 — чисто, 1 — паутина в углу, 2 — паутина в обоих углах и много пыли
 function dustLevel() {
   const n = Math.max(0, ...active().filter(t => t.decor === 'dust').map(petLate));
-  return n >= DUST_DAYS * 2 ? 2 : n >= DUST_DAYS ? 1 : 0;
+  return n >= lim('dust2') ? 2 : n >= lim('dust') ? 1 : 0;
 }
 
 // Паутина по углам экрана и летающая пыль — свой слой поверх всего, мышку не ловит.
@@ -831,7 +830,29 @@ const meterSVG = () => `<svg class="meter-svg" viewBox="0 0 160 120" aria-hidden
 const PETS = { cat: { icon: '🐱', def: 'Котик' }, bird: { icon: '🦜', def: 'Попугай' } };
 const petName = p => S.user?.user_metadata?.pets?.[p] || PETS[p].def;
 const MOODS = { happy: 'Доволен', meh: 'Немного грустит', sad: 'Очень грустит', faint: 'В обмороке!' };
-const moodOf = n => (n <= 0 ? 'happy' : n === 1 ? 'meh' : n <= 3 ? 'sad' : 'faint');
+const moodOf = n => (n >= lim('faint') ? 'faint' : n >= lim('sad') ? 'sad' : n >= lim('meh') ? 'meh' : 'happy');
+
+// Пороги: со скольких дней просрочки (у привычки — пропусков подряд) меняются питомцы и пыль. Хранятся в аккаунте, в ⚙ можно поменять.
+const LIMITS = {
+  meh: { def: 1, name: '😐 Питомец немного грустит' },
+  sad: { def: 2, name: '😢 Очень грустит' },
+  faint: { def: 4, name: '😵 В обмороке' },
+  dust: { def: 4, name: '🕸 Паутина на задаче, пыль летает' },
+  dust2: { def: 8, name: '🕸🕸 Паутина в обоих углах, пыли больше' },
+};
+const lim = k => Math.max(1, +(S.user?.user_metadata?.limits?.[k]) || LIMITS[k].def);
+
+async function saveLimits() {
+  const limits = {};
+  for (const k in LIMITS) limits[k] = Math.max(1, parseInt(document.getElementById('lim-' + k).value) || LIMITS[k].def);
+  if (limits.meh > limits.sad || limits.sad > limits.faint) return toast('Должно идти по порядку: «немного грустит» ≤ «очень грустит» ≤ «обморок»');
+  if (limits.dust > limits.dust2) return toast('Сильная пыль должна начинаться не раньше обычной');
+  const { data, error } = await sb.auth.updateUser({ data: { limits } });
+  if (error) return toast('Не получилось сохранить: ' + error.message);
+  S.user = data.user;
+  toast('Сохранено');
+  render();
+}
 
 // Насколько задача запущена: у привычки — сколько раз подряд пропущена,
 // у обычной — сколько дней прошло от первоначального срока (утренняя проверка переносит его на сегодня).
@@ -1150,8 +1171,8 @@ const HELP = [
   ['Подпункты', 'В окне задачи «+ Подпункт»: письма, проверки и т.п. Отмечаются прямо под задачей. В шаблоне у шага — «+ подзадача».'],
   ['План (работа, компьютер)', '«Срок» — дедлайн, «План» — день, когда делаешь, и сколько часов займёт. Во вкладке «План» неделя: задачи перетаскиваются по дням, вверху сумма часов вместе со встречами. Больше 8 ч — жёлтым, больше 11 ч — ⚠ красным.'],
   ['Порядок шагов', 'У задачи проекта — «Делать после» (в шаблоне — «после шагов: 1, 2»). Пока те шаги не сделаны, у задачи 🔒 «ждёт: …»; красный — если они запланированы позже. Ничего не запрещается.'],
-  ['Питомцы', 'В окне задачи (в личном режиме) — «Питомец». На широком экране по бокам сидят кот и попугай: доволен, если всё сделано, грустит от пропусков, после 4 дней — в обмороке. Нажми на имя, чтобы переименовать.'],
-  ['Картинки', 'В окне задачи — «Картинка». 🕸 Пыль и паутина: уборка просрочена на 4+ дня — появляется паутина и летает пыль. 🔢 Счётчики: подошёл срок — вверху «Сегодня» (на компьютере сбоку) картинка «Пора передать показания».'],
+  ['Питомцы', 'В окне задачи (в личном режиме) — «Питомец». На широком экране по бокам сидят кот и попугай: доволен, если всё сделано, грустит от пропусков, сколько дней до грусти и обморока — в ⚙. Нажми на имя, чтобы переименовать.'],
+  ['Картинки', 'В окне задачи — «Картинка». 🕸 Пыль и паутина: уборка просрочена (по умолчанию на 4+ дня, меняется в ⚙) — появляется паутина и летает пыль. 🔢 Счётчики: подошёл срок — вверху «Сегодня» (на компьютере сбоку) картинка «Пора передать показания».'],
   ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных.'],
   ['Устройства', 'Всё хранится в облаке. Входи с той же почтой на телефоне и компьютере. На телефоне: Chrome → ⋮ → «Установить приложение».'],
 ];
@@ -1184,6 +1205,11 @@ function openSettings() {
       <button class="btn" data-act="import">Загрузить задачи из файла</button>
       <button class="btn" data-act="logout">Выйти из аккаунта</button>
     </div>
+    <h2>Питомцы и картинки</h2>
+    <div class="hint">Через сколько дней всё меняется. У обычной задачи считаются дни просрочки (с первоначального срока, даже если утренняя проверка перенесла её на сегодня), у привычки — пропуски подряд. Питомец смотрит на свою самую запущенную задачу.</div>
+    <div class="limits">${Object.entries(LIMITS).map(([k, l]) => `<label>${l.name}<span>с <input class="inp num" id="lim-${k}" type="number" min="1" value="${lim(k)}"> дн.</span></label>`).join('')}</div>
+    <div class="hint">🔢 Счётчики: картинка появляется в день срока (или с даты «Начать с») и пропадает, когда задача отмечена.<br>Яша перелетает, только когда доволен; кот гуляет, если не очень грустит.</div>
+    <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn main" data-act="limits-save">Сохранить</button></div>
     <h2>Уведомления</h2>
     <div id="push-box"><div class="msg">Проверяю…</div></div>
     <div class="actions"><span></span><button class="btn" data-act="close">Закрыть</button></div>
@@ -1950,7 +1976,7 @@ async function deleteTemplate() {
 
 // ---------- нажатия ----------
 const byId = id => S.tasks.find(t => t.id === id);
-const BUSY = new Set(['t-save', 't-run', 't-delete', 'p-archive', 's-pause', 'login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no', 'bulk-save', 'bulk-delete']);
+const BUSY = new Set(['t-save', 't-run', 't-delete', 'p-archive', 's-pause', 'login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no', 'bulk-save', 'bulk-delete', 'limits-save']);
 
 // ---------- быстрое меню (правая кнопка мыши / долгое нажатие на телефоне) ----------
 const $ctx = document.createElement('div');
@@ -2070,6 +2096,7 @@ document.addEventListener('click', async ev => {
         break;
       }
       case 'b-from': S.bulk.from = v; syncBulk(); break;
+      case 'limits-save': await saveLimits(); break;
       case 'nodate': S.noDate = !S.noDate; localSet('nodate', S.noDate ? '1' : ''); render(); break;
       case 'h-range': S.hRange = +v; localSet('hrange', v); render(); break;
       case 'decor': S.edit.decor = v || null; syncEdit(); break;

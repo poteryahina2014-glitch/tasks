@@ -493,3 +493,9 @@ body.work .pill.mode { border-color: var(--accent); }
   .meter-card.side .meter-task { justify-content: center; }
 }
 @media (prefers-reduced-motion: reduce) { #dust i, .meter-svg * { animation: none !important; } }
+
+/* Настройки: пороги питомцев и пыли */
+.limits { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.limits label { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.limits span { display: flex; align-items: center; gap: 6px; color: var(--muted); white-space: nowrap; }
+.limits .inp.num { width: 64px; }
