@@ -284,7 +284,6 @@ function taskRow(t, opts = {}) {
   const rep = repeatLabel(t);
   if (rep) tags.push(`<span>↻ ${esc(rep)}</span>`);
   const subs = subsOf(t);
-  if (subs.length) tags.push(`<span>☑ ${subs.filter(s => s.d).length}/${subs.length}</span>`);
   if (t.remind_at) tags.push(`<span>🔔 ${hhmm(t.remind_at)}</span>`);
   if (t.decor && DECOR[t.decor]) tags.push(`<span title="${DECOR[t.decor].name}">${DECOR[t.decor].icon}</span>`);
   if (petsOf(t).length) tags.push(`<span title="${petsOf(t).map(p => esc(petName(p))).join(' и ')}">${petsOf(t).map(p => PETS[p].icon).join('')}</span>`);
@@ -301,7 +300,7 @@ function taskRow(t, opts = {}) {
     : '';
   const picked = S.pick && S.pick.has(t.id);
   const dusty = !opts.done && t.decor === 'dust' && petLate(t) >= lim('dust');
-  const cls = `task ${t.kind === 'habit' ? 'habit' : ''} ${waits.length ? 'locked' : ''} ${opts.done ? 'done' : ''} ${picked ? 'picked' : ''} ${opts.busy ? 'busy' : ''} ${dusty ? 'dusty' : ''}`;
+  const cls = `task ${t.kind === 'habit' ? 'habit' : ''} ${waits.length ? 'locked' : ''} ${opts.done ? 'done' : ''} ${picked ? 'picked' : ''} ${opts.busy ? 'busy' : ''} ${dusty ? 'dusty' : ''} ${subList ? 'has-subs' : ''}`;
   // mark — значок без действия (прошлые отметки и будущие повторы в календаре)
   const check = S.pick && opts.drag
     ? `<div class="check pick">${picked ? '✓' : ''}</div>`
@@ -864,7 +863,7 @@ function meterSVG(kind) {
     <rect x="24" y="36" width="112" height="32" rx="4" fill="#16161c"/>
     ${meterDigits(28, 40, '0815', '#16161c', '#f2f2f5')}
     <text x="80" y="86" text-anchor="middle" fill="#3a3d4d" font-size="10" font-family="sans-serif">кВт·ч</text>
-    <circle class="blink" cx="122" cy="104" r="5" fill="#e05a5a"/>
+    <circle class="lamp" cx="122" cy="104" r="5" fill="#e05a5a"/>
     <rect x="30" y="98" width="60" height="12" rx="3" fill="#b4b8c7"/>
   </svg>`;
   return `<svg class="meter-svg" viewBox="0 0 160 120" aria-hidden="true">
@@ -919,7 +918,7 @@ const LIMITS = {
   meh: { def: 1, name: '😐 Питомец немного грустит' },
   sad: { def: 2, name: '😢 Очень грустит' },
   faint: { def: 4, name: '😵 В обмороке' },
-  dust: { def: 4, name: '🕸 Паутина на задаче, пыль летает, на экране пятна пыли (каждый день — больше)' },
+  dust: { def: 4, name: '🕸 Паутина, пыль и пятна на экране' },
   dust2: { def: 8, name: '🕸🕸 Паутина в обоих углах, пыли больше' },
 };
 const lim = k => Math.max(1, +(S.user?.user_metadata?.limits?.[k]) || LIMITS[k].def);
@@ -982,8 +981,54 @@ function updatePets() {
     petsLoop();
   }
   $pets.hidden = !petsShown();
-  if (!$pets.hidden) Object.keys(PETS).forEach(fillPet);
+  if (!$pets.hidden) { Object.keys(PETS).forEach(fillPet); placePerches(); }
 }
+
+// Ветки можно перетащить мышкой (за ветку или за Яшу); места — в localStorage tm.perch, в долях экрана.
+// Яша сидит там же, где его ветка; если её унесли — перелетает следом.
+function perchSaved() { try { return JSON.parse(localGet('perch')) || {}; } catch { return {}; } }
+function placePerches() {
+  if (!$pets) return;
+  const saved = perchSaved();
+  const at = s => saved[s] ? { left: saved[s].x * 100 + 'vw', top: saved[s].y * 100 + 'vh' } : { left: '', top: '' };
+  for (const s of ['left', 'right']) Object.assign($pets.querySelector('.perch.' + s).style, at(s));
+  if (!perchDrag) Object.assign($pets.querySelector('.pet.bird').style, at(P.bird.side));
+}
+
+let perchDrag = null;
+document.addEventListener('pointerdown', ev => {
+  if (ev.button !== 0 || !$pets || $pets.hidden || ev.target.closest('.pet-text')) return;
+  const el = ev.target.closest('#pets .perch, #pets .pet.bird:not(.moving)');
+  if (!el) return;
+  const side = el.classList.contains('perch') ? (el.classList.contains('left') ? 'left' : 'right') : P.bird.side;
+  const perch = $pets.querySelector('.perch.' + side);
+  const cs = getComputedStyle(perch);
+  perchDrag = { side, perch, x0: ev.clientX, y0: ev.clientY, l0: parseFloat(cs.left), t0: parseFloat(cs.top), moved: false };
+  ev.preventDefault();
+});
+document.addEventListener('pointermove', ev => {
+  const d = perchDrag;
+  if (!d) return;
+  if (!d.moved && Math.hypot(ev.clientX - d.x0, ev.clientY - d.y0) < 5) return;
+  d.moved = true;
+  d.x = Math.min(Math.max(d.l0 + ev.clientX - d.x0, -60), innerWidth - 140) / innerWidth;
+  d.y = Math.min(Math.max(d.t0 + ev.clientY - d.y0, 0), innerHeight - 120) / innerHeight;
+  Object.assign(d.perch.style, { left: d.x * 100 + 'vw', top: d.y * 100 + 'vh' });
+});
+document.addEventListener('pointerup', () => {
+  const d = perchDrag;
+  perchDrag = null;
+  if (!d?.moved) return;
+  localSet('perch', JSON.stringify({ ...perchSaved(), [d.side]: { x: d.x, y: d.y } }));
+  if (d.side !== P.bird.side || P.bird.moving) return placePerches();
+  // унесли ветку с Яшей — он летит к ней
+  P.bird.moving = true;
+  fillPet('bird');
+  void $pets.querySelector('.pet.bird').offsetWidth;
+  placePerches();
+  setTimeout(() => { P.bird.moving = false; P.bird.arrived = Date.now(); fillPet('bird'); }, MOVE_MS.bird);
+  addEventListener('click', ev => { ev.stopPropagation(); ev.preventDefault(); }, { capture: true, once: true });
+});
 
 // Перерисовать питомца, только если что-то поменялось (настроение, поза, подписи).
 function fillPet(p) {
@@ -1020,6 +1065,7 @@ function petMove(p = Math.random() < .5 ? 'cat' : 'bird') {
   void $pets.querySelector('.pet.' + p).offsetWidth; // зафиксировать старое место, чтобы сработал плавный переход
   P[p].side = to;
   fillPet(p);
+  if (p === 'bird') placePerches();
   setTimeout(() => { P[p].moving = false; P[p].arrived = Date.now(); fillPet(p); }, MOVE_MS[p]);
 }
 
@@ -1253,8 +1299,9 @@ const HELP = [
   ['Подпункты', 'В окне задачи «+ Подпункт»: письма, проверки и т.п. Отмечаются прямо под задачей. В шаблоне у шага — «+ подзадача».'],
   ['План (работа, компьютер)', '«Срок» — дедлайн, «План» — день, когда делаешь, и сколько часов займёт. Во вкладке «План» неделя: задачи перетаскиваются по дням, вверху сумма часов вместе со встречами. Больше 8 ч — жёлтым, больше 11 ч — ⚠ красным.'],
   ['Порядок шагов', 'У задачи проекта — «Делать после» (в шаблоне — «после шагов: 1, 2»). Пока те шаги не сделаны, у задачи 🔒 «ждёт: …»; красный — если они запланированы позже. Ничего не запрещается.'],
-  ['Питомцы', 'В окне задачи (в личном режиме) — «Питомец». На широком экране по бокам сидят кот и попугай: доволен, если всё сделано, грустит от пропусков, сколько дней до грусти и обморока — в ⚙. Нажми на имя, чтобы переименовать.'],
-  ['Картинки', 'В окне задачи — «Картинка». 🕸 Пыль и паутина: уборка просрочена (по умолчанию на 4+ дня, меняется в ⚙) — появляется паутина и летает пыль. 🔢 Счётчики: подошёл срок — вверху «Сегодня» (на компьютере сбоку) картинка «Пора передать показания».'],
+  ['Питомцы', 'В окне задачи (в личном режиме) — «Питомец». На широком экране по бокам сидят кот и попугай: доволен, если всё сделано, грустит от пропусков. Наведи на питомца — увидишь, почему грустит. Нажми на имя, чтобы переименовать. Яша перелетает, только когда доволен; кот гуляет, если не очень грустит. Ветки можно перетаскивать мышкой — Яша перелетит на свою.'],
+  ['Как считаются дни', 'Сколько дней до грусти, обморока и пыли — в ⚙. У обычной задачи считаются дни просрочки (с первоначального срока, даже если утренняя проверка перенесла её на сегодня), у привычки — пропуски подряд. Питомец смотрит на свою самую запущенную задачу.'],
+  ['Картинки', 'В окне задачи — «Картинка». 🕸 Пыль и паутина: уборка просрочена — появляется паутина, летает пыль, и с каждым днём на экране всё больше пыльных пятен. Уберёшь — всё исчезнет. 🔢 Счётчики: в день срока (или с даты «Начать с») появляется счётчик — газ, вода или свет, по названию задачи. Пропадает, когда задача отмечена. На компьютере его можно перетащить мышкой.'],
   ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных.'],
   ['Устройства', 'Всё хранится в облаке. Входи с той же почтой на телефоне и компьютере. На телефоне: Chrome → ⋮ → «Установить приложение».'],
 ];
@@ -1288,9 +1335,8 @@ function openSettings() {
       <button class="btn" data-act="logout">Выйти из аккаунта</button>
     </div>
     <h2>Питомцы и картинки</h2>
-    <div class="hint">Через сколько дней всё меняется. У обычной задачи считаются дни просрочки (с первоначального срока, даже если утренняя проверка перенесла её на сегодня), у привычки — пропуски подряд. Питомец смотрит на свою самую запущенную задачу.</div>
+    <div class="hint">Через сколько дней просрочки (подробнее — в справке «?»)</div>
     <div class="limits">${Object.entries(LIMITS).map(([k, l]) => `<label>${l.name}<span>с <input class="inp num" id="lim-${k}" type="number" min="1" value="${lim(k)}"> дн.</span></label>`).join('')}</div>
-    <div class="hint">🔢 Счётчики: картинка появляется в день срока (или с даты «Начать с») и пропадает, когда задача отмечена.<br>Яша перелетает, только когда доволен; кот гуляет, если не очень грустит.</div>
     <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn main" data-act="limits-save">Сохранить</button></div>
     <h2>Уведомления</h2>
     <div id="push-box"><div class="msg">Проверяю…</div></div>

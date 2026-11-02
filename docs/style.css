@@ -314,6 +314,10 @@ body.work .pill.mode { border-color: var(--accent); }
 .sub-dash { color: var(--muted); text-align: center; }
 
 /* Подпункты задачи */
+/* с подпунктами: кружок и отметки — на строке названия, подпункты ниже */
+.task.has-subs { align-items: flex-start; }
+.task.has-subs > .check { margin-top: -3px; }
+.task.has-subs > .tags { padding-top: 2px; }
 .subs { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
 .sub { display: flex; align-items: center; gap: 8px; text-align: left; font-size: 14px; padding: 2px 0; color: inherit; }
 .sub i { flex: none; width: 18px; height: 18px; border: 2px solid var(--muted); border-radius: 5px; font-style: normal; font-size: 12px; line-height: 14px; text-align: center; color: var(--good); }
@@ -395,7 +399,8 @@ body { --appw: 1180px; }
 .perch, .pet.bird { top: 70px; width: 200px; }
 .perch.left, .pet.bird.left { left: calc((100vw - var(--appw)) / 4 - 100px); }
 .perch.right, .pet.bird.right { left: calc(100vw - (100vw - var(--appw)) / 4 - 100px); }
-.pet.bird.moving { transition: left 3.2s ease-in-out; }
+.pet.bird.moving { transition: left 3.2s ease-in-out, top 3.2s ease-in-out; }
+#pets .perch, #pets .pet.bird:not(.moving) .pet-svg { cursor: grab; touch-action: none; }
 .pet.bird.moving .pet-svg { animation: arc 3.2s ease-in-out; }
 @keyframes arc { 50% { transform: translateY(-70px); } }
 .pet .wing { animation: flap .22s ease-in-out infinite alternate; }
@@ -500,8 +505,8 @@ body { --appw: 1180px; }
 .meter-card.side { display: none; }
 .meter-btn { background: none; border: 0; padding: 0; cursor: pointer; line-height: 0; }
 .meter-svg { width: 110px; flex: none; filter: drop-shadow(0 4px 8px #0006); }
-.meter-svg .blink { animation: blink 1.4s steps(1) infinite; }
-@keyframes blink { 50% { opacity: .15; } }
+.meter-svg .lamp { animation: lamp 1.4s steps(1) infinite; }
+@keyframes lamp { 50% { opacity: .15; } }
 .meter-svg .roll { animation: roll 6s ease-in-out infinite; }
 @keyframes roll { 0%, 30% { transform: translateY(0); } 40%, 63% { transform: translateY(-24px); } 73%, 100% { transform: translateY(-48px); } }
 .meter-svg .spin-wheel { animation: spin 4s linear infinite; }
