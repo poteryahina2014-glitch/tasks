@@ -1140,7 +1140,7 @@ function updatePets() {
     $pets.id = 'pets';
     $pets.innerHTML = `<div class="perch left">${perchSVG()}</div><div class="perch right">${perchSVG(true)}</div>
       <aside class="pet cat"></aside><aside class="pet bird"></aside>`;
-    document.body.prepend($pets);
+    if ($bg) $bg.after($pets); else document.body.prepend($pets); // вид за окном — всегда позади питомцев
     petsLoop();
   }
   $pets.hidden = !petsShown();
