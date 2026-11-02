@@ -392,6 +392,35 @@ body { --appw: 1180px; }
   #pets .pet.bird, #pets .perch { transform-origin: 50% 0; }
 }
 #app { position: relative; z-index: 1; }
+
+/* Вид за окном: позади всего, приглушённый, с рамой и подоконником */
+#bg { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+#bg[hidden] { display: none; }
+#bg > svg { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .5; }
+#bg .frame { position: absolute; inset: 0; box-shadow: inset 0 0 0 16px #2b2420, inset 0 0 0 20px #3d332c, inset 0 0 60px 30px #0008; }
+#bg .frame i { position: absolute; background: #2b2420; box-shadow: 0 0 0 3px #3d332c; }
+#bg .frame .v { left: calc(50% - 7px); top: 0; bottom: 0; width: 14px; }
+#bg .frame .h { left: 0; right: 0; top: 38%; height: 14px; }
+#bg .sill { position: absolute; left: 0; right: 0; bottom: 0; height: 22px; background: linear-gradient(#4a3d34, #2b2420); }
+@media (max-width: 899px) { #bg .frame .v, #bg .frame .h { display: none; } #bg .frame { box-shadow: inset 0 0 0 6px #2b2420, inset 0 0 40px 16px #0008; } }
+body.bg header { background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(8px); }
+body.bg h2, body.bg header h1, body.bg .empty { text-shadow: 0 1px 3px #000, 0 0 10px #000a; }
+#bg .cloud { animation: cloud linear infinite; }
+@keyframes cloud { from { transform: translateX(-250px); } to { transform: translateX(1850px); } }
+#bg .star { animation: twinkle 4s ease-in-out infinite; }
+@keyframes twinkle { 50% { opacity: .3; } }
+#bg .shoot { stroke-dasharray: 180 400; animation: shoot 6s ease-in infinite; }
+@keyframes shoot { 0% { stroke-dashoffset: 180; opacity: 0; } 5% { opacity: 1; } 15%, 100% { stroke-dashoffset: -400; opacity: 0; } }
+#bg .rain { animation: fall .7s linear infinite; }
+#bg .snow { animation: fall 14s linear infinite; }
+@keyframes fall { from { transform: translateY(0); } to { transform: translateY(900px); } }
+#bg .flash { opacity: 0; animation: flash 9s infinite; }
+@keyframes flash { 0%, 90%, 94%, 100% { opacity: 0; } 91%, 93% { opacity: .5; } }
+#bg .wave { animation: wave 5s ease-in-out infinite alternate; }
+@keyframes wave { to { transform: translateX(40px); } }
+#bg .boat { animation: boat 4s ease-in-out infinite alternate; }
+@keyframes boat { to { transform: translate(14px, 4px); } }
+@media (prefers-reduced-motion: reduce) { #bg * { animation: none !important; } }
 #pets > * { position: fixed; z-index: 0; text-align: center; }
 #pets > .pet.moving { z-index: 2; pointer-events: none; }
 .pet-svg { width: 200px; height: 210px; display: block; overflow: visible; }

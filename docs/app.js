@@ -29,6 +29,7 @@ const S = {
   projects: [],
   tpl: null,              // шаблон в окне редактирования
   showDone: localGet('done') === '1', // показывать выполненные («Сделано сегодня», отметки в календаре)
+  bg: localGet('bg') !== '0', // вид за окном на фоне
   noDate: localGet('nodate') === '1', // «Разделы»: только задачи без срока
   hRange: +localGet('hrange') || 30,  // «Привычки»: за сколько дней статистика
   hLogs: null,            // история привычек за год (грузится, когда открыта вкладка)
@@ -249,6 +250,7 @@ async function undo(t) {
 
 // ---------- экраны ----------
 function render() {
+  updateBg();
   updatePets();
   updateDust();
   if (!S.user) return renderLogin();
@@ -257,7 +259,7 @@ function render() {
   if (S.view === 'nodate') { S.view = 'sections'; S.noDate = true; } // вкладки «Без срока» нет — это фильтр в «Разделах»
   if (!views[S.view]) S.view = 'sections'; // была вкладка «Проекты» — теперь проекты живут в «Разделах»
   if (S.view === 'plan' && !planOn()) S.view = 'today';
-  document.body.className = 'v-' + S.view + (S.space === 'work' ? ' work' : '') + (petsShown() ? ' pets' : '');
+  document.body.className = 'v-' + S.view + (S.space === 'work' ? ' work' : '') + (petsShown() ? ' pets' : '') + (S.bg ? ' bg' : '');
   $app.innerHTML = views[S.view]() + meterCard('side') + `
     ${S.pick ? pickBar() : '<button class="fab" data-act="new" title="Новая задача">+</button>'}
     <nav class="bottom">
@@ -811,6 +813,166 @@ function updateDust() {
   $dust.innerHTML = k ? `<div class="haze"></div>${spots}<svg class="corner r" viewBox="0 0 60 60">${web}</svg>${lvl === 2 ? `<svg class="corner l" viewBox="0 0 60 60">${web}</svg>` : ''}${motes}` : '';
 }
 
+// ---------- вид за окном (фон) ----------
+// Каждый день свой вид; время суток — настоящее; погода — от того, как идут дела сегодня:
+// чем больше сделано, тем меньше туч и ярче солнце; всё сделано — радуга (ночью — падающая звезда);
+// есть просрочка ≥ lim('sad') дней — дождь, ≥ lim('faint') — гроза. Выключается в ⚙ (tm.bg).
+const SCENES = ['city', 'forest', 'sea', 'mountains', 'village', 'winter'];
+const SCENE_NAMES = { city: 'город', forest: 'лес', sea: 'море', mountains: 'горы', village: 'деревня', winter: 'зима' };
+const SKY = { night: ['#0b1026', '#1c2346'], dawn: ['#3b4a7a', '#f2a46b'], day: ['#4f8fd6', '#a9d4f5'], evening: ['#2f2f63', '#e2795a'] };
+const DARK = { night: .55, evening: .28, dawn: .18, day: 0 };
+
+function mixHex(a, b, t) {
+  const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const [x, y] = [p(a), p(b)];
+  return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join('');
+}
+
+function bgState() {
+  const t0 = today();
+  const h = new Date().getHours();
+  const tod = h < 6 || h >= 22 ? 'night' : h < 9 ? 'dawn' : h < 18 ? 'day' : 'evening';
+  const left = active().filter(t => !isEvent(t) && reviewDay(t) && reviewDay(t) <= t0);
+  const done = new Set(S.logs.filter(l => l.status === 'done' && l.done_on === t0 && S.tasks.some(t => t.id === l.task_id && spaceOf(t) === S.space)).map(l => l.task_id)).size;
+  const p = left.length + done ? done / (left.length + done) : 1;
+  const late = Math.max(0, ...left.map(petLate));
+  const day = Math.floor(Date.parse(t0) / 864e5);
+  return {
+    scene: SCENES[day % SCENES.length], tod, p: Math.round(p * 10) / 10, all: !left.length && done > 0,
+    rain: late >= lim('faint') ? 2 : late >= lim('sad') ? 1 : 0, late: late > 0,
+  };
+}
+
+let $bg = null;
+function updateBg() {
+  const on = S.bg && S.user && S.loaded;
+  if (!$bg) {
+    if (!on) return;
+    $bg = document.createElement('div');
+    $bg.id = 'bg';
+  }
+  if (document.body.firstChild !== $bg) document.body.prepend($bg); // всегда позади питомцев
+  $bg.hidden = !on;
+  if (!on) return;
+  const st = bgState();
+  const sig = JSON.stringify(st);
+  if ($bg.dataset.sig === sig) return;
+  $bg.dataset.sig = sig;
+  $bg.innerHTML = bgSVG(st) + '<div class="frame"><i class="v"></i><i class="h"></i></div><div class="sill"></div>';
+}
+
+function bgSVG({ scene, tod, p, all, rain, late }) {
+  const gloom = Math.min(1, (1 - p) * .6 + (late ? .25 : 0) + rain * .15);
+  const night = tod === 'night';
+  const grey = night ? ['#11131b', '#1d2029'] : ['#69707f', '#9aa0ab'];
+  const [top, bot] = SKY[tod].map((c, i) => mixHex(c, grey[i], gloom * .8));
+  const r = seeded(SCENES.indexOf(scene) * 97);
+  // солнце или луна: по дуге в зависимости от часа
+  const hr = new Date().getHours() + new Date().getMinutes() / 60;
+  const k = night ? ((hr + 2) % 24) / 8 : Math.min(Math.max((hr - 6) / 16, 0), 1);
+  const cx = 200 + k * 1200, cy = 520 - Math.sin(k * Math.PI) * 380;
+  const light = night
+    ? `<circle cx="${cx}" cy="${cy}" r="34" fill="#f4f1e0" opacity="${.5 + .5 * (1 - gloom)}"/><circle cx="${cx + 14}" cy="${cy - 8}" r="30" fill="${top}" opacity="${.9 * (1 - gloom * .5)}"/>`
+    : `<circle cx="${cx}" cy="${cy}" r="${tod === 'day' ? 46 : 56}" fill="${tod === 'day' ? '#ffe68a' : '#ffb36b'}" opacity="${Math.max(.15, 1 - gloom)}"/>
+       <circle cx="${cx}" cy="${cy}" r="90" fill="${tod === 'day' ? '#ffe68a' : '#ffb36b'}" opacity="${Math.max(0, .25 - gloom * .3)}"/>`;
+  const stars = night || tod === 'evening'
+    ? Array.from({ length: Math.round((night ? 70 : 25) * (1 - gloom * .8)) }, () => `<circle class="star" cx="${(r() * 1600).toFixed(0)}" cy="${(r() * 480).toFixed(0)}" r="${(.8 + r() * 1.6).toFixed(1)}" fill="#fff" style="animation-delay:-${(r() * 4).toFixed(1)}s"/>`).join('')
+      + (all && night ? '<path class="shoot" d="M1200 90l-160 70" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>' : '')
+    : '';
+  const rainbow = all && !night && !rain
+    ? `<g opacity=".55" fill="none" stroke-width="18">${['#e8545a', '#f2a24b', '#f2da5a', '#6fcf7a', '#5aa9e8', '#8a6fe0'].map((c, i) => `<path d="M${260 + i * 16} 700A${540 - i * 16} ${460 - i * 16} 0 0 1 ${1340 - i * 16} 700" stroke="${c}"/>`).join('')}</g>`
+    : '';
+  const nClouds = Math.round((1 - p) * 6) + (late ? 2 : 0) + rain * 2 + (p === 1 ? 1 : 0);
+  const cloudC = mixHex(night ? '#3a3f55' : '#f5f7fb', night ? '#1a1c26' : '#5d6370', Math.min(1, gloom * 1.1));
+  const clouds = Array.from({ length: nClouds }, (_, i) => {
+    const q = seeded(i + 31), s = .7 + q() * .9, y = 60 + q() * 300;
+    return `<g class="cloud" style="animation-duration:${(90 + q() * 90).toFixed(0)}s;animation-delay:-${(q() * 180).toFixed(0)}s"><g transform="translate(0 ${y.toFixed(0)}) scale(${s.toFixed(2)})" fill="${cloudC}" opacity="${(.75 + gloom * .25).toFixed(2)}">
+      <ellipse cx="0" cy="30" rx="110" ry="34"/><ellipse cx="-50" cy="12" rx="56" ry="40"/><ellipse cx="34" cy="0" rx="66" ry="52"/></g></g>`;
+  }).join('');
+  const snowy = scene === 'winter';
+  // капли/снежинки на высоту экрана и та же картинка над ней — сдвигаются вниз на 900 без пропусков
+  const drops = rain || snowy ? Array.from({ length: snowy ? 70 + rain * 60 : 90 + rain * 70 }, () => {
+    const x = (r() * 1700 - 50).toFixed(0), y = (r() * 900).toFixed(0);
+    return snowy ? `<circle cx="${x}" cy="${y}" r="${(1.5 + r() * 2.5).toFixed(1)}" fill="#fff" opacity=".85"/>` : `<path d="M${x} ${y}l-8 26" stroke="#c9d6ea" stroke-width="1.6" opacity=".6"/>`;
+  }).join('') : '';
+  const fall = drops ? `<g class="${snowy ? 'snow' : 'rain'}">${drops}<g transform="translate(0 -900)">${drops}</g></g>` : '';
+  const flash = rain === 2 ? '<rect class="flash" width="1600" height="900" fill="#fff"/>' : '';
+  return `<svg viewBox="0 0 1600 900" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+    <defs><linearGradient id="bg-sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${top}"/><stop offset="1" stop-color="${bot}"/></linearGradient></defs>
+    <rect width="1600" height="900" fill="url(#bg-sky)"/>
+    ${stars}${light}${rainbow}${clouds}
+    ${SCENE_SVG[scene](tod, r)}
+    <rect width="1600" height="900" fill="#0a0e22" opacity="${DARK[tod]}"/>
+    <rect width="1600" height="900" fill="#5b616e" opacity="${(gloom * .18).toFixed(2)}"/>
+    ${scene === 'city' ? cityLights(tod) : ''}
+    ${fall}${flash}
+  </svg>`;
+}
+
+// Пейзажи: рисуются от горизонта (≈620) вниз; r — свои случайные числа у каждого вида
+const pines = (r, n, y0, h0, col, w = 1600) => Array.from({ length: n }, () => {
+  const x = r() * w, h = h0 * (.7 + r() * .6);
+  return `<path d="M${x.toFixed(0)} ${(y0 - h).toFixed(0)}l${(h * .28).toFixed(0)} ${h.toFixed(0)}h${(-h * .56).toFixed(0)}z" fill="${col}"/>`;
+}).join('');
+let CITY = [];
+const SCENE_SVG = {
+  city(tod, r) {
+    CITY = [];
+    let x = -20, out = '';
+    for (const [y0, cols, hMin, hMax] of [[700, ['#3a4560', '#36405a', '#414c68'], 160, 330], [760, ['#262d40', '#2b3348', '#222839'], 120, 260]]) {
+      x = -20 - r() * 60;
+      while (x < 1640) {
+        const w = 90 + r() * 90, h = hMin + r() * (hMax - hMin), c = cols[Math.floor(r() * cols.length)];
+        out += `<rect x="${x.toFixed(0)}" y="${(y0 - h).toFixed(0)}" width="${w.toFixed(0)}" height="${(h + 200).toFixed(0)}" fill="${c}"/>`;
+        for (let wy = y0 - h + 18; wy < y0 - 20; wy += 30) for (let wx = x + 14; wx < x + w - 20; wx += 26) CITY.push([wx, wy, r()]);
+        x += w + 4 + r() * 20;
+      }
+    }
+    return out + `<rect y="830" width="1600" height="70" fill="#2a2e38"/><rect y="826" width="1600" height="6" fill="#4a505e"/>
+      ${[200, 620, 1040, 1460].map(lx => `<rect x="${lx}" y="720" width="5" height="108" fill="#1b1e27"/><circle cx="${lx + 2}" cy="718" r="9" fill="${tod === 'day' ? '#9aa0ab' : '#ffd98a'}"/>`).join('')}`;
+  },
+  forest(tod, r) {
+    return `<path d="M0 640Q400 560 800 620T1600 600V900H0z" fill="#3f6f5a"/>${pines(r, 40, 650, 150, '#2e5e4e')}
+      <path d="M0 720Q500 650 1000 710T1600 690V900H0z" fill="#335a44"/>${pines(r, 26, 740, 210, '#24493d')}
+      <path d="M0 800Q600 760 1100 800T1600 790V900H0z" fill="#2a4a33"/>${pines(r, 12, 830, 280, '#1a3a30')}`;
+  },
+  sea(tod, r) {
+    const sun = tod === 'night' ? '#f4f1e0' : '#ffd98a';
+    return `<rect y="600" width="1600" height="300" fill="#2a6f97"/><rect y="600" width="1600" height="300" fill="url(#bg-sky)" opacity=".25"/>
+      <path d="M1100 600Q1250 540 1400 570T1600 590V600H1100z" fill="#4c6a5a"/>
+      ${Array.from({ length: 14 }, (_, i) => `<path class="wave" style="animation-delay:-${(i * .7).toFixed(1)}s" d="M${(r() * 1500).toFixed(0)} ${620 + i * 20}q20 -6 40 0t40 0" stroke="#bfe0f2" stroke-width="2" fill="none" opacity=".45"/>`).join('')}
+      <rect x="760" y="610" width="80" height="250" fill="${sun}" opacity=".12"/>
+      <g class="boat"><path d="M1000 640h90l-14 16h-62z" fill="#e9e3d6"/><path d="M1040 640v-70l38 62z" fill="#f5f2ea"/><path d="M1036 640v-56l-28 48z" fill="#d8cfbe"/></g>
+      <path d="M0 820Q400 790 800 830T1600 810V900H0z" fill="#d9c79a"/>`;
+  },
+  mountains(tod, r) {
+    return `<path d="M-50 640L180 380L330 520L520 300L760 600L940 360L1150 580L1330 330L1650 640V900H-50z" fill="#6a7fa0"/>
+      <path d="M180 380l40 46-30-8-26 22-24-20zM520 300l50 60-36-10-30 26-30-28zM940 360l46 54-34-8-26 22-28-24zM1330 330l50 58-36-10-30 24-30-26z" fill="#eef3fa"/>
+      <path d="M-50 700L260 520L520 690L800 540L1100 700L1380 560L1650 700V900H-50z" fill="#4d6185"/>
+      <path d="M0 770Q400 720 800 760T1600 750V900H0z" fill="#4f7a52"/>${pines(r, 18, 790, 120, '#2f5a3e')}`;
+  },
+  village(tod, r) {
+    return `<path d="M0 660Q400 580 800 640T1600 620V900H0z" fill="#6f9a56"/>
+      <path d="M0 740Q500 680 1000 730T1600 720V900H0z" fill="#5b8c4a"/>
+      <g><rect x="1060" y="600" width="150" height="110" fill="#c9a77c"/><path d="M1045 604l90-70 90 70z" fill="#8a4b3a"/>
+        <rect x="1150" y="640" width="34" height="70" fill="#6a4630"/><rect x="1080" y="630" width="40" height="34" fill="${tod === 'day' ? '#a9d4f5' : '#ffd98a'}"/></g>
+      <g fill="#a37b52">${Array.from({ length: 30 }, (_, i) => `<rect x="${i * 54}" y="770" width="8" height="46"/>`).join('')}<rect y="784" width="1600" height="6"/><rect y="802" width="1600" height="6"/></g>
+      <g><rect x="300" y="600" width="18" height="120" fill="#6a4a32"/><circle cx="309" cy="590" r="64" fill="#4a7a3c"/><circle cx="280" cy="560" r="10" fill="#e05a5a"/><circle cx="335" cy="600" r="10" fill="#e05a5a"/></g>
+      <path d="M0 830Q600 800 1200 830T1600 820V900H0z" fill="#4a7a3c"/>`;
+  },
+  winter(tod, r) {
+    return `<path d="M0 650Q400 590 800 640T1600 620V900H0z" fill="#dfe7f1"/>${pines(r, 30, 670, 160, '#3e5e5a')}
+      <path d="M0 740Q500 690 1000 730T1600 720V900H0z" fill="#eef3f9"/>${pines(r, 12, 760, 230, '#2f4e4a')}
+      <path d="M0 820Q600 790 1200 820T1600 810V900H0z" fill="#f7f9fc"/>
+      <g><rect x="700" y="640" width="130" height="90" fill="#9c6b4e"/><path d="M688 644l77-58 77 58z" fill="#f3f6fa"/><rect x="740" y="670" width="30" height="26" fill="${tod === 'day' ? '#a9d4f5' : '#ffd98a'}"/></g>`;
+  },
+};
+// Окна домов: вечером и ночью часть горит
+function cityLights(tod) {
+  const on = tod === 'night' ? .35 : tod === 'evening' ? .6 : tod === 'dawn' ? .2 : 0;
+  return CITY.map(([x, y, q]) => `<rect x="${x.toFixed(0)}" y="${y.toFixed(0)}" width="12" height="16" fill="${q < on ? '#ffd27a' : '#8fb0d0'}" opacity="${q < on ? .9 : tod === 'day' ? .35 : .12}"/>`).join('');
+}
+
 // Счётчики: подошёл срок — картинка сбоку (на телефоне — вверху «Сегодня»). Только картинка, без текста;
 // щелчок — открыть задачу. Сбоку картинку можно перетащить мышкой куда угодно (место — в localStorage tm.meter).
 // where: 'side' — сбоку на широком экране (на всех вкладках), 'top' — вверху «Сегодня» на остальных экранах
@@ -1302,7 +1464,8 @@ const HELP = [
   ['Питомцы', 'В окне задачи (в личном режиме) — «Питомец». На широком экране по бокам сидят кот и попугай: доволен, если всё сделано, грустит от пропусков. Наведи на питомца — увидишь, почему грустит. Нажми на имя, чтобы переименовать. Яша перелетает, только когда доволен; кот гуляет, если не очень грустит. Ветки можно перетаскивать мышкой — Яша перелетит на свою.'],
   ['Как считаются дни', 'Сколько дней до грусти, обморока и пыли — в ⚙. У обычной задачи считаются дни просрочки (с первоначального срока, даже если утренняя проверка перенесла её на сегодня), у привычки — пропуски подряд. Питомец смотрит на свою самую запущенную задачу.'],
   ['Картинки', 'В окне задачи — «Картинка». 🕸 Пыль и паутина: уборка просрочена — появляется паутина, летает пыль, и с каждым днём на экране всё больше пыльных пятен. Уберёшь — всё исчезнет. 🔢 Счётчики: в день срока (или с даты «Начать с») появляется счётчик — газ, вода или свет, по названию задачи. Пропадает, когда задача отмечена. На компьютере его можно перетащить мышкой.'],
-  ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных.'],
+  ['Вид за окном', 'На фоне — окно, вид за ним каждый день свой: город, лес, море, горы, деревня, зима. Время суток настоящее. Погода — от того, как идут дела сегодня: чем больше сделано, тем меньше туч и ярче солнце; всё сделано — радуга (ночью — падающая звезда). Просрочка — дождь, большая просрочка — гроза. Выключается в ⚙.'],
+  ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных, вид за окном.'],
   ['Устройства', 'Всё хранится в облаке. Входи с той же почтой на телефоне и компьютере. На телефоне: Chrome → ⋮ → «Установить приложение».'],
 ];
 
@@ -1330,6 +1493,7 @@ function openSettings() {
     <h3>Настройки</h3>
     <div class="menu">
       <button class="btn ${S.showDone ? 'on' : ''}" data-act="show-done">${S.showDone ? '✓ ' : ''}Показывать выполненные</button>
+      <button class="btn ${S.bg ? 'on' : ''}" data-act="bg-toggle">${S.bg ? '✓ ' : ''}Вид за окном на фоне</button>
       <button class="btn" data-act="set-name">Имя для приветствия: ${userName() ? esc(userName()) : 'не задано'}</button>
       <button class="btn" data-act="import">Загрузить задачи из файла</button>
       <button class="btn" data-act="logout">Выйти из аккаунта</button>
@@ -2177,6 +2341,7 @@ document.addEventListener('click', async ev => {
       case 'settings': openSettings(); break;
       case 'help': openHelp(); break;
       case 'show-done': S.showDone = !S.showDone; localSet('done', S.showDone ? '1' : ''); openSettings(); render(); break;
+      case 'bg-toggle': S.bg = !S.bg; localSet('bg', S.bg ? '1' : '0'); openSettings(); render(); break;
       case 'push-on': await pushOn(); break;
       case 'push-off': await pushOff(); break;
       case 'push-test': await pushTest(); break;
