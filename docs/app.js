@@ -766,7 +766,7 @@ function renderHabits() {
 // ---------- картинки у задач ----------
 const DECOR = {
   dust: { icon: '🕸', name: 'Пыль и паутина', get hint() { return `Пыль и паутина — если задача просрочена на ${lim('dust')} дн. и больше (уборка).`; } },
-  meter: { icon: '🔢', name: 'Счётчики', hint: 'Счётчики — когда подошёл срок (или «Начать с»), сбоку появляется картинка «Пора передать показания».' },
+  meter: { icon: '🔢', name: 'Счётчики', hint: 'Счётчики — когда подошёл срок (или «Начать с»), сбоку появляется счётчик (газ, вода или свет — по названию задачи). Его можно перетащить мышкой.' },
 };
 
 // Паутинка в углу строки задачи
@@ -775,56 +775,136 @@ const WEB = `<svg class="web" viewBox="0 0 60 60" aria-hidden="true"><g stroke="
   <path d="M48 0Q50 10 60 12M36 0Q40 20 60 24M22 0Q30 30 60 38M10 2Q22 40 58 52"/></g>
   <path d="M46 26v8" stroke="#cfd3e6" stroke-width=".8"/><circle cx="46" cy="36" r="2.6" fill="#2a2b36" stroke="#cfd3e6" stroke-width=".6"/></svg>`;
 
-// Насколько запущена уборка: 0 — чисто, 1 — паутина в углу, 2 — паутина в обоих углах и много пыли
-function dustLevel() {
-  const n = Math.max(0, ...active().filter(t => t.decor === 'dust').map(petLate));
-  return n >= lim('dust2') ? 2 : n >= lim('dust') ? 1 : 0;
+// Сколько дней запущена уборка (худшая задача с пылью)
+const dustDays = () => Math.max(0, ...active().filter(t => t.decor === 'dust').map(petLate));
+
+// Случайные числа, одинаковые при каждой перерисовке: пятно №i всегда на своём месте, с каждым днём добавляются новые
+function seeded(i) {
+  let x = (i + 1) * 2654435761 >>> 0;
+  return () => { x = (x ^ (x >>> 15)) * 2246822507 >>> 0; x = (x ^ (x >>> 13)) * 3266489909 >>> 0; return ((x ^= x >>> 16) >>> 0) / 4294967296; };
 }
 
-// Паутина по углам экрана и летающая пыль — свой слой поверх всего, мышку не ловит.
+// Паутина по углам, летающая пыль и пыльные пятна по экрану — свой слой поверх всего, мышку не ловит.
+// Чем дольше просрочена уборка, тем больше пятен и они гуще (дней после порога «пыль» = k).
 let $dust = null;
 function updateDust() {
-  const lvl = S.user && S.loaded && S.view !== 'plan' ? dustLevel() : 0;
+  const n = S.user && S.loaded && S.view !== 'plan' ? dustDays() : 0;
+  const k = n >= lim('dust') ? Math.min(n - lim('dust') + 1, 20) : 0;
+  const lvl = !k ? 0 : n >= lim('dust2') ? 2 : 1;
   if (!$dust) {
-    if (!lvl) return;
+    if (!k) return;
     $dust = document.createElement('div');
     $dust.id = 'dust';
     document.body.append($dust);
   }
-  if ($dust.dataset.lvl === String(lvl)) return;
-  $dust.dataset.lvl = lvl;
-  const motes = Array.from({ length: lvl === 2 ? 26 : 12 }, () =>
+  if ($dust.dataset.k === String(k)) return;
+  $dust.dataset.k = k;
+  const motes = Array.from({ length: Math.min(8 + k * 3, 60) }, () =>
     `<i style="left:${Math.random() * 100}%;top:${Math.random() * 100}%;animation-delay:-${(Math.random() * 14).toFixed(1)}s;animation-duration:${(10 + Math.random() * 8).toFixed(1)}s;--s:${(2 + Math.random() * 3).toFixed(1)}px"></i>`).join('');
-  $dust.innerHTML = lvl ? `<svg class="corner r" viewBox="0 0 60 60">${WEB.slice(WEB.indexOf('<g'), -6)}</svg>${lvl === 2 ? `<svg class="corner l" viewBox="0 0 60 60">${WEB.slice(WEB.indexOf('<g'), -6)}</svg>` : ''}${motes}` : '';
+  const spots = Array.from({ length: Math.min(k * 3, 50) }, (_, i) => {
+    const r = seeded(i);
+    const size = (90 + r() * 220) * Math.min(Math.max(innerWidth / 1400, .4), 1);
+    const a = Math.min(.18 + k * .025, .6) * (.6 + r() * .4);
+    return `<b style="left:${(r() * 100).toFixed(1)}%;top:${(r() * 100).toFixed(1)}%;width:${size.toFixed(0)}px;height:${(size * (.6 + r() * .5)).toFixed(0)}px;rotate:${(r() * 180).toFixed(0)}deg;opacity:${a.toFixed(2)}"></b>`;
+  }).join('');
+  const web = WEB.slice(WEB.indexOf('<g'), -6);
+  $dust.style.setProperty('--haze', Math.min(k * .012, .2).toFixed(3));
+  $dust.innerHTML = k ? `<div class="haze"></div>${spots}<svg class="corner r" viewBox="0 0 60 60">${web}</svg>${lvl === 2 ? `<svg class="corner l" viewBox="0 0 60 60">${web}</svg>` : ''}${motes}` : '';
 }
 
-// Счётчики: подошёл срок — картинка сбоку (на телефоне — вверху «Сегодня»)
+// Счётчики: подошёл срок — картинка сбоку (на телефоне — вверху «Сегодня»). Только картинка, без текста;
+// щелчок — открыть задачу. Сбоку картинку можно перетащить мышкой куда угодно (место — в localStorage tm.meter).
 // where: 'side' — сбоку на широком экране (на всех вкладках), 'top' — вверху «Сегодня» на остальных экранах
 function meterCard(where) {
   const t0 = today();
   const due = active().filter(t => t.decor === 'meter' && !isEvent(t) && ((reviewDay(t) && reviewDay(t) <= t0) || (t.start_date && t.start_date <= t0)));
   if (!due.length || S.view === 'plan') return '';
-  return `<aside class="meter-card ${where}">
-    ${meterSVG()}
-    <div class="meter-text"><b>Пора передать показания!</b>
-      ${due.map(t => `<div class="meter-task"><button class="check" data-act="done" data-id="${t.id}" title="Передала">✓</button>
-        <button class="link" data-act="edit" data-id="${t.id}">${esc(t.title)}</button></div>`).join('')}</div>
+  let pos = '';
+  if (where === 'side') {
+    try {
+      const p = JSON.parse(localGet('meter'));
+      if (p) pos = ` style="left:${p.x * 100}%;top:${p.y * 100}%;translate:none"`;
+    } catch { }
+  }
+  return `<aside class="meter-card ${where}"${pos} title="${where === 'side' ? 'Можно перетащить мышкой' : ''}">
+    ${due.map(t => `<button class="meter-btn" data-act="edit" data-id="${t.id}" title="${esc(t.title)}">${meterSVG(meterKind(t.title))}</button>`).join('')}
   </aside>`;
 }
 
-// Счётчик: окошко с цифрами (последняя крутится), колёсико и стрелка
-const meterSVG = () => `<svg class="meter-svg" viewBox="0 0 160 120" aria-hidden="true">
-  <rect x="6" y="10" width="148" height="100" rx="16" fill="#3a3d4d" stroke="#5a5f78" stroke-width="2"/>
-  <rect x="6" y="10" width="148" height="22" rx="11" fill="#4a4e63"/>
-  <text x="80" y="26" text-anchor="middle" fill="#cfd3e6" font-size="11" font-family="sans-serif">м³</text>
-  <rect x="18" y="42" width="124" height="30" rx="5" fill="#16161c"/>
-  ${[0, 1, 2, 3].map(i => `<rect x="${22 + i * 24}" y="45" width="20" height="24" rx="3" fill="#f2f2f5"/><text x="${32 + i * 24}" y="63" text-anchor="middle" font-size="17" font-weight="700" font-family="monospace" fill="#16161c">${'0472'[i]}</text>`).join('')}
-  <rect x="118" y="45" width="20" height="24" rx="3" fill="#e05a5a"/>
-  <svg x="118" y="45" width="20" height="24" viewBox="0 0 20 24"><g class="roll">${[8, 9, 0, 1].map((d, i) => `<text x="10" y="${18 + i * 24}" text-anchor="middle" font-size="17" font-weight="700" font-family="monospace" fill="#fff">${d}</text>`).join('')}</g></svg>
-  <circle cx="44" cy="92" r="11" fill="#16161c"/><g class="spin-wheel" style="transform-origin:44px 92px"><path d="M44 83v18M35 92h18M38 86l12 12M50 86l-12 12" stroke="#8fb3ff" stroke-width="2.4"/></g>
-  <circle cx="116" cy="92" r="11" fill="#f2f2f5"/><path class="needle" d="M116 92l0 -9" stroke="#e05a5a" stroke-width="2.4" stroke-linecap="round" style="transform-origin:116px 92px"/>
-  <text x="80" y="97" text-anchor="middle" fill="#9aa1bd" font-size="9" font-family="sans-serif">ГАЗ · ВОДА</text>
-</svg>`;
+// Какой счётчик рисовать — по названию задачи
+function meterKind(title) {
+  const s = title.toLowerCase();
+  if (/вод|water/.test(s)) return 'water';
+  if (/свет|электр|light|квт/.test(s)) return 'power';
+  return 'gas';
+}
+
+// Цифры: последняя (красная) крутится
+const meterDigits = (x, y, n, fg, bg) => `
+  ${[...n].map((d, i) => `<rect x="${x + i * 22}" y="${y}" width="19" height="24" rx="3" fill="${bg}"/><text x="${x + 9.5 + i * 22}" y="${y + 18}" text-anchor="middle" font-size="17" font-weight="700" font-family="monospace" fill="${fg}">${d}</text>`).join('')}
+  <rect x="${x + n.length * 22}" y="${y}" width="19" height="24" rx="3" fill="#e05a5a"/>
+  <svg x="${x + n.length * 22}" y="${y}" width="19" height="24" viewBox="0 0 19 24"><g class="roll">${[8, 9, 0, 1].map((d, i) => `<text x="9.5" y="${18 + i * 24}" text-anchor="middle" font-size="17" font-weight="700" font-family="monospace" fill="#fff">${d}</text>`).join('')}</g></svg>`;
+
+// gas — жёлтый ящик с колёсиком, water — круглый синий с вертушкой, power — серый с мигающей лампочкой
+function meterSVG(kind) {
+  if (kind === 'water') return `<svg class="meter-svg" viewBox="0 0 160 150" aria-hidden="true">
+    <rect x="4" y="66" width="22" height="18" rx="3" fill="#b9935a"/><rect x="134" y="66" width="22" height="18" rx="3" fill="#b9935a"/>
+    <circle cx="80" cy="75" r="66" fill="#2f6fb8" stroke="#1f4f88" stroke-width="4"/>
+    <circle cx="80" cy="75" r="54" fill="#eef3fa"/>
+    <text x="80" y="38" text-anchor="middle" fill="#2f6fb8" font-size="12" font-weight="700" font-family="sans-serif">ВОДА</text>
+    <rect x="30" y="46" width="100" height="30" rx="4" fill="#16161c"/>
+    ${meterDigits(33, 49, '0123', '#16161c', '#f2f2f5')}
+    <text x="80" y="90" text-anchor="middle" fill="#5a6a85" font-size="10" font-family="sans-serif">м³</text>
+    <circle cx="80" cy="108" r="11" fill="#fff" stroke="#9fb3cc"/>
+    <g class="spin-wheel" style="transform-origin:80px 108px"><path d="M80 99l4 9-4 9-4-9z" fill="#e05a5a"/></g>
+  </svg>`;
+  if (kind === 'power') return `<svg class="meter-svg" viewBox="0 0 160 130" aria-hidden="true">
+    <rect x="10" y="6" width="140" height="118" rx="10" fill="#d9dbe3" stroke="#8b90a5" stroke-width="2"/>
+    <text x="80" y="26" text-anchor="middle" fill="#3a3d4d" font-size="12" font-weight="700" font-family="sans-serif">СВЕТ</text>
+    <rect x="24" y="36" width="112" height="32" rx="4" fill="#16161c"/>
+    ${meterDigits(28, 40, '0815', '#16161c', '#f2f2f5')}
+    <text x="80" y="86" text-anchor="middle" fill="#3a3d4d" font-size="10" font-family="sans-serif">кВт·ч</text>
+    <circle class="blink" cx="122" cy="104" r="5" fill="#e05a5a"/>
+    <rect x="30" y="98" width="60" height="12" rx="3" fill="#b4b8c7"/>
+  </svg>`;
+  return `<svg class="meter-svg" viewBox="0 0 160 120" aria-hidden="true">
+    <rect x="6" y="10" width="148" height="100" rx="16" fill="#e0b640" stroke="#a88420" stroke-width="2"/>
+    <rect x="6" y="10" width="148" height="22" rx="11" fill="#c99c25"/>
+    <text x="80" y="26" text-anchor="middle" fill="#3a2d08" font-size="12" font-weight="700" font-family="sans-serif">ГАЗ · м³</text>
+    <rect x="18" y="40" width="124" height="32" rx="5" fill="#16161c"/>
+    ${meterDigits(26, 44, '0472', '#16161c', '#f2f2f5')}
+    <circle cx="44" cy="92" r="11" fill="#16161c"/><g class="spin-wheel" style="transform-origin:44px 92px"><path d="M44 83v18M35 92h18M38 86l12 12M50 86l-12 12" stroke="#ffd96a" stroke-width="2.4"/></g>
+    <circle cx="116" cy="92" r="11" fill="#f2f2f5"/><path class="needle" d="M116 92l0 -9" stroke="#e05a5a" stroke-width="2.4" stroke-linecap="round" style="transform-origin:116px 92px"/>
+  </svg>`;
+}
+
+// Перетаскивание картинки счётчиков (только та, что сбоку). Если двигали — щелчок не открывает задачу.
+let meterDrag = null;
+document.addEventListener('pointerdown', ev => {
+  const card = ev.target.closest('.meter-card.side');
+  if (!card || ev.button !== 0) return;
+  const r = card.getBoundingClientRect();
+  meterDrag = { card, dx: ev.clientX - r.left, dy: ev.clientY - r.top, x0: ev.clientX, y0: ev.clientY, moved: false };
+});
+document.addEventListener('pointermove', ev => {
+  const d = meterDrag;
+  if (!d) return;
+  if (!d.moved && Math.hypot(ev.clientX - d.x0, ev.clientY - d.y0) < 5) return;
+  d.moved = true;
+  ev.preventDefault();
+  const w = d.card.offsetWidth, h = d.card.offsetHeight;
+  const x = Math.min(Math.max(ev.clientX - d.dx, 0), innerWidth - w);
+  const y = Math.min(Math.max(ev.clientY - d.dy, 0), innerHeight - h);
+  Object.assign(d.card.style, { left: x + 'px', top: y + 'px', translate: 'none' });
+  d.x = x / innerWidth; d.y = y / innerHeight;
+});
+document.addEventListener('pointerup', () => {
+  const d = meterDrag;
+  meterDrag = null;
+  if (!d?.moved) return;
+  localSet('meter', JSON.stringify({ x: d.x, y: d.y }));
+  addEventListener('click', ev => { ev.stopPropagation(); ev.preventDefault(); }, { capture: true, once: true });
+});
 
 // ---------- питомцы (личный режим, широкий экран) ----------
 const PETS = { cat: { icon: '🐱', def: 'Котик' }, bird: { icon: '🦜', def: 'Попугай' } };
@@ -839,7 +919,7 @@ const LIMITS = {
   meh: { def: 1, name: '😐 Питомец немного грустит' },
   sad: { def: 2, name: '😢 Очень грустит' },
   faint: { def: 4, name: '😵 В обмороке' },
-  dust: { def: 4, name: '🕸 Паутина на задаче, пыль летает' },
+  dust: { def: 4, name: '🕸 Паутина на задаче, пыль летает, на экране пятна пыли (каждый день — больше)' },
   dust2: { def: 8, name: '🕸🕸 Паутина в обоих углах, пыли больше' },
 };
 const lim = k => Math.max(1, +(S.user?.user_metadata?.limits?.[k]) || LIMITS[k].def);

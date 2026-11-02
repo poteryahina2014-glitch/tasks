@@ -485,6 +485,10 @@ body { --appw: 1180px; }
 .task .web { position: absolute; top: -1px; left: -1px; width: 44px; height: 44px; pointer-events: none; transform: scaleX(-1); }
 .task.dusty { filter: saturate(.6); }
 #dust { position: fixed; inset: 0; pointer-events: none; z-index: 3; overflow: hidden; }
+#dust .haze { position: absolute; inset: 0; background: rgb(150 142 125 / var(--haze, 0)); }
+#dust b { position: absolute; translate: -50% -50%; border-radius: 50%; filter: blur(6px);
+  background: radial-gradient(ellipse at 40% 45%, #a59d8c 0 20%, #8f887a99 45%, transparent 70%),
+              radial-gradient(circle at 70% 65%, #b3ab99aa 0 15%, transparent 40%); }
 #dust .corner { position: absolute; top: 0; width: 130px; height: 130px; opacity: .8; }
 #dust .corner.r { right: 0; }
 #dust .corner.l { left: 0; transform: scaleX(-1); }
@@ -492,22 +496,23 @@ body { --appw: 1180px; }
 @keyframes mote { 0% { transform: translate(0, 0); opacity: 0; } 15% { opacity: .55; } 50% { transform: translate(40px, -60px); } 85% { opacity: .45; } 100% { transform: translate(-20px, -130px); opacity: 0; } }
 
 /* Счётчики: пора передать показания */
-.meter-card { display: flex; gap: 14px; align-items: center; background: var(--card); border: 1px solid var(--warn); border-radius: 14px; padding: 12px 14px; margin: 4px 0 12px; }
+.meter-card { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 4px 0 12px; }
 .meter-card.side { display: none; }
-.meter-svg { width: 120px; flex: none; }
-.meter-text b { color: var(--warn); display: block; margin-bottom: 6px; }
-.meter-task { display: flex; align-items: center; gap: 8px; }
-.meter-task .check { width: 24px; height: 24px; font-size: 14px; }
+.meter-btn { background: none; border: 0; padding: 0; cursor: pointer; line-height: 0; }
+.meter-svg { width: 110px; flex: none; filter: drop-shadow(0 4px 8px #0006); }
+.meter-svg .blink { animation: blink 1.4s steps(1) infinite; }
+@keyframes blink { 50% { opacity: .15; } }
 .meter-svg .roll { animation: roll 6s ease-in-out infinite; }
 @keyframes roll { 0%, 30% { transform: translateY(0); } 40%, 63% { transform: translateY(-24px); } 73%, 100% { transform: translateY(-48px); } }
 .meter-svg .spin-wheel { animation: spin 4s linear infinite; }
 .meter-svg .needle { animation: spin 9s linear infinite; }
 @media (min-width: 1640px) {
   .meter-card.top { display: none; }
-  .meter-card.side { display: flex; flex-direction: column; text-align: center; position: fixed; z-index: 2; width: 220px; top: 50%; translate: 0 -50%;
-    left: calc((100vw - var(--appw)) / 4 - 110px); }
-  .meter-card.side .meter-svg { width: 170px; }
-  .meter-card.side .meter-task { justify-content: center; }
+  .meter-card.side { display: flex; flex-direction: column; flex-wrap: nowrap; position: fixed; z-index: 4; margin: 0; top: 50%; translate: 0 -50%;
+    left: calc((100vw - var(--appw)) / 4 - 75px); cursor: grab; touch-action: none; user-select: none; }
+  .meter-card.side:active { cursor: grabbing; }
+  .meter-card.side .meter-svg { width: 150px; }
+  .meter-card.side .meter-btn { cursor: inherit; }
 }
 @media (prefers-reduced-motion: reduce) { #dust i, .meter-svg * { animation: none !important; } }
 
