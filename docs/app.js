@@ -1642,17 +1642,58 @@ function renderReview() {
     return;
   }
   const onlyYesterday = list.every(t => reviewDay(t) === addDays(today(), -1));
+  const ch = rvKeep(list);
+  const scroll = $modal.querySelector('.rv-list')?.scrollTop || 0;
   $modal.dataset.kind = 'review';
   $modal.innerHTML = `<div class="overlay"><div class="sheet review">
     <h3>Привет${userName() ? ', ' + esc(userName()) : ''}! ${onlyYesterday ? 'Что из вчерашнего получилось сделать?' : 'Что из этого получилось сделать?'}</h3>
-    ${list.map(t => `<div class="task ${t.kind === 'habit' ? 'habit' : ''}">
+    <div class="rv-list">${list.map(t => `<div class="task ${t.kind === 'habit' ? 'habit' : ''}">
       <div class="body"><div class="title">${esc(t.title)}</div>
         <div class="meta"><span>${t.plan_date ? 'план: ' : ''}${dateLabel(reviewDay(t))}</span><span>${t.kind === 'habit' ? 'привычка' : 'задача'}</span>${t.plan_date && t.due_date ? `<span>дедлайн ${dateLabel(t.due_date)}</span>` : ''}</div></div>
       <div class="yn">
-        <button class="btn good" data-act="r-yes" data-id="${t.id}">Сделано</button>
-        <button class="btn" data-act="r-no" data-id="${t.id}" title="${t.kind === 'habit' && t.repeat_unit ? 'Засчитать пропуск' : 'Перенести на сегодня'}">Не сделано</button>
-      </div></div>`).join('')}
+        <button class="btn${ch[rvKey(t)] === 'yes' ? ' good' : ''}" data-act="r-yes" data-id="${t.id}">Сделано</button>
+        <button class="btn${ch[rvKey(t)] === 'no' ? ' no-on' : ''}" data-act="r-no" data-id="${t.id}" title="${t.kind === 'habit' && t.repeat_unit ? 'Засчитать пропуск' : 'Перенести на сегодня'}">Не сделано</button>
+      </div></div>`).join('')}</div>
+    <div class="rv-foot"><span class="rv-count"></span><button class="btn main" data-act="r-save">Подтвердить</button></div>
   </div></div>`;
+  $modal.querySelector('.rv-list').scrollTop = scroll;
+  rvCount(list);
+}
+
+// Отметки копятся в S.rv и пишутся в базу только по «Подтвердить» — можно пересмотреть.
+const rvKey = t => t.id + '|' + reviewDay(t);
+function rvKeep(list) {
+  const keys = new Set(list.map(rvKey));
+  S.rv = Object.fromEntries(Object.entries(S.rv || {}).filter(([k]) => keys.has(k)));
+  return S.rv;
+}
+function rvCount(list = reviewList()) {
+  const n = list.filter(t => S.rv[rvKey(t)]).length;
+  $modal.querySelector('.rv-count').textContent = `Отмечено ${n} из ${list.length}`;
+  $modal.querySelector('[data-act=r-save]').disabled = n < list.length;
+}
+function rvMark(el, id, v) {
+  const t = byId(id);
+  S.rv[rvKey(t)] = v;
+  const yn = el.closest('.yn');
+  yn.querySelector('[data-act=r-yes]').classList.toggle('good', v === 'yes');
+  yn.querySelector('[data-act=r-no]').classList.toggle('no-on', v === 'no');
+  rvCount();
+}
+async function rvSave() {
+  for (const t of reviewList()) {
+    const v = S.rv[rvKey(t)];
+    if (v === 'yes') {
+      await call(sb.rpc('complete_task', { p_task: t.id, p_done_on: reviewDay(t) }));
+      await resetRepeat(t);
+    } else if (v === 'no') {
+      // запланированная задача: «не сделано» переносит план на сегодня, дедлайн не трогаем
+      if (t.plan_date) await call(sb.from('tasks').update({ plan_date: today() }).eq('id', t.id));
+      else await call(sb.rpc('miss_task', { p_task: t.id, p_today: today() }));
+    }
+  }
+  S.rv = {};
+  await load();
 }
 
 // ---------- окно задачи ----------
@@ -2476,13 +2517,9 @@ document.addEventListener('click', async ev => {
       case 's-delete': await deleteSection(id); break;
       case 's-pause': await togglePause(id); break;
       case 'import': closeModal(); document.getElementById('import-file').click(); break;
-      case 'r-yes': { const t = byId(id); await call(sb.rpc('complete_task', { p_task: id, p_done_on: reviewDay(t) })); await resetRepeat(t); await load(); break; }
-      // запланированная задача: «не сделано» переносит план на сегодня, дедлайн не трогаем
-      case 'r-no':
-        if (byId(id).plan_date) await call(sb.from('tasks').update({ plan_date: today() }).eq('id', id));
-        else await call(sb.rpc('miss_task', { p_task: id, p_today: today() }));
-        await load();
-        break;
+      case 'r-yes': rvMark(el, id, 'yes'); break;
+      case 'r-no': rvMark(el, id, 'no'); break;
+      case 'r-save': el.disabled = true; el.textContent = 'Сохраняю…'; await rvSave(); break;
     }
   } catch (e) {
     console.error(e);

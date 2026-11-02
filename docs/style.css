@@ -129,6 +129,11 @@ textarea.inp { min-height: 64px; resize: vertical; }
 .strip i.missed { background: var(--bad); opacity: .7; }
 
 /* Утренняя проверка */
+.sheet.review { height: min(640px, 85vh); display: flex; flex-direction: column; overflow: hidden; }
+.review .rv-list { flex: 1; overflow-y: auto; min-height: 0; }
+.review .rv-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; border-top: 1px solid var(--border); margin-top: 8px; }
+.review .rv-count { color: var(--muted); font-size: 14px; }
+.review .yn .btn.no-on { background: var(--bad); color: var(--bg); }
 .review .task { flex-wrap: wrap; }
 .review .yn { display: flex; gap: 8px; }
 .review .yn .btn { padding: 8px 12px; }
