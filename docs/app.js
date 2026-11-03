@@ -1777,39 +1777,45 @@ function openEdit(t) {
   const e = S.edit;
   const st = !isNew && e.kind === 'habit' ? habitStats(e) : null;
   $modal.dataset.kind = 'edit';
-  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet">
+  // компактно: на компьютере две колонки (когда — слева, повтор и прочее — справа), кнопки внизу всегда видны
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet edit">
     <h3>${isNew ? 'Новая запись' : isEvent(e) ? 'Событие' : 'Задача'}</h3>
-    <div class="field"><input class="inp" id="f-title" placeholder="Название" value="${esc(e.title || '')}"></div>
-    <div class="field seg" id="f-kind">
-      <button class="pill" data-act="kind" data-v="task">Обычная</button>
-      <button class="pill" data-act="kind" data-v="habit">Привычка</button>
-      <button class="pill" data-act="kind" data-v="event">Событие</button>
-    </div>
+    <div class="field row title-row"><input class="inp" id="f-title" placeholder="Название" value="${esc(e.title || '')}">
+      <div class="seg" id="f-kind">
+        <button class="pill" data-act="kind" data-v="task">Обычная</button>
+        <button class="pill" data-act="kind" data-v="habit">Привычка</button>
+        <button class="pill" data-act="kind" data-v="event">Событие</button>
+      </div></div>
     ${st ? `<div class="stats">За 30 дней: <b>${st.done} из ${st.total}</b>
       <div class="strip">${st.days.map(d => `<i class="${d}"></i>`).join('')}</div></div>` : ''}
+    <div class="cols"><div>
     <div class="field"><label id="f-date-label">Срок</label>
-      <input class="inp" id="f-date" type="date" value="${e.due_date || ''}" style="margin-bottom:8px">
-      <div class="row">
+      <div class="row"><input class="inp" id="f-date" type="date" value="${e.due_date || ''}">
         <button class="pill" data-act="date" data-v="0">Сегодня</button>
         <button class="pill" data-act="date" data-v="1">Завтра</button>
         <button class="pill" data-act="date" data-v="" id="f-nodate">Без срока</button>
       </div></div>
-    <div class="field" id="f-startdate-box"><label>Начать с (можно не указывать)</label>
+    <div class="pair">
+    <div class="field" id="f-startdate-box"><label>Начать с</label>
       <input class="inp" id="f-startdate" type="date" value="${e.start_date || ''}"></div>
-    <div class="field" id="f-plan-box"><label>План: в какой день делаю («Срок» выше — дедлайн)</label>
-      <div class="row"><input class="inp" id="f-plan" type="date" value="${e.plan_date || ''}" style="flex:1">
-        займёт <input class="inp num" id="f-est" type="number" min="0" step="0.5" value="${e.estimate || ''}" style="max-width:70px"> ч</div></div>
-    <div class="field" id="f-end-box"><label>По какое число (если событие на несколько дней)</label>
+    <div class="field" id="f-end-box"><label>По какое число</label>
       <input class="inp" id="f-enddate" type="date" value="${e.end_date || ''}"></div>
-    <div class="field"><label>Время (можно не указывать)</label>
-      <div class="row">с <input class="inp" id="f-start" type="time" value="${hhmm(e.start_time)}">
-        до <input class="inp" id="f-end" type="time" value="${hhmm(e.end_time)}"></div></div>
-    <div class="field" id="f-remind-box"><label>Напомнить на телефон (в день срока)</label>
+    <div class="field"><label>Время</label>
+      <div class="row"><input class="inp" id="f-start" type="time" value="${hhmm(e.start_time)}" title="с">–<input class="inp" id="f-end" type="time" value="${hhmm(e.end_time)}" title="до"></div></div>
+    </div>
+    <div class="field" id="f-plan-box"><label title="«Срок» — дедлайн">План: день, когда делаю</label>
+      <div class="row"><input class="inp" id="f-plan" type="date" value="${e.plan_date || ''}">
+        займёт <input class="inp num" id="f-est" type="number" min="0" step="0.5" value="${e.estimate || ''}" style="max-width:70px"> ч</div></div>
+    <div class="field" id="f-remind-box"><label>Напомнить на телефон</label>
       <div class="wds remind">
         <button class="pill" data-act="remind" data-v="">Нет</button>
-        ${REMIND_TIMES.map(h => `<button class="pill" data-act="remind" data-v="${h}">${h.replace(/^0/, '').slice(0, -3)}:00</button>`).join('')}
+        ${REMIND_TIMES.map(h => `<button class="pill" data-act="remind" data-v="${h}">${h.replace(/^0/, '').slice(0, -3)}</button>`).join('')}
         <input class="inp" id="f-remind" type="time" title="Своё время" value="${hhmm(e.remind_at)}">
       </div></div>
+    <div class="field"><label>Раздел</label>
+      <select class="inp" id="f-section"><option value="">Без раздела</option>
+        ${mySecs().map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
+    </div><div>
     <div class="field"><label>Повтор</label>
       <div class="row">
         <select class="inp" id="f-unit">
@@ -1817,31 +1823,27 @@ function openEdit(t) {
           <option value="day">Дни</option><option value="week">Недели</option>
           <option value="month">Месяцы</option><option value="year">Годы</option>
         </select>
-        <span id="f-every-box" class="row" style="flex:1">каждые <input class="inp" id="f-every" type="number" min="1" value="${e.repeat_every || 1}" style="max-width:80px"></span>
+        <span id="f-every-box" class="row">каждые <input class="inp" id="f-every" type="number" min="1" value="${e.repeat_every || 1}" style="max-width:64px"></span>
       </div></div>
     <div class="field" id="f-wd-box"><label>Дни недели (можно не выбирать)</label>
       <div class="wds">${WD.map((w, i) => `<button class="pill" data-act="wd" data-v="${i + 1}">${w}</button>`).join('')}</div></div>
     <div class="field" id="f-from-box"><label>Новый срок считать</label>
       <div class="seg">
         <button class="pill" data-act="from" data-v="due">от старого срока</button>
-        <button class="pill" data-act="from" data-v="done">от дня выполнения</button>
+        <button class="pill" data-act="from" data-v="done">от выполнения</button>
       </div></div>
-    ${e.project_id && projectTasks(e.project_id).some(x => x.id !== e.id) ? `<div class="field"><label>Делать после (шаги этого проекта)</label>
-      <div class="wds after">${projectTasks(e.project_id).filter(x => x.id !== e.id).map(x => `<button class="pill" data-act="after" data-v="${x.id}">${x.done_on ? '✓ ' : ''}${esc(x.title)}</button>`).join('')}</div></div>` : ''}
-    <div class="field" id="f-subs-box"><label>Подпункты (письма, проверки и т.п.)</label>
-      <div id="f-subs"></div>
-      <button class="link" data-act="sub-add">+ Подпункт</button></div>
-    ${S.space === 'personal' || e.pet ? `<div class="field" id="f-pet-box"><label>Питомец (грустит, если задача пропущена; можно выбрать обоих)</label>
+    ${S.space === 'personal' || e.pet ? `<div class="field" id="f-pet-box"><label title="Грустит, если задача пропущена; можно выбрать обоих">Питомец</label>
       <div class="row">${[['', 'Нет'], ...Object.keys(PETS).map(p => [p, PETS[p].icon + ' ' + esc(petName(p))])]
         .map(([p, n]) => `<button class="pill" data-act="pet" data-v="${p}">${n}</button>`).join('')}</div></div>` : ''}
     ${S.space === 'personal' || e.decor ? `<div class="field" id="f-decor-box"><label>Картинка</label>
-      <div class="row">${[['', 'Нет'], ...Object.entries(DECOR).map(([k, d]) => [k, d.icon + ' ' + d.name])]
-        .map(([k, n]) => `<button class="pill" data-act="decor" data-v="${k}">${n}</button>`).join('')}</div>
-      <div class="hint">${Object.values(DECOR).map(d => d.icon + ' ' + d.hint).join('<br>')}</div></div>` : ''}
-    <div class="field"><label>Раздел</label>
-      <select class="inp" id="f-section"><option value="">Без раздела</option>
-        ${mySecs().map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
-    <div class="field"><label>Заметка</label><textarea class="inp" id="f-notes">${esc(e.notes || '')}</textarea></div>
+      <div class="row">${[['', 'Нет', ''], ...Object.entries(DECOR).map(([k, d]) => [k, d.icon + ' ' + d.name, d.hint])]
+        .map(([k, n, h]) => `<button class="pill" data-act="decor" data-v="${k}" title="${esc(h)}">${n}</button>`).join('')}</div></div>` : ''}
+    </div></div>
+    ${e.project_id && projectTasks(e.project_id).some(x => x.id !== e.id) ? `<div class="field"><label>Делать после (шаги этого проекта)</label>
+      <div class="wds after">${projectTasks(e.project_id).filter(x => x.id !== e.id).map(x => `<button class="pill" data-act="after" data-v="${x.id}">${x.done_on ? '✓ ' : ''}${esc(x.title)}</button>`).join('')}</div></div>` : ''}
+    <div class="field" id="f-subs-box"><div id="f-subs"></div>
+      <button class="link" data-act="sub-add">+ Подпункт</button></div>
+    <div class="field"><textarea class="inp" id="f-notes" placeholder="Заметка">${esc(e.notes || '')}</textarea></div>
     <div class="actions">
       ${isNew ? '<span></span>' : '<button class="btn danger" data-act="delete">Удалить</button>'}
       <div class="row"><button class="btn" data-act="close">Отмена</button><button class="btn main" data-act="save">Сохранить</button></div>

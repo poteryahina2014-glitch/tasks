@@ -120,6 +120,24 @@ textarea.inp { min-height: 64px; resize: vertical; }
 .btn.danger { background: transparent; color: var(--bad); }
 .btn.good { background: var(--good); color: var(--bg); }
 .actions { display: flex; gap: 8px; justify-content: space-between; margin-top: 18px; }
+/* окно задачи: компактно, на широком экране две колонки, кнопки прилипают к низу */
+.sheet.edit { max-width: 860px; }
+.sheet.edit .field { margin-bottom: 10px; }
+.sheet.edit .field > label { margin-bottom: 4px; }
+.sheet.edit .inp { padding: 8px 10px; }
+.sheet.edit .pill { padding: 6px 9px; }
+.sheet.edit .title-row .inp { flex: 1 1 220px; }
+.sheet.edit #f-date, .sheet.edit #f-plan { flex: 1 1 120px; }
+.sheet.edit .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 10px; }
+.sheet.edit .pair .inp { min-width: 0; }
+.sheet.edit .pair .row { flex-wrap: nowrap; gap: 4px; }
+.sheet.edit .wds .pill { width: 34px; padding: 6px 0; }
+.sheet.edit .wds.after .pill { width: auto; padding: 6px 10px; }
+.sheet.edit .wds.remind .pill:first-child { width: auto; padding: 6px 10px; }
+.sheet.edit textarea.inp { min-height: 44px; }
+.sheet.edit .actions { position: sticky; bottom: calc(-18px - env(safe-area-inset-bottom)); background: var(--top); margin: 10px 0 calc(-18px - env(safe-area-inset-bottom));
+  padding: 10px 0 calc(14px + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); }
+@media (min-width: 760px) { .sheet.edit .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; } }
 
 .stats { background: var(--card); border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; }
 .stats b { color: var(--habit); }
