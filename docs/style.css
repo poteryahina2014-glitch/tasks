@@ -409,7 +409,8 @@ body { --appw: 1180px; }
 /* подоконник: верхняя доска (на ней сидит кот и стоит цветок) и передняя стенка */
 #bg .sill { position: absolute; left: 0; right: 0; bottom: 0; height: 84px;
   background: linear-gradient(#6b5a4c, #574739 14px, #3d322a 15px, #2b2420); box-shadow: 0 -6px 18px #0006; }
-#bg .flower { position: absolute; left: 8px; bottom: 66px; width: 120px; pointer-events: auto; }
+#bg .flower { position: absolute; left: 8px; bottom: 66px; width: 170px; pointer-events: auto; cursor: grab; touch-action: none; user-select: none; }
+#pets .pet.cat:not(.moving) .pet-svg { cursor: pointer; }
 #bg .flower svg { display: block; width: 100%; overflow: visible; }
 #bg .butterfly { animation: flutter 7s ease-in-out infinite; }
 @keyframes flutter { 0%, 100% { transform: translate(104px, 40px) scaleX(1); } 25% { transform: translate(70px, 6px) scaleX(.4); }
