@@ -406,7 +406,15 @@ body { --appw: 1180px; }
 #bg .frame i { position: absolute; background: #2b2420; box-shadow: 0 0 0 3px #3d332c; }
 #bg .frame .v { left: calc(50% - 7px); top: 0; bottom: 0; width: 14px; }
 #bg .frame .h { left: 0; right: 0; top: 38%; height: 14px; }
-#bg .sill { position: absolute; left: 0; right: 0; bottom: 0; height: 22px; background: linear-gradient(#4a3d34, #2b2420); }
+/* подоконник: верхняя доска (на ней сидит кот и стоит цветок) и передняя стенка */
+#bg .sill { position: absolute; left: 0; right: 0; bottom: 0; height: 84px;
+  background: linear-gradient(#6b5a4c, #574739 14px, #3d322a 15px, #2b2420); box-shadow: 0 -6px 18px #0006; }
+#bg .flower { position: absolute; left: 8px; bottom: 66px; width: 120px; pointer-events: auto; }
+#bg .flower svg { display: block; width: 100%; overflow: visible; }
+#bg .butterfly { animation: flutter 7s ease-in-out infinite; }
+@keyframes flutter { 0%, 100% { transform: translate(104px, 40px) scaleX(1); } 25% { transform: translate(70px, 6px) scaleX(.4); }
+  50% { transform: translate(40px, 30px) scaleX(1); } 75% { transform: translate(80px, 54px) scaleX(.5); } }
+@media (max-width: 899px) { #bg .sill { height: 22px; } #bg .flower { display: none; } }
 @media (max-width: 899px) { #bg .frame .v, #bg .frame .h { display: none; } #bg .frame { box-shadow: inset 0 0 0 6px #2b2420, inset 0 0 40px 16px #0008; } }
 body.bg header { background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(8px); }
 body.bg h2, body.bg header h1, body.bg .empty { text-shadow: 0 1px 3px #000, 0 0 10px #000a; }
