@@ -1164,12 +1164,15 @@ async function saveLimits() {
 
 // Насколько задача запущена: у привычки — сколько раз подряд пропущена,
 // у обычной — сколько дней прошло от первоначального срока (утренняя проверка переносит его на сегодня).
+// Срок убран или перенесён в будущее — старые переносы из истории уже не считаются.
 function petLate(t) {
+  if (!t.due_date) return 0;
   const logs = S.logs.filter(l => l.task_id === t.id);
   let i = logs.length;
   while (i > 0 && logs[i - 1].status !== 'done') i--;
   const tail = logs.slice(i);
-  if (t.kind === 'habit') return tail.filter(l => l.status === 'missed').length + (t.due_date && t.due_date < today() ? 1 : 0);
+  if (t.kind === 'habit') return tail.filter(l => l.status === 'missed').length + (t.due_date < today() ? 1 : 0);
+  if (t.due_date > today()) return 0;
   const moved = tail.find(l => l.status === 'moved');
   const since = moved ? moved.day : t.due_date;
   return since && since < today() ? daysBetween(since, today()) : 0;
