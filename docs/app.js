@@ -87,6 +87,21 @@ function nextDue(from, every, unit, weekdays) {
   return addMonths(from, 12 * every);
 }
 
+// Цикл «on дней делать, off пропускать» от первого дня anchor (то же, что next_cycle в базе).
+function cycleOn(d, on, off, anchor) {
+  const len = on + off;
+  return ((daysBetween(anchor, d) % len) + len) % len < on;
+}
+function nextCycle(from, on, off, anchor) {
+  let d = addDays(from, 1);
+  for (let i = 0; i < on + off && !cycleOn(d, on, off, anchor); i++) d = addDays(d, 1);
+  return d;
+}
+// Следующий срок задачи после d, с любым видом повтора.
+const nextOf = (t, d) => t.repeat_unit === 'cycle'
+  ? nextCycle(d, t.repeat_every || 1, t.repeat_off || 1, t.repeat_anchor || d)
+  : nextDue(d, t.repeat_every, t.repeat_unit, t.repeat_weekdays);
+
 function dateLabel(s) {
   const diff = daysBetween(today(), s);
   if (diff === 0) return 'сегодня';
@@ -101,6 +116,7 @@ function repeatLabel(t) {
   if (!t.repeat_unit) return '';
   const n = t.repeat_every || 1;
   const u = t.repeat_unit;
+  if (u === 'cycle') return `цикл: ${n} дн. да, ${t.repeat_off || 1} нет`;
   let s;
   if (u === 'week' && t.repeat_weekdays && t.repeat_weekdays.length) {
     s = (n > 1 ? `раз в ${n} нед.: ` : '') + [...t.repeat_weekdays].sort().map(d => WD[d - 1]).join(', ');
@@ -169,7 +185,7 @@ const eventOver = t => isEvent(t) && !t.repeat_unit && (t.end_date || t.due_date
 function upcoming(t) {
   let d = t.due_date;
   if (!isEvent(t) || !t.repeat_unit || !d) return d;
-  for (let i = 0; i < 2000 && d < today(); i++) d = nextDue(d, t.repeat_every, t.repeat_unit, t.repeat_weekdays);
+  for (let i = 0; i < 2000 && d < today(); i++) d = nextOf(t, d);
   return d;
 }
 
@@ -376,7 +392,7 @@ function occurrences(from, to) {
     // у задач повторы показываем вперёд от текущего срока; у событий срок не сдвигается — считаем от первой даты
     if (!t.repeat_unit || (!isEvent(t) && d < today())) continue;
     for (let i = 0; i < 2000; i++) {
-      d = nextDue(d, t.repeat_every, t.repeat_unit, t.repeat_weekdays);
+      d = nextOf(t, d);
       if (!d || d > to) break;
       if (addDays(d, span) >= from) put(d, 'repeat');
     }
@@ -890,8 +906,12 @@ document.addEventListener('pointerup', () => {
 
 // Цветок на подоконнике живёт привычками: сколько отмечено «сделано» за 7 дней (сегодняшние не сделанные ещё не считаются).
 // lvl 3 цветёт, 2 бутоны, 1 вянет, 0 засыхает; all — сегодня все привычки сделаны (прилетает бабочка).
+// Какие разделы цветок не считает (напр. привычки, о которых напоминаешь другому человеку): user_metadata.flower_off, 'none' — без раздела.
+const flowerOff = () => S.user?.user_metadata?.flower_off || [];
+const flowerKey = t => t.section_id || 'none';
+
 function flowerState() {
-  const habits = active().filter(t => t.kind === 'habit');
+  const habits = active().filter(t => t.kind === 'habit' && !flowerOff().includes(flowerKey(t)));
   if (!habits.length) return null;
   const ids = new Set(habits.map(t => t.id));
   const t0 = today(), from = addDays(t0, -6);
@@ -901,6 +921,29 @@ function flowerState() {
   const lvl = r >= .85 ? 3 : r >= .6 ? 2 : r >= .35 ? 1 : 0;
   const all = !habits.some(t => t.due_date && t.due_date <= t0);
   return { lvl, all, tip: `Привычки за неделю: ${done} из ${logs.length}${all ? ' · сегодня всё сделано' : ''}` };
+}
+
+// Кнопки разделов в настройках: только те, где есть привычки; светится = считается.
+function flowerSecsHTML() {
+  const keys = new Set(active().filter(t => t.kind === 'habit').map(flowerKey));
+  if (!keys.size) return '';
+  const pill = (id, label) => `<button class="pill ${flowerOff().includes(id) ? '' : 'on'}" data-act="flower-sec" data-id="${id}">${label}</button>`;
+  return `<h2>Цветок</h2>
+    <div class="hint">Привычки из каких разделов он считает. Светится — считается.</div>
+    <div class="flower-secs">${mySecs().filter(s => keys.has(s.id)).map(s => pill(s.id, `<i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name)}`)).join('')}${keys.has('none') ? pill('none', 'Без раздела') : ''}</div>`;
+}
+
+async function flowerSec(btn) {
+  const id = btn.dataset.id, old = flowerOff();
+  const set = off => {
+    S.user.user_metadata.flower_off = off;
+    btn.classList.toggle('on', !off.includes(id));
+    render();
+  };
+  const off = old.includes(id) ? old.filter(x => x !== id) : [...old, id];
+  set(off);
+  const { error } = await sb.auth.updateUser({ data: { flower_off: off } });
+  if (error) { set(old); toast('Не получилось сохранить: ' + error.message); }
 }
 
 function flowerSVG({ lvl, all }) {
@@ -1542,7 +1585,8 @@ const HELP = [
   ['Как считаются дни', 'Сколько дней до грусти, обморока и пыли — в ⚙. У обычной задачи считаются дни просрочки (с первоначального срока, даже если утренняя проверка перенесла её на сегодня), у привычки — пропуски подряд. Питомец смотрит на свою самую запущенную задачу.'],
   ['Картинки', 'В окне задачи — «Картинка». 🕸 Пыль и паутина: уборка просрочена — появляется паутина, летает пыль, и с каждым днём на экране всё больше пыльных пятен. Уберёшь — всё исчезнет. 🔢 Счётчики: в день срока (или с даты «Начать с») появляется счётчик — газ, вода или свет, по названию задачи. Пропадает, когда задача отмечена. На компьютере его можно перетащить мышкой.'],
   ['Вид за окном', 'На фоне — окно, вид за ним каждый день свой: город, лес, море, горы, деревня, зима. Время суток настоящее. Погода — от того, как идут дела сегодня (привычки не считаются): чем больше сделано, тем меньше туч и ярче солнце; всё сделано — радуга (ночью — падающая звезда). Утром, пока ничего не сделано, просто пасмурно. Дождь и гроза — от самой просроченной задачи на сегодня: дождь — с того же числа дней, что «очень грустит», гроза — что «обморок» (по умолчанию 2 и 4 дня, меняется в ⚙). Сколько дней просрочено — значок ⏳ у задачи. Выключается в ⚙.'],
-  ['Цветок на подоконнике', 'Растёт от привычек: смотрит, сколько из отметок за последние 7 дней — «сделано». Почти всё (от 85%) — цветёт, больше половины (от 60%) — бутоны, меньше — вянет, совсем мало (меньше 35%) — засыхает, листья падают. Сегодня все привычки сделаны — прилетает бабочка. Наведи на цветок — увидишь «X из Y». Цветок можно передвинуть мышкой вдоль подоконника. Виден, когда включён вид за окном и есть хоть одна привычка.'],
+  ['Повтор по циклу', 'Для графиков вроде «2 дня делать, 1 пропустить»: в окне задачи Повтор → «Цикл». Укажи, сколько дней делать, сколько пропускать и первый день цикла — ниже видны ближайшие дни. В дни пропуска задачи нет, и пропуском это не считается. Сбился график — поменяй первый день цикла.'],
+  ['Цветок на подоконнике', 'Растёт от привычек: смотрит, сколько из отметок за последние 7 дней — «сделано». Почти всё (от 85%) — цветёт, больше половины (от 60%) — бутоны, меньше — вянет, совсем мало (меньше 35%) — засыхает, листья падают. Сегодня все привычки сделаны — прилетает бабочка. Наведи на цветок — увидишь «X из Y». Цветок можно передвинуть мышкой вдоль подоконника. В ⚙ → «Цветок» можно выбрать, привычки из каких разделов он считает. Виден, когда включён вид за окном и есть хоть одна такая привычка.'],
   ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных, вид за окном.'],
   ['Устройства', 'Всё хранится в облаке. Входи с той же почтой на телефоне и компьютере. На телефоне: Chrome → ⋮ → «Установить приложение».'],
 ];
@@ -1580,6 +1624,7 @@ function openSettings() {
     <div class="hint">Через сколько дней просрочки (подробнее — в справке «?»)</div>
     <div class="limits">${Object.entries(LIMITS).map(([k, l]) => `<label>${l.name}<span>с <input class="inp num" id="lim-${k}" type="number" min="1" value="${lim(k)}"> дн.</span></label>`).join('')}</div>
     <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn main" data-act="limits-save">Сохранить</button></div>
+    ${flowerSecsHTML()}
     <h2>Уведомления</h2>
     <div id="push-box"><div class="msg">Проверяю…</div></div>
     <div class="actions"><span></span><button class="btn" data-act="close">Закрыть</button></div>
@@ -1825,9 +1870,14 @@ function openEdit(t) {
           <option value="">Не повторять</option>
           <option value="day">Дни</option><option value="week">Недели</option>
           <option value="month">Месяцы</option><option value="year">Годы</option>
+          <option value="cycle">Цикл: дни да / нет</option>
         </select>
         <span id="f-every-box" class="row">каждые <input class="inp" id="f-every" type="number" min="1" value="${e.repeat_every || 1}" style="max-width:64px"></span>
       </div></div>
+    <div class="field" id="f-cycle-box"><label>Цикл</label>
+      <div class="row">делать <input class="inp" id="f-on" type="number" min="1" value="${e.repeat_unit === 'cycle' ? e.repeat_every || 1 : 2}" style="max-width:64px"> дн., пропускать <input class="inp" id="f-off" type="number" min="1" value="${e.repeat_off || 1}" style="max-width:64px"> дн.</div>
+      <div class="row" style="margin-top:6px">первый день цикла <input class="inp" id="f-anchor" type="date" value="${e.repeat_anchor || ''}" style="max-width:160px"></div>
+      <div class="hint" id="f-cycle-next"></div></div>
     <div class="field" id="f-wd-box"><label>Дни недели (можно не выбирать)</label>
       <div class="wds">${WD.map((w, i) => `<button class="pill" data-act="wd" data-v="${i + 1}">${w}</button>`).join('')}</div></div>
     <div class="field" id="f-from-box"><label>Новый срок считать</label>
@@ -1856,14 +1906,31 @@ function openEdit(t) {
   document.getElementById('f-section').value = e.section_id || '';
   document.getElementById('f-unit').onchange = ev => { e.repeat_unit = ev.target.value || null; syncEdit(); };
   document.getElementById('f-remind').onchange = ev => { e.remind_at = ev.target.value || null; syncEdit(); };
+  for (const id of ['f-on', 'f-off', 'f-anchor']) document.getElementById(id).oninput = syncCycle;
   renderSubs();
   syncEdit();
   if (isNew) document.getElementById('f-title').focus();
 }
 
+// Значения цикла из окна задачи и ближайшие дни для проверки.
+function cycleForm() {
+  const n = id => Math.max(1, parseInt(document.getElementById(id).value) || 1);
+  return { on: n('f-on'), off: n('f-off'), anchor: document.getElementById('f-anchor').value || today() };
+}
+function syncCycle() {
+  const { on, off, anchor } = cycleForm();
+  const days = [];
+  for (let i = 0, d = addDays(today(), -1); i < 5; i++) days.push(d = nextCycle(d, on, off, anchor));
+  document.getElementById('f-cycle-next').textContent = 'Ближайшие дни: ' + days.map(dateLabel).join(' · ');
+}
+
 // Показ/скрытие частей окна по выбранным значениям.
 function syncEdit() {
   const e = S.edit;
+  // у событий цикла нет: уведомления о повторах событий считаются отдельно и его не знают
+  if (isEvent(e) && e.repeat_unit === 'cycle') { e.repeat_unit = 'day'; document.getElementById('f-unit').value = 'day'; }
+  $modal.querySelector('#f-unit option[value=cycle]').hidden = isEvent(e);
+  const cycle = e.repeat_unit === 'cycle';
   const q = s => $modal.querySelectorAll(s);
   q('[data-act=kind]').forEach(b => b.classList.toggle('on', b.dataset.v === e.kind));
   q('[data-act=from]').forEach(b => b.classList.toggle('on', b.dataset.v === e.repeat_from));
@@ -1875,10 +1942,16 @@ function syncEdit() {
   q('[data-act=remind]').forEach(b => b.classList.toggle('on', b.dataset.v.slice(0, 5) === rem));
   document.getElementById('f-remind').value = rem;
   document.getElementById('f-remind').classList.toggle('on', !!rem && !REMIND_TIMES.some(h => h.startsWith(rem)));
-  document.getElementById('f-every-box').style.display = e.repeat_unit ? '' : 'none';
+  document.getElementById('f-every-box').style.display = e.repeat_unit && !cycle ? '' : 'none';
+  document.getElementById('f-cycle-box').style.display = cycle ? '' : 'none';
+  if (cycle) {
+    const a = document.getElementById('f-anchor');
+    if (!a.value) a.value = document.getElementById('f-date').value || today();
+    syncCycle();
+  }
   document.getElementById('f-wd-box').style.display = e.repeat_unit === 'week' ? '' : 'none';
   // у события нет выполнения: «от дня выполнения» не нужно, зато есть «по какое число»
-  document.getElementById('f-from-box').style.display = e.repeat_unit && !isEvent(e) ? '' : 'none';
+  document.getElementById('f-from-box').style.display = e.repeat_unit && !isEvent(e) && !cycle ? '' : 'none';
   document.getElementById('f-end-box').style.display = isEvent(e) ? '' : 'none';
   document.getElementById('f-startdate-box').style.display = isEvent(e) ? 'none' : '';
   document.getElementById('f-nodate').style.display = isEvent(e) ? 'none' : '';
@@ -1967,6 +2040,11 @@ async function saveEdit() {
   row.space = sec ? spaceOfSec(sec) : e.id ? e.space || S.space : S.space;
   if (!row.start_time) row.end_time = null;
   if ((row.repeat_unit || isEvent(row)) && !row.due_date) row.due_date = today();
+  if (row.repeat_unit === 'cycle') {
+    const { on, off, anchor } = cycleForm();
+    Object.assign(row, { repeat_every: on, repeat_off: off, repeat_anchor: anchor, repeat_from: 'due', repeat_weekdays: null });
+    if (!cycleOn(row.due_date, on, off, anchor)) row.due_date = nextCycle(row.due_date, on, off, anchor); // срок — только на день цикла
+  }
   if (isEvent(row)) {
     row.repeat_from = 'due';
     const end = document.getElementById('f-enddate').value;
@@ -2078,7 +2156,7 @@ async function togglePause(id) {
     await Promise.all(late.map(t => {
       let d = t.due_date;
       if (!t.repeat_unit) d = t0;
-      for (let i = 0; i < 2000 && d < t0; i++) d = nextDue(d, t.repeat_every, t.repeat_unit, t.repeat_weekdays);
+      for (let i = 0; i < 2000 && d < t0; i++) d = nextOf(t, d);
       return call(sb.from('tasks').update({ due_date: d }).eq('id', t.id));
     }));
   }
@@ -2389,7 +2467,7 @@ async function deleteTemplate() {
 
 // ---------- нажатия ----------
 const byId = id => S.tasks.find(t => t.id === id);
-const BUSY = new Set(['t-save', 't-run', 't-delete', 'p-archive', 's-pause', 'login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no', 'bulk-save', 'bulk-delete', 'limits-save']);
+const BUSY = new Set(['t-save', 't-run', 't-delete', 'p-archive', 's-pause', 'login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no', 'bulk-save', 'bulk-delete', 'limits-save', 'flower-sec']);
 
 // ---------- быстрое меню (правая кнопка мыши / долгое нажатие на телефоне) ----------
 const $ctx = document.createElement('div');
@@ -2462,6 +2540,7 @@ document.addEventListener('click', async ev => {
       case 'settings': openSettings(); break;
       case 'help': openHelp(); break;
       case 'show-done': S.showDone = !S.showDone; localSet('done', S.showDone ? '1' : ''); openSettings(); render(); break;
+      case 'flower-sec': await flowerSec(el); break;
       case 'bg-toggle': S.bg = !S.bg; localSet('bg', S.bg ? '1' : '0'); openSettings(); render(); break;
       case 'push-on': await pushOn(); break;
       case 'push-off': await pushOff(); break;
