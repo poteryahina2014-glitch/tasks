@@ -307,7 +307,7 @@ function taskRow(t, opts = {}) {
   const subs = subsOf(t);
   if (t.remind_at) tags.push(`<span>🔔 ${hhmm(t.remind_at)}</span>`);
   if (t.decor && DECOR[t.decor]) tags.push(`<span title="${DECOR[t.decor].name}">${DECOR[t.decor].icon}</span>`);
-  if (petsOf(t).length) tags.push(`<span title="${petsOf(t).map(p => esc(petName(p))).join(' и ')}">${petsOf(t).map(p => PETS[p].icon).join('')}</span>`);
+  if (shownPets(t).length) tags.push(`<span title="${shownPets(t).map(p => esc(petName(p))).join(' и ')}">${shownPets(t).map(p => PETS[p].icon).join('')}</span>`);
   if (opts.note) meta.push(`<span class="${opts.noteCls || ''}">${opts.note}</span>`);
   // ждёт другие шаги проекта; красным — если они запланированы позже этой задачи
   const waits = opts.done ? [] : waitsFor(t);
@@ -1180,6 +1180,18 @@ const PETS = { cat: { icon: '🐱', def: 'Котик' }, bird: { icon: '🦜', d
 // У задачи может быть один питомец или оба ('both' — общая забота: вода, миски)
 const petsOf = t => (t.pet === 'both' ? ['cat', 'bird'] : PETS[t.pet] ? [t.pet] : []);
 const petName = p => S.user?.user_metadata?.pets?.[p] || PETS[p].def;
+// Питомца можно выключить в ⚙ (user_metadata.pets_off): его не видно, у задач не показывается значок.
+// В самих задачах поле pet не трогаем — включишь обратно, всё вернётся.
+const petOn = p => !(S.user?.user_metadata?.pets_off || []).includes(p);
+const shownPets = t => petsOf(t).filter(petOn);
+async function petToggle(btn) {
+  const p = btn.dataset.v, old = S.user.user_metadata.pets_off || [];
+  const set = off => { S.user.user_metadata.pets_off = off; btn.classList.toggle('on', !off.includes(p)); render(); };
+  const off = old.includes(p) ? old.filter(x => x !== p) : [...old, p];
+  set(off);
+  const { error } = await sb.auth.updateUser({ data: { pets_off: off } });
+  if (error) { set(old); toast('Не получилось сохранить: ' + error.message); }
+}
 const MOODS = { happy: 'Доволен', meh: 'Немного грустит', sad: 'Очень грустит', faint: 'В обмороке!' };
 const moodOf = n => (n >= lim('faint') ? 'faint' : n >= lim('sad') ? 'sad' : n >= lim('meh') ? 'meh' : 'happy');
 
@@ -1241,7 +1253,7 @@ async function renamePet(p) {
 const P = { cat: { side: 'left', moving: false, dir: 'right' }, bird: { side: 'right', moving: false } };
 const MOVE_MS = { cat: 16000, bird: 3200 };
 let $pets = null;
-const petsShown = () => !!(S.user && S.loaded && S.space === 'personal' && S.view !== 'plan' && S.tasks.some(t => t.pet));
+const petsShown = () => !!(S.user && S.loaded && S.space === 'personal' && S.view !== 'plan' && S.tasks.some(t => shownPets(t).length));
 
 function updatePets() {
   if (!$pets) {
@@ -1254,7 +1266,9 @@ function updatePets() {
     petsLoop();
   }
   $pets.hidden = !petsShown();
-  if (!$pets.hidden) { Object.keys(PETS).forEach(fillPet); placePerches(); }
+  for (const p in PETS) $pets.querySelector('.pet.' + p).hidden = !petOn(p);
+  $pets.querySelectorAll('.perch').forEach(el => { el.hidden = !petOn('bird'); }); // жёрдочки — Яшины
+  if (!$pets.hidden) { Object.keys(PETS).filter(petOn).forEach(fillPet); placePerches(); }
 }
 
 // Ветки можно перетащить мышкой (за ветку или за Яшу); места — в localStorage tm.perch, в долях экрана.
@@ -1336,7 +1350,7 @@ function petsLoop() {
 }
 
 function petMove(p = Math.random() < .5 ? 'cat' : 'bird') {
-  if (!$pets || $pets.hidden || document.hidden || P[p].moving) return;
+  if (!$pets || $pets.hidden || document.hidden || !petOn(p) || P[p].moving) return;
   const mood = petState(p).mood;
   if (mood === 'faint' || mood === 'sad' || (p === 'bird' && mood !== 'happy')) return; // грустным не до прогулок
   const to = P[p].side === 'left' ? 'right' : 'left';
@@ -1621,6 +1635,8 @@ function openSettings() {
       <button class="btn" data-act="logout">Выйти из аккаунта</button>
     </div>
     <h2>Питомцы и картинки</h2>
+    <div class="hint">Показывать питомцев (светится — видно)</div>
+    <div class="flower-secs">${Object.keys(PETS).map(p => `<button class="pill ${petOn(p) ? 'on' : ''}" data-act="pet-toggle" data-v="${p}">${PETS[p].icon} ${esc(petName(p))}</button>`).join('')}</div>
     <div class="hint">Через сколько дней просрочки (подробнее — в справке «?»)</div>
     <div class="limits">${Object.entries(LIMITS).map(([k, l]) => `<label>${l.name}<span>с <input class="inp num" id="lim-${k}" type="number" min="1" value="${lim(k)}"> дн.</span></label>`).join('')}</div>
     <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn main" data-act="limits-save">Сохранить</button></div>
@@ -1886,7 +1902,7 @@ function openEdit(t) {
         <button class="pill" data-act="from" data-v="done">от выполнения</button>
       </div></div>
     ${S.space === 'personal' || e.pet ? `<div class="field" id="f-pet-box"><label title="Грустит, если задача пропущена; можно выбрать обоих">Питомец</label>
-      <div class="row">${[['', 'Нет'], ...Object.keys(PETS).map(p => [p, PETS[p].icon + ' ' + esc(petName(p))])]
+      <div class="row">${[['', 'Нет'], ...Object.keys(PETS).filter(petOn).map(p => [p, PETS[p].icon + ' ' + esc(petName(p))])]
         .map(([p, n]) => `<button class="pill" data-act="pet" data-v="${p}">${n}</button>`).join('')}</div></div>` : ''}
     ${S.space === 'personal' || e.decor ? `<div class="field" id="f-decor-box"><label>Картинка</label>
       <div class="row">${[['', 'Нет', ''], ...Object.entries(DECOR).map(([k, d]) => [k, d.icon + ' ' + d.name, d.hint])]
@@ -2634,6 +2650,7 @@ document.addEventListener('click', async ev => {
         break;
       }
       case 'pet-name': await renamePet(v); break;
+      case 'pet-toggle': await petToggle(el); break;
       case 'after': {
         const set = new Set(S.edit.after_ids || []);
         set.has(v) ? set.delete(v) : set.add(v);
