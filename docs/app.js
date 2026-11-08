@@ -1828,6 +1828,8 @@ async function rvSave() {
       // запланированная задача: «не сделано» переносит план на сегодня, дедлайн не трогаем
       if (t.plan_date) await call(sb.from('tasks').update({ plan_date: today() }).eq('id', t.id));
       else await call(sb.rpc('miss_task', { p_task: t.id, p_today: today() }));
+      // привычка: пропущенный день закрыт, следующий раз подпункты снова пустые
+      if (t.kind === 'habit') await resetRepeat(t);
     }
   }
   S.rv = {};
