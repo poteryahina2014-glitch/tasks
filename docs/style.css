@@ -145,6 +145,11 @@ textarea.inp { min-height: 64px; resize: vertical; }
 .strip i { height: 14px; border-radius: 3px; background: var(--track); }
 .strip i.done { background: var(--good); }
 .strip i.missed { background: var(--bad); opacity: .7; }
+/* утренняя проверка: подпункты привычки — под её названием, с отступом */
+.rv-list .rv-sub { margin-left: 22px; }
+.rv-list .rv-sub .title { font-weight: 400; }
+/* частично сделанный день: снизу зелёным на долю, сверху красным */
+.strip i.part, .hgrid i.part, .legend i.part { background: linear-gradient(to top, var(--good) var(--p), color-mix(in srgb, var(--bad) 75%, transparent) var(--p)); }
 
 /* Утренняя проверка */
 .sheet.review { height: min(640px, 85vh); display: flex; flex-direction: column; overflow: hidden; }

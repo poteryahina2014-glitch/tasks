@@ -189,18 +189,20 @@ function upcoming(t) {
   return d;
 }
 
+// Сколько засчитано за отметку: сделано — 1, частично (часть подпунктов) — доля, пропуск — 0.
+const logVal = l => l.status === 'done' ? 1 : +l.part || 0;
+const isPart = l => l.status === 'missed' && +l.part > 0;
+const num1 = x => String(Math.round(x * 100) / 100).replace('.', ',');
+// квадратик дня: класс и (для частичного) заливка по доле
+const dayCell = (s, p, extra = '') => s === 'part'
+  ? `<i class="part" style="--p:${Math.round(p * 100)}%"${extra}></i>`
+  : `<i class="${s}"${extra}></i>`;
+
 // Статистика привычки за последние 30 дней (до вчера включительно + сегодня, если уже отмечено).
 function habitStats(t) {
-  const from = addDays(today(), -29);
-  const logs = S.logs.filter(l => l.task_id === t.id && l.day >= from && l.day <= today());
-  const done = new Set(logs.filter(l => l.status === 'done').map(l => l.day));
-  const missed = new Set(logs.filter(l => l.status === 'missed').map(l => l.day));
-  const days = [];
-  for (let i = 29; i >= 0; i--) {
-    const d = addDays(today(), -i);
-    days.push(done.has(d) ? 'done' : missed.has(d) ? 'missed' : '');
-  }
-  return { done: done.size, total: done.size + missed.size, days };
+  const days = habitDays(t, 30, S.logs);
+  const marked = days.filter(([, s]) => s);
+  return { done: num1(marked.reduce((a, [, , p]) => a + p, 0)), total: marked.length, days };
 }
 
 // ---------- данные ----------
@@ -210,7 +212,7 @@ async function load() {
   const [tasks, sections, logs, templates, projects] = await Promise.all([
     call(sb.from('tasks').select('*').or(`done_on.is.null,done_on.gte.${monthFrom},project_id.not.is.null`).order('position').order('created_at')),
     call(sb.from('sections').select('*').order('position').order('created_at')),
-    call(sb.from('task_log').select('task_id,day,status,done_on').gte('day', monthFrom).order('id')),
+    call(sb.from('task_log').select('*').gte('day', monthFrom).order('id')),
     call(sb.from('templates').select('*').order('created_at')),
     call(sb.from('projects').select('*').eq('archived', false).order('created_at', { ascending: false })),
   ]);
@@ -400,7 +402,7 @@ function occurrences(from, to) {
   for (const l of S.logs) {
     if (l.day < from || l.day > to) continue;
     const t = S.tasks.find(x => x.id === l.task_id);
-    if (t && spaceOf(t) === S.space && !pausedSec(t.section_id)) add(l.day, { t, kind: l.status });
+    if (t && spaceOf(t) === S.space && !pausedSec(t.section_id)) add(l.day, { t, kind: l.status, part: +l.part || 0 });
   }
   return map;
 }
@@ -424,6 +426,7 @@ const itemClsBase = o => o.kind === 'done' ? 'd' : o.kind === 'missed' ? 'm' : i
 function occRow(o) {
   if (spaceOf(o.t) !== S.space) return taskRow(o.t, { busy: true, mark: '•', markStyle: 'color:var(--muted)', note: 'работа' });
   if (o.kind === 'done') return taskRow(o.t, { done: true, mark: '✓' });
+  if (o.kind === 'missed' && o.part) return taskRow(o.t, { mark: '½', markStyle: 'border-color:var(--warn);color:var(--warn)', note: `сделано на ${Math.round(o.part * 100)}%` });
   if (o.kind === 'missed') return taskRow(o.t, { mark: '✕', markStyle: 'border-color:var(--bad);color:var(--bad)', note: 'пропущено', noteCls: 'late' });
   if (o.kind === 'repeat' && !isEvent(o.t)) return taskRow(o.t, { mark: '↻', markStyle: 'color:var(--muted)', note: 'повтор' });
   return taskRow(o.t);
@@ -735,24 +738,28 @@ document.addEventListener('drop', async e => {
 async function loadHabitLogs(ids) {
   S.hLogs = [];
   if (!ids.length) return;
-  S.hLogs = await call(sb.from('task_log').select('task_id,day,status').in('task_id', ids).gte('day', addDays(today(), -365)).order('id'));
+  S.hLogs = await call(sb.from('task_log').select('*').in('task_id', ids).gte('day', addDays(today(), -365)).order('id'));
   if (S.view === 'habits') render();
 }
 
-// Дни привычки за последние n дней: 'done' / 'missed' / '' (не нужно было или ещё не отмечено)
-function habitDays(t, n) {
+// Дни привычки за последние n дней: [день, 'done' / 'part' / 'missed' / '' (не нужно было или ещё не отмечено), доля]
+function habitDays(t, n, src = S.hLogs && S.hLogs.length ? S.hLogs : S.logs) {
   const st = {};
-  for (const l of (S.hLogs && S.hLogs.length ? S.hLogs : S.logs)) if (l.task_id === t.id && (l.status === 'done' || l.status === 'missed')) st[l.day] = l.status;
+  for (const l of src) if (l.task_id === t.id && (l.status === 'done' || l.status === 'missed')) st[l.day] = l;
   const days = [];
-  for (let i = n - 1; i >= 0; i--) { const d = addDays(today(), -i); days.push([d, st[d] || '']); }
+  for (let i = n - 1; i >= 0; i--) {
+    const d = addDays(today(), -i), l = st[d];
+    days.push(l ? [d, isPart(l) ? 'part' : l.status, logVal(l)] : [d, '', 0]);
+  }
   return days;
 }
 
 function habitCard(t) {
   const days = habitDays(t, S.hRange);
   const marked = days.filter(([, s]) => s);
-  const done = marked.filter(([, s]) => s === 'done').length;
-  // серии считаются по отмеченным дням (дни, когда привычка не нужна, не прерывают серию)
+  const done = marked.reduce((a, [, , p]) => a + p, 0);
+  const parts = marked.filter(([, s]) => s === 'part').length;
+  // серии считаются по отмеченным дням (дни, когда привычка не нужна, не прерывают серию); частично — серия рвётся
   let best = 0, run = 0;
   for (const [, s] of marked) { run = s === 'done' ? run + 1 : 0; best = Math.max(best, run); }
   const pct = marked.length ? Math.round(done / marked.length * 100) : 0;
@@ -761,13 +768,14 @@ function habitCard(t) {
   return `<div class="hcard"${sec ? ` style="--sec:${esc(sec.color)}"` : ''} data-act="edit" data-id="${t.id}">
     <div class="hhead"><b>${esc(t.title)}</b><span class="tags">${repeatLabel(t) ? '↻ ' + esc(repeatLabel(t)) : ''}${sec ? ' · ' + esc(sec.name) : ''}</span></div>
     ${marked.length ? `<div class="hnums">
-      <div><b>${done} из ${marked.length}</b><span>сделано</span></div>
+      <div><b>${num1(done)} из ${marked.length}</b><span>сделано</span></div>
       <div><b class="${pct >= 80 ? 'ok' : pct >= 50 ? 'mid' : 'low'}">${pct}%</b><span>получилось</span></div>
       <div><b>${run}</b><span>подряд сейчас</span></div>
       <div><b>${best}</b><span>лучшая серия</span></div>
-      <div><b>${marked.length - done}</b><span>пропусков</span></div>
+      <div><b>${marked.filter(([, s]) => s === 'missed').length}</b><span>пропусков</span></div>
+      ${parts ? `<div><b>${parts}</b><span>частично</span></div>` : ''}
     </div>` : '<div class="hint">Пока нет отметок за это время.</div>'}
-    <div class="hgrid r${S.hRange}">${days.map(([d, s]) => `<i class="${s}" title="${fmt(d)}${s === 'done' ? ' — сделано' : s === 'missed' ? ' — пропущено' : ''}"></i>`).join('')}</div>
+    <div class="hgrid r${S.hRange}">${days.map(([d, s, p]) => dayCell(s, p, ` title="${fmt(d)}${s === 'done' ? ' — сделано' : s === 'part' ? ` — сделано на ${Math.round(p * 100)}%` : s === 'missed' ? ' — пропущено' : ''}"`)).join('')}</div>
   </div>`;
 }
 
@@ -779,7 +787,7 @@ function renderHabits() {
     <div class="seg">${ranges.map(([n, l]) => `<button class="pill ${S.hRange === n ? 'on' : ''}" data-act="h-range" data-v="${n}">${l}</button>`).join('')}</div>
     <div class="tools">${MODE()}${GEAR}</div></header>`;
   if (!list.length) return html + '<div class="empty">Привычек пока нет.<br>В окне задачи выбери вид «Привычка».</div>';
-  html += '<div class="legend"><i class="done"></i> сделано <i class="missed"></i> пропущено <i></i> не нужно было / ещё не отмечено</div>';
+  html += '<div class="legend"><i class="done"></i> сделано <i class="missed"></i> пропущено <i class="part" style="--p:50%"></i> частично <i></i> не нужно было / ещё не отмечено</div>';
   return html + list.map(habitCard).join('');
 }
 
@@ -916,11 +924,11 @@ function flowerState() {
   const ids = new Set(habits.map(t => t.id));
   const t0 = today(), from = addDays(t0, -6);
   const logs = S.logs.filter(l => ids.has(l.task_id) && l.day >= from && l.day <= t0 && (l.status === 'done' || l.status === 'missed'));
-  const done = logs.filter(l => l.status === 'done').length;
+  const done = logs.reduce((a, l) => a + logVal(l), 0); // частично сделанный день — по доле
   const r = logs.length ? done / logs.length : 1;
   const lvl = r >= .85 ? 3 : r >= .6 ? 2 : r >= .35 ? 1 : 0;
   const all = !habits.some(t => t.due_date && t.due_date <= t0);
-  return { lvl, all, tip: `Привычки за неделю: ${done} из ${logs.length}${all ? ' · сегодня всё сделано' : ''}` };
+  return { lvl, all, tip: `Привычки за неделю: ${num1(done)} из ${logs.length}${all ? ' · сегодня всё сделано' : ''}` };
 }
 
 // Кнопки разделов в настройках: только те, где есть привычки; светится = считается.
@@ -1226,7 +1234,8 @@ function petLate(t) {
   let i = logs.length;
   while (i > 0 && logs[i - 1].status !== 'done') i--;
   const tail = logs.slice(i);
-  if (t.kind === 'habit') return tail.filter(l => l.status === 'missed').length + (t.due_date < today() ? 1 : 0);
+  // привычка: сделано хотя бы наполовину — питомцы не считают это пропуском
+  if (t.kind === 'habit') return tail.filter(l => l.status === 'missed' && !(+l.part >= .5)).length + (t.due_date < today() ? 1 : 0);
   if (t.due_date > today()) return 0;
   const moved = tail.find(l => l.status === 'moved');
   const since = moved ? moved.day : t.due_date;
@@ -1586,7 +1595,7 @@ const HELP = [
   ['Сегодня', 'Всё, что нужно сделать сегодня: привычки, задачи (и просроченные), события. Кружок — отметить. Нажать на отметку ещё раз — отменить.'],
   ['Новая задача', '«+» внизу. Вид: <b>задача</b>, <b>привычка</b> (вода, зарядка) или <b>событие</b> (встреча, его не отмечают). Можно указать срок, время, повтор, напоминание и раздел.'],
   ['Повтор', 'Каждый день / неделю / месяц / N дней или по дням недели. «От выполнения»: следующий срок считается от дня, когда сделали, а не от старого срока.'],
-  ['Утренняя проверка', 'Утром спросит, что сделано из вчерашнего. Несделанная задача переедет на сегодня. У привычки засчитается пропуск.'],
+  ['Утренняя проверка', 'Утром спросит, что сделано из вчерашнего. Несделанная задача переедет на сегодня. У привычки засчитается пропуск. У привычки с подпунктами каждый подпункт отмечается отдельно: сделано 2 из 4 — день засчитается наполовину (в статистике и цветке по доле; серию такой день прерывает, питомцы не грустят, если сделано хотя бы половина).'],
   ['Привычки', 'Вкладка со статистикой: сколько дней из 30 / 3 месяцев / года получилось, серия подряд, лучшая серия, пропуски и квадратики по дням.'],
   ['Календарь', 'Месяц или неделя, фильтры по разделам. Нажми на день: там расписание и свободное время между делами.'],
   ['Разделы', 'Папки для задач. ✎ у раздела: название, цвет, «выключить» на время (задачи прячутся, но не удаляются). «Без срока» вверху — показать только задачи без даты. «Выбрать» меняет сразу несколько задач. На компьютере задачи можно перетаскивать мышкой.'],
@@ -1785,13 +1794,22 @@ function renderReview() {
   $modal.dataset.kind = 'review';
   $modal.innerHTML = `<div class="overlay"><div class="sheet review">
     <h3>Привет${userName() ? ', ' + esc(userName()) : ''}! ${onlyYesterday ? 'Что из вчерашнего получилось сделать?' : 'Что из этого получилось сделать?'}</h3>
-    <div class="rv-list">${list.map(t => `<div class="task ${t.kind === 'habit' ? 'habit' : ''}">
-      <div class="body"><div class="title">${esc(t.title)}</div>
-        <div class="meta"><span>${t.plan_date ? 'план: ' : ''}${dateLabel(reviewDay(t))}</span><span>${t.kind === 'habit' ? 'привычка' : 'задача'}</span>${t.plan_date && t.due_date ? `<span>дедлайн ${dateLabel(t.due_date)}</span>` : ''}</div></div>
+    <div class="rv-list">${list.map(t => {
+      const head = `<div class="body"><div class="title">${esc(t.title)}</div>
+        <div class="meta"><span>${t.plan_date ? 'план: ' : ''}${dateLabel(reviewDay(t))}</span><span>${t.kind === 'habit' ? 'привычка' : 'задача'}</span>${t.plan_date && t.due_date ? `<span>дедлайн ${dateLabel(t.due_date)}</span>` : ''}</div></div>`;
+      // привычка с подпунктами: каждый подпункт отмечается сам, доля считается по ним
+      if (rvSubs(t)) return `<div class="task habit rv-group">${head}</div>` + subsOf(t).map((s, i) => `<div class="task habit rv-sub">
+        <div class="body"><div class="title">${esc(s.t)}</div></div>
+        <div class="yn">
+          <button class="btn${ch[rvKey(t)][i] === 'yes' ? ' good' : ''}" data-act="r-sy" data-id="${t.id}" data-v="${i}">Сделано</button>
+          <button class="btn${ch[rvKey(t)][i] === 'no' ? ' no-on' : ''}" data-act="r-sn" data-id="${t.id}" data-v="${i}">Не сделано</button>
+        </div></div>`).join('');
+      return `<div class="task ${t.kind === 'habit' ? 'habit' : ''}">${head}
       <div class="yn">
         <button class="btn${ch[rvKey(t)] === 'yes' ? ' good' : ''}" data-act="r-yes" data-id="${t.id}">Сделано</button>
         <button class="btn${ch[rvKey(t)] === 'no' ? ' no-on' : ''}" data-act="r-no" data-id="${t.id}" title="${t.kind === 'habit' && t.repeat_unit ? 'Засчитать пропуск' : 'Перенести на сегодня'}">Не сделано</button>
-      </div></div>`).join('')}</div>
+      </div></div>`;
+    }).join('')}</div>
     <div class="rv-foot"><span class="rv-count"></span><button class="btn main" data-act="r-save">Подтвердить</button></div>
   </div></div>`;
   $modal.querySelector('.rv-list').scrollTop = scroll;
@@ -1800,13 +1818,25 @@ function renderReview() {
 
 // Отметки копятся в S.rv и пишутся в базу только по «Подтвердить» — можно пересмотреть.
 const rvKey = t => t.id + '|' + reviewDay(t);
+const rvSubs = t => t.kind === 'habit' && t.repeat_unit && subsOf(t).length > 0;
 function rvKeep(list) {
   const keys = new Set(list.map(rvKey));
   S.rv = Object.fromEntries(Object.entries(S.rv || {}).filter(([k]) => keys.has(k)));
+  // у привычки с подпунктами — отметка на каждый; отмеченные за день сразу «Сделано»
+  for (const t of list) if (rvSubs(t) && !Array.isArray(S.rv[rvKey(t)])) S.rv[rvKey(t)] = subsOf(t).map(s => s.d ? 'yes' : undefined);
   return S.rv;
 }
+const rvMarked = t => { const v = S.rv[rvKey(t)]; return Array.isArray(v) ? subsOf(t).every((_, i) => v[i]) : !!v; };
+function rvSubMark(el, id, i, v) {
+  const t = byId(id);
+  S.rv[rvKey(t)][i] = v;
+  const yn = el.closest('.yn');
+  yn.querySelector('[data-act=r-sy]').classList.toggle('good', v === 'yes');
+  yn.querySelector('[data-act=r-sn]').classList.toggle('no-on', v === 'no');
+  rvCount();
+}
 function rvCount(list = reviewList()) {
-  const n = list.filter(t => S.rv[rvKey(t)]).length;
+  const n = list.filter(rvMarked).length;
   $modal.querySelector('.rv-count').textContent = `Отмечено ${n} из ${list.length}`;
   $modal.querySelector('[data-act=r-save]').disabled = n < list.length;
 }
@@ -1820,7 +1850,12 @@ function rvMark(el, id, v) {
 }
 async function rvSave() {
   for (const t of reviewList()) {
-    const v = S.rv[rvKey(t)];
+    let v = S.rv[rvKey(t)], part = null;
+    if (Array.isArray(v)) {
+      const yes = v.filter(x => x === 'yes').length, n = subsOf(t).length;
+      if (yes === n) v = 'yes';
+      else { v = 'no'; if (yes) part = Math.round(yes / n * 1000) / 1000; }
+    }
     if (v === 'yes') {
       await call(sb.rpc('complete_task', { p_task: t.id, p_done_on: reviewDay(t) }));
       await resetRepeat(t);
@@ -1828,6 +1863,8 @@ async function rvSave() {
       // запланированная задача: «не сделано» переносит план на сегодня, дедлайн не трогаем
       if (t.plan_date) await call(sb.from('tasks').update({ plan_date: today() }).eq('id', t.id));
       else await call(sb.rpc('miss_task', { p_task: t.id, p_today: today() }));
+      // частично: доля сделанных подпунктов — к отметке пропуска за тот день
+      if (part) await call(sb.from('task_log').update({ part }).eq('task_id', t.id).eq('day', reviewDay(t)).eq('status', 'missed'));
       // привычка: пропущенный день закрыт, следующий раз подпункты снова пустые
       if (t.kind === 'habit') await resetRepeat(t);
     }
@@ -1853,7 +1890,7 @@ function openEdit(t) {
         <button class="pill" data-act="kind" data-v="event">Событие</button>
       </div></div>
     ${st ? `<div class="stats">За 30 дней: <b>${st.done} из ${st.total}</b>
-      <div class="strip">${st.days.map(d => `<i class="${d}"></i>`).join('')}</div></div>` : ''}
+      <div class="strip">${st.days.map(([, s, p]) => dayCell(s, p)).join('')}</div></div>` : ''}
     <div class="cols"><div>
     <div class="field"><label id="f-date-label">Срок</label>
       <div class="row"><input class="inp" id="f-date" type="date" value="${e.due_date || ''}">
@@ -2696,6 +2733,8 @@ document.addEventListener('click', async ev => {
       case 'import': closeModal(); document.getElementById('import-file').click(); break;
       case 'r-yes': rvMark(el, id, 'yes'); break;
       case 'r-no': rvMark(el, id, 'no'); break;
+      case 'r-sy': rvSubMark(el, id, +v, 'yes'); break;
+      case 'r-sn': rvSubMark(el, id, +v, 'no'); break;
       case 'r-save': el.disabled = true; el.textContent = 'Сохраняю…'; await rvSave(); break;
     }
   } catch (e) {
