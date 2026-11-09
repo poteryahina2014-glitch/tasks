@@ -1529,12 +1529,30 @@ function openBulk() {
   $modal.dataset.kind = 'bulk';
   S.bulk = { weekdays: [], from: 'due' };
   const opt = (v, n) => `<option value="${v}">${n}</option>`;
-  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet">
+  const personal = S.space === 'personal';
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet edit">
     <h3>Изменить задачи: ${S.pick.size}</h3>
     <div class="msg" style="margin:-6px 0 12px">Меняется только то, где выбрано не «не менять».</div>
+    <div class="cols"><div>
     <div class="field"><label>Срок</label>
       <select class="inp" id="b-datemode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить дату')}${opt('none', 'Без срока')}</select>
       <input class="inp" id="b-date" type="date" value="${today()}" style="margin-top:8px"></div>
+    <div class="field"><label>Начать с</label>
+      <select class="inp" id="b-startmode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить дату')}${opt('none', 'Убрать')}</select>
+      <input class="inp" id="b-start" type="date" value="${today()}" style="margin-top:8px"></div>
+    <div class="field"><label>Время</label>
+      <select class="inp" id="b-timemode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить время')}${opt('none', 'Без времени')}</select>
+      <div class="row" id="b-time-box" style="margin-top:8px"><input class="inp" id="b-t1" type="time" value="09:00">–<input class="inp" id="b-t2" type="time"></div></div>
+    <div class="field"><label>Напомнить на телефон</label>
+      <select class="inp" id="b-remindmode">${opt(KEEP, '— не менять —')}${opt('set', 'В это время')}${opt('none', 'Не напоминать')}</select>
+      <input class="inp" id="b-remind" type="time" value="09:00" style="margin-top:8px"></div>
+    ${planOn() || S.space === 'work' ? `<div class="field"><label>План: день, когда делаю</label>
+      <select class="inp" id="b-planmode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить день')}${opt('none', 'Убрать план')}</select>
+      <input class="inp" id="b-plan" type="date" value="${today()}" style="margin-top:8px"></div>
+    <div class="field"><label>Займёт часов</label>
+      <select class="inp" id="b-estmode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить')}${opt('none', 'Убрать')}</select>
+      <input class="inp num" id="b-est" type="number" min="0" step="0.5" value="1" style="margin-top:8px;max-width:90px"></div>` : ''}
+    </div><div>
     <div class="field"><label>Повтор</label>
       <div class="row">
         <select class="inp" id="b-unit">${opt(KEEP, '— не менять —')}${opt('', 'Не повторять')}${opt('day', 'Дни')}${opt('week', 'Недели')}${opt('month', 'Месяцы')}${opt('year', 'Годы')}</select>
@@ -1551,17 +1569,32 @@ function openBulk() {
       <select class="inp" id="b-kind">${opt(KEEP, '— не менять —')}${opt('task', 'Обычная')}${opt('habit', 'Привычка')}${opt('event', 'Событие')}</select></div>
     <div class="field"><label>Раздел</label>
       <select class="inp" id="b-section">${opt(KEEP, '— не менять —')}${opt('', 'Без раздела')}${mySecs().map(s => opt(s.id, esc(s.name))).join('')}</select></div>
+    ${personal ? `<div class="field"><label>Размер</label>
+      <select class="inp" id="b-size">${opt(KEEP, '— не менять —')}${opt('', 'Нет (или как у раздела)')}${Object.entries(SIZES).map(([k, z]) => opt(k, z.icon + ' ' + z.name)).join('')}</select></div>
+    <div class="field" id="b-slot-box"><label>Когда (у средних)</label>
+      <select class="inp" id="b-slot">${opt('', 'В любое окошко')}${Object.entries(SLOTS).map(([k, s]) => opt(k, s.name)).join('')}</select></div>
+    <div class="field"><label>Питомец</label>
+      <select class="inp" id="b-pet">${opt(KEEP, '— не менять —')}${opt('', 'Нет')}${Object.keys(PETS).filter(petOn).map(p => opt(p, PETS[p].icon + ' ' + esc(petName(p)))).join('')}${Object.keys(PETS).filter(petOn).length === 2 ? opt('both', 'Оба') : ''}</select></div>
+    <div class="field"><label>Картинка</label>
+      <select class="inp" id="b-decor">${opt(KEEP, '— не менять —')}${opt('', 'Нет')}${Object.entries(DECOR).map(([k, d]) => opt(k, d.icon + ' ' + d.name)).join('')}</select></div>` : ''}
+    </div></div>
     <div class="actions"><span></span>
       <div class="row"><button class="btn" data-act="close">Отмена</button><button class="btn main" data-act="bulk-save">Применить</button></div>
     </div>
   </div></div>`;
-  ['b-datemode', 'b-unit'].forEach(id => { document.getElementById(id).onchange = syncBulk; });
+  BULK_MODES.concat(['b-unit', 'b-size']).forEach(id => { const el = document.getElementById(id); if (el) el.onchange = syncBulk; });
   syncBulk();
 }
 
+// «режим → поле»: поле видно, когда выбрано «поставить»
+const BULK_MODES = ['b-datemode', 'b-startmode', 'b-timemode', 'b-remindmode', 'b-planmode', 'b-estmode'];
+const BULK_FIELD = { 'b-datemode': 'b-date', 'b-startmode': 'b-start', 'b-timemode': 'b-time-box', 'b-remindmode': 'b-remind', 'b-planmode': 'b-plan', 'b-estmode': 'b-est' };
+
 function syncBulk() {
   const unit = document.getElementById('b-unit').value;
-  document.getElementById('b-date').style.display = document.getElementById('b-datemode').value === 'set' ? '' : 'none';
+  for (const m of BULK_MODES) { const el = document.getElementById(m); if (el) document.getElementById(BULK_FIELD[m]).style.display = el.value === 'set' ? '' : 'none'; }
+  const size = document.getElementById('b-size');
+  if (size) document.getElementById('b-slot-box').style.display = size.value === 'mid' ? '' : 'none';
   document.getElementById('b-every-box').style.display = unit && unit !== KEEP ? '' : 'none';
   document.getElementById('b-wd-box').style.display = unit === 'week' ? '' : 'none';
   document.getElementById('b-from-box').style.display = unit && unit !== KEEP ? '' : 'none';
@@ -1584,6 +1617,21 @@ async function saveBulk() {
   }
   if (v('b-kind') !== KEEP) upd.kind = v('b-kind');
   if (v('b-section') !== KEEP) upd.section_id = v('b-section') || null;
+  const has = id => document.getElementById(id);
+  const mode = id => (has(id) ? v(id) : KEEP);
+  if (mode('b-startmode') !== KEEP) upd.start_date = mode('b-startmode') === 'set' ? v('b-start') || today() : null;
+  if (mode('b-timemode') === 'set') {
+    if (!v('b-t1')) return toast('Укажи время');
+    upd.start_time = v('b-t1');
+    upd.end_time = v('b-t2') && v('b-t2') > v('b-t1') ? v('b-t2') : null;
+  }
+  if (mode('b-timemode') === 'none') { upd.start_time = null; upd.end_time = null; }
+  if (mode('b-remindmode') !== KEEP) { upd.remind_at = mode('b-remindmode') === 'set' ? v('b-remind') || '09:00' : null; upd.reminded_on = null; }
+  if (mode('b-planmode') !== KEEP) upd.plan_date = mode('b-planmode') === 'set' ? v('b-plan') || today() : null;
+  if (mode('b-estmode') !== KEEP) upd.estimate = mode('b-estmode') === 'set' ? parseFloat(v('b-est').replace(',', '.')) || null : null;
+  if (mode('b-size') !== KEEP) { upd.size = v('b-size') || null; upd.slot = upd.size === 'mid' ? v('b-slot') || null : null; }
+  if (mode('b-pet') !== KEEP) upd.pet = v('b-pet') || null;
+  if (mode('b-decor') !== KEEP) upd.decor = v('b-decor') || null;
   if (!Object.keys(upd).length) return toast('Ничего не выбрано для изменения');
   await call(sb.from('tasks').update(upd).in('id', ids));
   // у повтора должен быть срок: где его нет — сегодня
