@@ -31,6 +31,7 @@ const S = {
   showDone: localGet('done') === '1', // показывать выполненные («Сделано сегодня», отметки в календаре)
   bg: localGet('bg') !== '0', // вид за окном на фоне
   noDate: localGet('nodate') === '1', // «Разделы»: только задачи без срока
+  sizes: (localGet('sizes') || '').split(',').filter(Boolean), // «Разделы»: показать только эти размеры (пусто — все)
   hRange: +localGet('hrange') || 30,  // «Привычки»: за сколько дней статистика
   hLogs: null,            // история привычек за год (грузится, когда открыта вкладка)
 };
@@ -540,7 +541,10 @@ function byPos(a, b) {
 
 // фильтр «Без срока» — только задачи без даты
 const noDateOk = t => !S.noDate || (!isEvent(t) && !t.due_date);
-const sectionTasks = secId => activeAll().filter(t => (t.section_id || null) === secId && spaceOf(t) === S.space && !eventOver(t) && noDateOk(t)).sort(byPos);
+// фильтр по размеру: светится = показано, ничего не выбрано — все
+const sizeOk = t => !S.sizes.length || S.sizes.includes(sizeOf(t));
+const filterOk = t => noDateOk(t) && sizeOk(t);
+const sectionTasks = secId => activeAll().filter(t => (t.section_id || null) === secId && spaceOf(t) === S.space && !eventOver(t) && filterOk(t)).sort(byPos);
 
 function renderSections() {
   const sel = S.section;
@@ -548,7 +552,7 @@ function renderSections() {
   // слева (на телефоне — строкой сверху): разделы; на них можно бросать задачи
   const item = (id, name, color, n) => `<button class="pill side-item ${sel === id ? 'on' : ''} ${pausedSec(id) ? 'paused' : ''}" data-act="section" data-id="${id || ''}" data-drop-sec="${id || ''}">
       ${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}<span class="name">${esc(name)}</span>${pausedSec(id) ? '<span class="n" title="Раздел выключен">⏸</span>' : n ? `<span class="n">${n}</span>` : ''}</button>`;
-  const side = [`<button class="pill side-item ${sel === null ? 'on' : ''}" data-act="section" data-id="">Все<span class="n">${active().filter(t => !eventOver(t) && noDateOk(t)).length}</span></button>`]
+  const side = [`<button class="pill side-item ${sel === null ? 'on' : ''}" data-act="section" data-id="">Все<span class="n">${active().filter(t => !eventOver(t) && filterOk(t)).length}</span></button>`]
     .concat(mySecs().map(s => item(s.id, s.name, s.color, count(s.id))))
     .concat(count(null) ? [item('none', 'Без раздела', null, count(null))] : [])
     .concat(['<button class="pill side-item add" data-act="new-section">+ Раздел</button>'])
@@ -561,10 +565,10 @@ function renderSections() {
   for (const [id, name, color] of groups) {
     const all = sectionTasks(id);
     // задачи проектов — отдельными блоками с прогрессом вверху раздела
-    const projs = S.noDate ? [] : S.projects.filter(p => !p.archived && ((p.section_id || null) === id || all.some(t => t.project_id === p.id)));
+    const projs = S.noDate || S.sizes.length ? [] : S.projects.filter(p => !p.archived && ((p.section_id || null) === id || all.some(t => t.project_id === p.id)));
     const list = all.filter(t => !projs.some(p => p.id === t.project_id));
     const paused = pausedSec(id);
-    if (sel === null && !all.length && !projs.length && (id === null || S.noDate)) continue;
+    if (sel === null && !all.length && !projs.length && (id === null || S.noDate || S.sizes.length)) continue;
     const head = `<h2 class="group ${paused ? 'paused' : ''}" data-drop-sec="${id || ''}">${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}${esc(name || '')}
       ${paused ? '<span class="off">⏸ выключен</span>' : ''}
       ${list.length > 1 && !paused ? `<button class="az" data-act="sort-az" data-id="${id || 'none'}">А→Я</button>` : ''}
@@ -578,13 +582,14 @@ function renderSections() {
       continue;
     }
     body += head + projs.map(p => projectBlock(p, all)).join('') + (list.map(t => taskRow(t, { date: true, noSection: true, drag: true })).join('')
-      || (projs.length ? '' : `<div class="empty small" data-drop-sec="${id || ''}">${S.noDate ? 'Задач без срока нет' : 'Пусто' + (S.pick ? '' : ' — перетащи сюда задачу')}</div>`));
+      || (projs.length ? '' : `<div class="empty small" data-drop-sec="${id || ''}">${S.noDate || S.sizes.length ? 'Таких задач нет' : 'Пусто' + (S.pick ? '' : ' — перетащи сюда задачу')}</div>`));
   }
   const tools = S.pick
     ? '<button class="pill pick-btn" data-act="pick-all" aria-label="Выбрать все">☑</button>'
     : '<button class="pill pick-btn" data-act="pick-start" aria-label="Выбрать">☐</button>';
   const filter = `<button class="pill ${S.noDate ? 'on' : ''}" data-act="nodate">Без срока</button>`;
-  return `<header class="top"><h1>Разделы</h1><div class="tools">${filter}${tools}${MODE()}${GEAR}</div></header>
+  const sizes = `<div class="seg sizes">${Object.entries(SIZES).map(([k, z]) => `<button class="pill ${S.sizes.includes(k) ? 'on' : ''}" data-act="size-filter" data-v="${k}" aria-label="${z.title}">${z.icon}</button>`).join('')}</div>`;
+  return `<header class="top"><h1>Разделы</h1>${sizes}<div class="tools">${filter}${tools}${MODE()}${GEAR}</div></header>
     <div class="split">
       <nav class="side">${side.join('')}</nav>
       <div class="main">${body || '<div class="empty">Здесь пока пусто</div>'}</div>
@@ -3033,6 +3038,9 @@ document.addEventListener('click', async ev => {
       case 'b-from': S.bulk.from = v; syncBulk(); break;
       case 'limits-save': await saveLimits(); break;
       case 'nodate': S.noDate = !S.noDate; localSet('nodate', S.noDate ? '1' : ''); render(); break;
+      case 'size-filter':
+        S.sizes = S.sizes.includes(v) ? S.sizes.filter(x => x !== v) : S.sizes.concat(v);
+        localSet('sizes', S.sizes.join(',')); render(); break;
       case 'h-range': S.hRange = +v; localSet('hrange', v); render(); break;
       case 'decor': S.edit.decor = v || null; syncEdit(); break;
       case 'view': S.view = v; S.pick = null; localSet('view', v); render(); scrollTo(0, 0); break;
