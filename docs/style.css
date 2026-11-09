@@ -633,3 +633,12 @@ body.work .icon.mode { box-shadow: inset 0 0 0 1px var(--accent); }
 .review .yn .btn.yes:not(.good) { color: var(--good); }
 .review .yn .btn.no:not(.no-on) { color: var(--bad); }
 .sheet.help.fixed { overflow: hidden; }
+
+/* ☀ Случаи и задачи «Следом» */
+.kid-mark { text-align: center; color: var(--muted); }
+.kid-mark.on { color: var(--accent); }
+.wake-of { margin: -4px 0 8px; }
+.occ-list { display: flex; flex-direction: column; gap: 12px; margin: 10px 0; max-height: 60vh; overflow-y: auto; }
+.occ-row { display: grid; grid-template-columns: minmax(0, 1fr) 32px; gap: 6px; align-items: center; }
+.occ-row .hint { grid-column: 1 / -1; margin-top: 0; }
+.occ-go { text-align: left; font-size: 16px; }

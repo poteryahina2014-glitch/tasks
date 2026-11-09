@@ -158,7 +158,9 @@ async function call(promise) {
 const sectionOf = t => S.sections.find(s => s.id === t.section_id);
 // Задачи выключенного раздела нигде не показываются, кроме самого раздела в «Разделах».
 const pausedSec = id => !!(id && (S.sections.find(s => s.id === id) || {}).paused);
-const activeAll = () => S.tasks.filter(t => !t.done_on);
+// Спит: случай (☀) или задача «Следом», пока её не разбудили (нет срока). Нигде не видна, кроме окна главной задачи.
+const asleep = t => t.kind === 'occasion' || (!!t.wake_after && !t.due_date);
+const activeAll = () => S.tasks.filter(t => !t.done_on && !asleep(t));
 // Режим: раздел относится к личному или рабочему; задача без раздела — по своему полю space.
 const spaceOfSec = sec => (sec && sec.space) || 'personal';
 const spaceOf = t => {
@@ -254,18 +256,33 @@ async function toggleSub(t, i) {
   await call(sb.from('tasks').update({ checklist: t.checklist }).eq('id', t.id));
 }
 
+// Задачи «Следом» просыпаются: срок — сегодня (даже если главную отметили за вчера), висят, пока не сделаны.
+async function wakeKids(t) {
+  const n = S.tasks.filter(x => x.wake_after === t.id && !x.due_date && !x.done_on).length;
+  if (n) await call(sb.from('tasks').update({ due_date: today() }).eq('wake_after', t.id).is('due_date', null).is('done_on', null));
+  return n;
+}
+// Отметку главной задачи отменили — разбуженные сегодня снова засыпают.
+async function sleepKids(t) {
+  if (S.tasks.some(x => x.wake_after === t.id && x.due_date === today()))
+    await call(sb.from('tasks').update({ due_date: null }).eq('wake_after', t.id).eq('due_date', today()));
+}
+
 async function complete(t, doneOn = today()) {
   await call(sb.rpc('complete_task', { p_task: t.id, p_done_on: doneOn }));
   await resetRepeat(t);
+  const woke = await wakeKids(t);
   if (t.pet) S.petJoy = { pets: petsOf(t), at: Date.now() }; // питомцы радуются — сердечки
   await load();
   const next = S.tasks.find(x => x.id === t.id);
-  const msg = next && !next.done_on && next.due_date ? `Готово! Следующий раз: ${dateLabel(next.due_date)}` : 'Готово!';
-  toast(msg, async () => { await call(sb.rpc('undo_last', { p_task: t.id })); await load(); });
+  let msg = next && !next.done_on && next.due_date ? `Готово! Следующий раз: ${dateLabel(next.due_date)}` : 'Готово!';
+  if (woke) msg += ` На сегодня добавлено: ${woke}`;
+  toast(msg, async () => { await call(sb.rpc('undo_last', { p_task: t.id })); await sleepKids(t); await load(); });
 }
 
 async function undo(t) {
   await call(sb.rpc('undo_last', { p_task: t.id }));
+  await sleepKids(t);
   await load();
 }
 
@@ -1651,7 +1668,31 @@ async function deleteBulk() {
 }
 
 // ---------- настройки (шестерёнка) ----------
-const GEAR = '<button class="icon" data-act="help" aria-label="Справка">?</button><button class="icon" data-act="settings" aria-label="Настройки">⚙</button>';
+const GEAR = '<button class="icon" data-act="occ" aria-label="Что случилось сегодня">☀</button><button class="icon" data-act="help" aria-label="Справка">?</button><button class="icon" data-act="settings" aria-label="Настройки">⚙</button>';
+
+// ---------- случаи (☀): то, что нельзя запланировать заранее ----------
+const occasions = () => S.tasks.filter(t => t.kind === 'occasion').sort(byPos);
+function openOcc() {
+  $modal.dataset.kind = 'occ';
+  const t0 = today();
+  const list = occasions();
+  const lastDay = id => S.logs.filter(l => l.task_id === id && l.status === 'done').map(l => l.day).sort().pop();
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet occ">
+    <h3>Что случилось сегодня?</h3>
+    ${list.length ? '' : '<div class="hint">Здесь — то, что не спланировать заранее: пришла зарплата и т. п. У случая есть задачи «Следом»: отметишь случай — они появятся на сегодня и будут висеть, пока не сделаешь.</div>'}
+    <div class="occ-list">${list.map(t => {
+      const kids = S.tasks.filter(x => x.wake_after === t.id).sort(byPos);
+      const last = lastDay(t.id);
+      const done = last === t0;
+      return `<div class="occ-row">
+        <button class="btn occ-go ${done ? 'good' : ''}" data-act="occ-go" data-id="${t.id}" ${done ? 'disabled' : ''}>${done ? '✓ ' : ''}${esc(t.title)}</button>
+        <button class="icon small" data-act="edit" data-id="${t.id}" aria-label="Изменить">✎</button>
+        <div class="hint">${kids.length ? '→ ' + kids.map(k => esc(k.title)).join(' · ') : 'Нет задач «Следом» — добавь через ✎'}${last && !done ? ` · прошлый раз: ${dateLabel(last)}` : ''}</div>
+      </div>`;
+    }).join('')}</div>
+    <div class="actions"><button class="link" data-act="occ-new">+ Новый случай</button><button class="btn" data-act="close">Закрыть</button></div>
+  </div></div>`;
+}
 
 // ---------- справка ----------
 const HELP = [
@@ -1668,6 +1709,7 @@ const HELP = [
   ['🏠 / 💼', 'Личное и работа отдельно, переключатель вверху. В работе есть «Шаблоны»: повторяющиеся проекты из шагов (например, квартальная отчётность), создаются сами.'],
   ['Подпункты', 'В окне задачи «+ Подпункт»: письма, проверки и т.п. Отмечаются прямо под задачей. В шаблоне у шага — «+ подзадача».'],
   ['План (работа, компьютер)', '«Срок» — дедлайн, «План» — день, когда делаешь, и сколько часов займёт. Во вкладке «План» неделя: задачи перетаскиваются по дням, вверху сумма часов вместе со встречами. Больше 8 ч — жёлтым, больше 11 ч — ⚠ красным.'],
+  ['☀ Случаи и «Следом»', 'Бывает то, что нельзя спланировать заранее: пришла зарплата. Нажми ☀ вверху и выбери, что случилось. У случая (и у любой задачи) в окне есть «Следом» — задачи, которые спят и нигде не видны. Отметила случай или сделала задачу (например, «Оплатить коммуналку») — задачи «Следом» появятся на сегодня и будут висеть, пока их не сделаешь. Сделала — снова засыпают до следующего раза. Отменила отметку — снова прячутся. Сумму удобно писать прямо в названии: «Отложить 2000 ₴ в конверт». Новый случай — ☀ → «+ Новый случай».'],
   ['Порядок шагов', 'У задачи проекта — «Делать после» (в шаблоне — «после шагов: 1, 2»). Пока те шаги не сделаны, у задачи 🔒 «ждёт: …»; красный — если они запланированы позже. Ничего не запрещается.'],
   ['Питомцы', 'В окне задачи (в личном режиме) — «Питомец». На широком экране по бокам сидят кот и попугай: доволен, если всё сделано, грустит от пропусков. Наведи на питомца — увидишь, почему грустит. Нажми на имя, чтобы переименовать. Яша перелетает, только когда доволен; кот гуляет, если не очень грустит. Подвесные жёрдочки можно перетаскивать мышкой — Яша перелетит на свою. Кот сидит на подоконнике; щёлкни по нему — перейдёт на другую сторону (если не грустит).'],
   ['Как считаются дни', 'Сколько дней до грусти, обморока и пыли — в ⚙. У обычной задачи считаются дни просрочки (с первоначального срока, даже если утренняя проверка перенесла её на сегодня), у привычки — пропуски подряд. Питомец смотрит на свою самую запущенную задачу.'],
@@ -1926,6 +1968,7 @@ async function rvSave() {
     if (v === 'yes') {
       await call(sb.rpc('complete_task', { p_task: t.id, p_done_on: reviewDay(t) }));
       await resetRepeat(t);
+      await wakeKids(t);
     } else if (v === 'no') {
       // запланированная задача: «не сделано» переносит план на сегодня, дедлайн не трогаем
       if (t.plan_date) await call(sb.from('tasks').update({ plan_date: today() }).eq('id', t.id));
@@ -2135,13 +2178,17 @@ document.addEventListener('change', ev => {
 // ---------- окно задачи ----------
 function openEdit(t) {
   const isNew = !t.id;
-  S.edit = { ...t, remind_at_was: t.remind_at, checklist: subsOf(t).map(s => ({ ...s })), had_subs: subsOf(t).length > 0 };
+  S.edit = { ...t, remind_at_was: t.remind_at, checklist: subsOf(t).map(s => ({ ...s })), had_subs: subsOf(t).length > 0,
+    kids: t.id ? S.tasks.filter(x => x.wake_after === t.id).sort(byPos).map(x => ({ id: x.id, t: x.title, on: !!x.due_date })) : [] };
   const e = S.edit;
+  const occ = e.kind === 'occasion';
+  const parent = e.wake_after && byId(e.wake_after);
   const st = !isNew && e.kind === 'habit' ? habitStats(e) : null;
   $modal.dataset.kind = 'edit';
   // компактно: на компьютере две колонки (когда — слева, повтор и прочее — справа), кнопки внизу всегда видны
   $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet edit fixed">
-    <h3>${isNew ? 'Новая запись' : isEvent(e) ? 'Событие' : 'Задача'}</h3>
+    <h3>${occ ? (isNew ? 'Новый случай' : 'Случай') : isNew ? 'Новая запись' : isEvent(e) ? 'Событие' : 'Задача'}</h3>
+    ${parent ? `<div class="hint wake-of">↳ Следом за «${esc(parent.title)}»${e.due_date ? '' : ' — спит, пока та не отмечена'}</div>` : ''}
     <div class="field row title-row"><input class="inp" id="f-title" placeholder="Название" value="${esc(e.title || '')}">
       <div class="seg" id="f-kind">
         <button class="pill" data-act="kind" data-v="task">Обычная</button>
@@ -2214,6 +2261,8 @@ function openEdit(t) {
       <div class="wds after">${projectTasks(e.project_id).filter(x => x.id !== e.id).map(x => `<button class="pill" data-act="after" data-v="${x.id}">${x.done_on ? '✓ ' : ''}${esc(x.title)}</button>`).join('')}</div></div>` : ''}
     <div class="field" id="f-subs-box"><div id="f-subs"></div>
       <button class="link" data-act="sub-add">+ Подпункт</button></div>
+    ${parent ? '' : `<div class="field" id="f-kids-box"><label>Следом — появятся на сегодня, когда ${occ ? 'случай отмечен' : 'эта задача сделана'}</label>
+      <div id="f-kids"></div><button class="link" data-act="kid-add">+ Задача следом</button></div>`}
     <div class="field"><textarea class="inp" id="f-notes" placeholder="Заметка">${esc(e.notes || '')}</textarea></div>
     <div class="actions">
       ${isNew ? '<span></span>' : '<button class="btn danger" data-act="delete">Удалить</button>'}
@@ -2226,6 +2275,7 @@ function openEdit(t) {
   document.getElementById('f-remind').onchange = ev => { e.remind_at = ev.target.value || null; syncEdit(); };
   for (const id of ['f-on', 'f-off', 'f-anchor']) document.getElementById(id).oninput = syncCycle;
   renderSubs();
+  if (!parent) renderKids();
   syncEdit();
   if (isNew) document.getElementById('f-title').focus();
 }
@@ -2286,6 +2336,34 @@ function syncEdit() {
   document.getElementById('f-date-label').textContent = isEvent(e) ? 'Дата' : 'Срок';
   document.getElementById('f-subs-box').style.display = isEvent(e) ? 'none' : '';
   document.getElementById('f-plan-box').style.display = planFields(e) ? '' : 'none';
+  // случай: только название, «Следом» и заметка
+  if (e.kind === 'occasion') for (const sel of ['#f-kind', '.cols', '#f-subs-box']) $modal.querySelector(sel).style.display = 'none';
+  const kb = document.getElementById('f-kids-box');
+  if (kb) kb.style.display = isEvent(e) ? 'none' : '';
+}
+
+// Задачи «Следом» в окне задачи: ☾ спит / ● уже на сегодня, текст, ✕.
+function renderKids() {
+  document.getElementById('f-kids').innerHTML = S.edit.kids.map((k, i) => `<div class="subrow">
+      <span class="kid-mark ${k.on ? 'on' : ''}" title="${k.on ? 'Уже на сегодня' : 'Спит'}">${k.on ? '●' : '☾'}</span>
+      <input class="inp" data-kid="${i}" placeholder="Что сделать потом" value="${esc(k.t)}">
+      <button class="icon small" data-act="kid-del" data-v="${i}" aria-label="Убрать">✕</button>
+    </div>`).join('');
+}
+
+// Сохранить «Следом»: новые — добавить, изменённые — переименовать, убранные — удалить.
+async function saveKids(pid, row) {
+  const kids = S.edit.kids || [];
+  const keep = new Set(kids.filter(k => k.id && k.t.trim()).map(k => k.id));
+  const gone = S.tasks.filter(x => x.wake_after === pid && !keep.has(x.id)).map(x => x.id);
+  if (gone.length) await call(sb.from('tasks').delete().in('id', gone));
+  for (const k of kids) {
+    const title = k.t.trim();
+    if (!title) continue;
+    if (!k.id) await call(sb.from('tasks').insert({ title, kind: 'task', wake_after: pid, repeat_from: 'due',
+      section_id: row.kind === 'occasion' ? null : row.section_id, space: row.space }));
+    else if ((byId(k.id) || {}).title !== title) await call(sb.from('tasks').update({ title }).eq('id', k.id));
+  }
 }
 
 // План и оценка часов — у обычных задач рабочего режима
@@ -2303,6 +2381,8 @@ function renderSubs() {
 document.addEventListener('input', ev => {
   const i = ev.target.dataset.sub;
   if (i !== undefined && S.edit) S.edit.checklist[i].t = ev.target.value;
+  const k = ev.target.dataset.kid;
+  if (k !== undefined && S.edit) S.edit.kids[k].t = ev.target.value;
 });
 
 // Галочка в окне уже сохранённой задачи сохраняется сразу (даже если окно закроют без «Сохранить»).
@@ -2384,14 +2464,21 @@ async function saveEdit() {
     const end = document.getElementById('f-enddate').value;
     if (end && end > row.due_date) row.end_date = end;
   }
-  if (e.id) await call(sb.from('tasks').update(row).eq('id', e.id));
-  else await call(sb.from('tasks').insert(row));
+  if (row.kind === 'occasion') Object.assign(row, { due_date: null, repeat_unit: null, repeat_every: null, repeat_weekdays: null,
+    section_id: null, start_time: null, end_time: null, start_date: null });
+  let id = e.id;
+  if (id) await call(sb.from('tasks').update(row).eq('id', id));
+  else id = (await call(sb.from('tasks').insert(row).select('id').single())).id;
+  if (!e.wake_after && !isEvent(row)) await saveKids(id, row);
+  const backToOcc = row.kind === 'occasion';
   closeModal();
   await load();
+  if (backToOcc) openOcc();
 }
 
 async function deleteEdit() {
-  if (!confirm('Удалить задачу совсем? Её история тоже удалится.')) return;
+  const kids = S.tasks.some(x => x.wake_after === S.edit.id);
+  if (!confirm('Удалить совсем? История тоже удалится.' + (kids ? ' И задачи «Следом» — тоже.' : ''))) return;
   await call(sb.from('tasks').delete().eq('id', S.edit.id));
   closeModal();
   await load();
@@ -2803,7 +2890,7 @@ async function deleteTemplate() {
 
 // ---------- нажатия ----------
 const byId = id => S.tasks.find(t => t.id === id);
-const BUSY = new Set(['t-save', 't-run', 't-delete', 'p-archive', 's-pause', 'login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no', 'bulk-save', 'bulk-delete', 'limits-save', 'flower-sec']);
+const BUSY = new Set(['t-save', 't-run', 't-delete', 'p-archive', 's-pause', 'login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no', 'bulk-save', 'bulk-delete', 'limits-save', 'flower-sec', 'occ-go']);
 
 // ---------- быстрое меню (правая кнопка мыши / долгое нажатие на телефоне) ----------
 const $ctx = document.createElement('div');
@@ -2875,6 +2962,15 @@ document.addEventListener('click', async ev => {
       case 'set-name': await setName(); break;
       case 'settings': openSettings(); break;
       case 'help': openHelp(); break;
+      case 'occ': openOcc(); break;
+      case 'occ-new': openEdit({ kind: 'occasion', repeat_from: 'due' }); break;
+      case 'occ-go': closeModal(); await complete(byId(id)); break;
+      case 'kid-add':
+        S.edit.kids.push({ t: '' });
+        renderKids();
+        $modal.querySelector(`[data-kid="${S.edit.kids.length - 1}"]`).focus();
+        break;
+      case 'kid-del': S.edit.kids.splice(+v, 1); renderKids(); break;
       case 'show-done': S.showDone = !S.showDone; localSet('done', S.showDone ? '1' : ''); openSettings(); render(); break;
       case 'flower-sec': await flowerSec(el); break;
       case 'bg-toggle': S.bg = !S.bg; localSet('bg', S.bg ? '1' : '0'); openSettings(); render(); break;
