@@ -119,6 +119,17 @@ Deno.serve(async req => {
       sent++;
     }
 
+    // заранее: за remind_days дней до срока (в remind_at или в 10:00), один раз (early_on); пропустили время — пришлём позже в тот же период
+    for (const t of live) {
+      if (!t.remind_days || !t.due_date || t.kind === 'event' || t.early_on) continue;
+      const from = addDays(t.due_date, -t.remind_days);
+      if (now.day < from || now.day >= t.due_date || now.min < minutes(t.remind_at || '10:00')) continue;
+      await db.from('tasks').update({ early_on: now.day }).eq('id', t.id);
+      const left = daysBetween(now.day, t.due_date);
+      await send(mySubs, { title: t.title, body: left === 1 ? 'Завтра' : `Через ${left} дн. (${t.due_date.slice(8, 10)}.${t.due_date.slice(5, 7)})`, tag: 'early-' + t.id });
+      sent++;
+    }
+
     // вечером — что сегодня ещё не сделано
     if (p.daily_on && p.last_daily !== now.day && due(p.daily_time, now.min)) {
       await db.from('prefs').upsert({ user_id: uid, last_daily: now.day });

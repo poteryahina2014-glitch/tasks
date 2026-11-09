@@ -329,7 +329,7 @@ function taskRow(t, opts = {}) {
   const rep = repeatLabel(t);
   if (rep) tags.push(`<span>↻ ${esc(rep)}</span>`);
   const subs = subsOf(t);
-  if (t.remind_at) tags.push(`<span>🔔 ${hhmm(t.remind_at)}</span>`);
+  if (t.remind_at || t.remind_days) tags.push(`<span>🔔 ${[hhmm(t.remind_at), t.remind_days ? 'за ' + t.remind_days + ' дн.' : ''].filter(Boolean).join(', ')}</span>`);
   if (t.decor && DECOR[t.decor]) tags.push(`<span title="${DECOR[t.decor].name}">${DECOR[t.decor].icon}</span>`);
   if (shownPets(t).length) tags.push(`<span title="${shownPets(t).map(p => esc(petName(p))).join(' и ')}">${shownPets(t).map(p => PETS[p].icon).join('')}</span>`);
   if (opts.note) meta.push(`<span class="${opts.noteCls || ''}">${opts.note}</span>`);
@@ -417,7 +417,7 @@ function occurrences(from, to) {
     if (!t.repeat_unit || (!isEvent(t) && d < today())) continue;
     for (let i = 0; i < 2000; i++) {
       d = nextOf(t, d);
-      if (!d || d > to) break;
+      if (!d || d > to || (t.repeat_until && d > t.repeat_until)) break;
       if (addDays(d, span) >= from) put(d, 'repeat');
     }
   }
@@ -2226,6 +2226,7 @@ function openEdit(t) {
         <button class="pill" data-act="remind" data-v="">Нет</button>
         ${REMIND_TIMES.map(h => `<button class="pill" data-act="remind" data-v="${h}">${h.replace(/^0/, '').slice(0, -3)}</button>`).join('')}
         <input class="inp" id="f-remind" type="time" title="Своё время" value="${hhmm(e.remind_at)}">
+        <span class="early" id="f-early-box">и за <input class="inp num" id="f-early" type="number" min="1" max="60" placeholder="—" value="${e.remind_days || ''}" title="Напомнить заранее: за сколько дней до срока" style="max-width:56px"> дн.</span>
       </div></div>
     <div class="field"><label>Раздел</label>
       <select class="inp" id="f-section"><option value="">Без раздела</option>
@@ -2438,6 +2439,9 @@ async function saveEdit() {
   if (hhmm(row.remind_at) !== hhmm(e.remind_at_was)) row.reminded_on = null;
   // пока база не обновлена (005_push.sql), не трогаем новые поля у задач без напоминания
   if (!row.remind_at && !e.remind_at_was) { delete row.remind_at; delete row.reminded_on; }
+  // напомнить заранее (016_early.sql); пока база не обновлена, у задач без него поле не отправляем
+  const early = Math.min(60, Math.max(0, Math.round(+document.getElementById('f-early').value || 0))) || null;
+  if (early || e.remind_days) { row.remind_days = early; if (early !== e.remind_days) row.early_on = null; }
   if (planFields(e)) {
     row.plan_date = document.getElementById('f-plan').value || null;
     row.estimate = parseFloat(document.getElementById('f-est').value.replace(',', '.')) || null;
