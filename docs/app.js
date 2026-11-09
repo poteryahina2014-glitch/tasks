@@ -542,7 +542,8 @@ function byPos(a, b) {
 // фильтр «Без срока» — только задачи без даты
 const noDateOk = t => !S.noDate || (!isEvent(t) && !t.due_date);
 // фильтр по размеру: светится = показано, ничего не выбрано — все
-const sizeOk = t => !S.sizes.length || S.sizes.includes(sizeOf(t));
+// 'none' — задачи без размера (события не считаются)
+const sizeOk = t => !S.sizes.length || S.sizes.includes(sizeOf(t) || (isEvent(t) ? '' : 'none'));
 const filterOk = t => noDateOk(t) && sizeOk(t);
 const sectionTasks = secId => activeAll().filter(t => (t.section_id || null) === secId && spaceOf(t) === S.space && !eventOver(t) && filterOk(t)).sort(byPos);
 
@@ -588,7 +589,7 @@ function renderSections() {
     ? '<button class="pill pick-btn" data-act="pick-all" aria-label="Выбрать все">☑</button>'
     : '<button class="pill pick-btn" data-act="pick-start" aria-label="Выбрать">☐</button>';
   const filter = `<button class="pill ${S.noDate ? 'on' : ''}" data-act="nodate">Без срока</button>`;
-  const sizes = `<div class="seg sizes">${Object.entries(SIZES).map(([k, z]) => `<button class="pill ${S.sizes.includes(k) ? 'on' : ''}" data-act="size-filter" data-v="${k}" aria-label="${z.title}">${z.icon}</button>`).join('')}</div>`;
+  const sizes = `<div class="seg sizes">${Object.entries(SIZES).map(([k, z]) => `<button class="pill ${S.sizes.includes(k) ? 'on' : ''}" data-act="size-filter" data-v="${k}" aria-label="${z.title}">${z.icon}</button>`).join('')}<button class="pill ${S.sizes.includes('none') ? 'on' : ''}" data-act="size-filter" data-v="none" aria-label="Без размера">○</button></div>`;
   return `<header class="top"><h1>Разделы</h1>${sizes}<div class="tools">${filter}${tools}${MODE()}${GEAR}</div></header>
     <div class="split">
       <nav class="side">${side.join('')}</nav>
