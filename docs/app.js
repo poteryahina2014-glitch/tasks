@@ -226,7 +226,9 @@ async function load() {
   if (await autoGenerate()) return load(); // закончился период — шаблоны создали задачи
   render();
   renderReview();
+  if ($modal.dataset.kind === 'offer') renderOffer(); // окно предложений открыто — обновить список
   firstHelp();
+  maybeOffer();
 }
 
 // Шаги проекта, которые надо сделать раньше и которые ещё не сделаны (удалённые не считаются)
@@ -302,6 +304,8 @@ function taskRow(t, opts = {}) {
   if (t.plan_date && t.due_date && !opts.date && !opts.done)
     tags.push(`<span class="${t.due_date < today() || t.plan_date > t.due_date ? 'late' : ''}">до ${dateLabel(t.due_date)}</span>`);
   if (t.estimate) tags.push(`<span>⏱ ${fmtH(t.estimate)} ч</span>`);
+  const size = sizeOf(t);
+  if (size) tags.push(`<span title="${SIZES[size].name}${t.slot && size === 'mid' ? ', ' + SLOTS[t.slot].name.toLowerCase() : ''}">${SIZES[size].icon}${t.slot && size === 'mid' ? ' ' + SLOTS[t.slot].name.toLowerCase() : ''}</span>`);
   if (isEvent(t) && !opts.mark) opts = { ...opts, mark: '•', markStyle: 'border-color:var(--accent);color:var(--accent)' };
   if (sec && !opts.noSection) tags.push(`<span>${esc(sec.name)}</span>`);
   const rep = repeatLabel(t);
@@ -545,6 +549,7 @@ function renderSections() {
     if (sel === null && !all.length && !projs.length && (id === null || S.noDate)) continue;
     const head = `<h2 class="group ${paused ? 'paused' : ''}" data-drop-sec="${id || ''}">${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}${esc(name || '')}
       ${paused ? '<span class="off">⏸ выключен</span>' : ''}
+      ${list.length > 1 && !paused ? `<button class="az" data-act="sort-az" data-id="${id || 'none'}" title="Расставить задачи раздела по алфавиту (потом можно двигать вручную)">А→Я</button>` : ''}
       ${id ? `<button class="edit-sec" data-act="edit-section" data-id="${id}" title="Изменить раздел">✎</button>` : ''}</h2>`;
     if (paused) {
       // в «Все» задачи выключенного раздела свёрнуты; в самом разделе — видны, но бледные
@@ -635,6 +640,15 @@ async function moveTask(id, secId, targetId, after) {
   });
   render();
   await Promise.all(changes.map(([cid, upd]) => call(sb.from('tasks').update(upd).eq('id', cid))));
+}
+
+// Кнопка «А→Я»: порядок задач раздела по алфавиту записывается в position — дальше можно двигать вручную.
+async function sortAZ(secId) {
+  const list = sectionTasks(secId).sort((a, b) => a.title.localeCompare(b.title, 'ru', { numeric: true, sensitivity: 'base' }));
+  const changes = [];
+  list.forEach((x, k) => { if ((x.position || 0) !== k) { x.position = k; changes.push([x.id, k]); } });
+  render();
+  await Promise.all(changes.map(([cid, k]) => call(sb.from('tasks').update({ position: k }).eq('id', cid))));
 }
 
 // ---------- план недели (рабочий режим, только компьютер) ----------
@@ -1599,6 +1613,8 @@ const HELP = [
   ['Привычки', 'Вкладка со статистикой: сколько дней из 30 / 3 месяцев / года получилось, серия подряд, лучшая серия, пропуски и квадратики по дням.'],
   ['Календарь', 'Месяц или неделя, фильтры по разделам. Нажми на день: там расписание и свободное время между делами.'],
   ['Разделы', 'Папки для задач. ✎ у раздела: название, цвет, «выключить» на время (задачи прячутся, но не удаляются). «Без срока» вверху — показать только задачи без даты. «Выбрать» меняет сразу несколько задач. На компьютере задачи можно перетаскивать мышкой.'],
+  ['А→Я', 'Кнопка у заголовка раздела в «Разделах»: расставляет его задачи по алфавиту. Потом их можно двигать мышкой, а нажать А→Я снова — когда захочется. Новая задача встаёт в конец.'],
+  ['Размер и предложения на день', 'В окне задачи — «Размер»: ⚡ пятиминутка, ◐ средняя, ● на весь день, ✦ вдохновение. В ⚙ можно задать размер сразу всем задачам раздела (например, «Проекты» — вдохновение). Каждое утро после проверки (в личном режиме) открывается окно со всеми задачами <b>без срока</b>, которые можно взять сегодня: все пятиминутки; средние — если есть свободное окошко (обед 12–13 или после работы 17–18; у средней задачи можно указать «Когда»; окошко занимают средние задачи на сегодня и события в это время), в выходные — всегда; большие — в субботу и воскресенье, если на этот день ещё нет большой; вдохновение — если на сегодня такой ещё нет. С 16 до 19 вдохновение предлагается ещё раз, если на вечер ничего не взято. «Сегодня» — ставит срок на сегодня, «Не сегодня» — предложу завтра, «Потом» — через 4 дня.'],
   ['Быстрое меню', 'Долгое нажатие на задачу (на компьютере — правая кнопка): на сегодня, на завтра, в другой раздел.'],
   ['🏠 / 💼', 'Личное и работа отдельно, переключатель вверху. В работе есть «Шаблоны»: повторяющиеся проекты из шагов (например, квартальная отчётность), создаются сами.'],
   ['Подпункты', 'В окне задачи «+ Подпункт»: письма, проверки и т.п. Отмечаются прямо под задачей. В шаблоне у шага — «+ подзадача».'],
@@ -1650,6 +1666,7 @@ function openSettings() {
     <div class="limits">${Object.entries(LIMITS).map(([k, l]) => `<label>${l.name}<span>с <input class="inp num" id="lim-${k}" type="number" min="1" value="${lim(k)}"> дн.</span></label>`).join('')}</div>
     <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn main" data-act="limits-save">Сохранить</button></div>
     ${flowerSecsHTML()}
+    ${secSizesHTML()}
     <h2>Уведомления</h2>
     <div id="push-box"><div class="msg">Проверяю…</div></div>
     <div class="actions"><span></span><button class="btn" data-act="close">Закрыть</button></div>
@@ -1873,6 +1890,155 @@ async function rvSave() {
   await load();
 }
 
+// ---------- размер задачи и предложения на день ----------
+const SIZES = {
+  quick: { icon: '⚡', name: 'пятиминутка', title: 'Пятиминутки', hint: 'Можно сделать в любой свободный момент' },
+  mid: { icon: '◐', name: 'средняя', title: 'Средние', hint: '' },
+  big: { icon: '●', name: 'на весь день', title: 'Большие', hint: 'Сегодня ничего большого не запланировано — может, взять одну?' },
+  idea: { icon: '✦', name: 'вдохновение', title: 'Вдохновение', hint: 'На вечер, если есть настроение' },
+};
+// Свободные окошки будних дней для средних задач. Событие со временем внутри окошка его занимает.
+const SLOTS = {
+  lunch: { name: 'Обед', from: '12:00', to: '13:00', free: '~40 мин' },
+  after: { name: 'После работы', from: '17:00', to: '18:00', free: '~1 ч' },
+};
+const secSize = id => (S.sections.find(s => s.id === id) || {}).default_size || null;
+// свой размер у задачи, иначе — размер раздела по умолчанию
+const sizeOf = t => (isEvent(t) ? null : t.size || secSize(t.section_id));
+
+// Что уже стоит на день d и какие окошки свободны.
+function dayFit(d) {
+  const items = active().filter(t => !isEvent(t) && reviewDay(t) === d);
+  const of = s => items.filter(t => sizeOf(t) === s);
+  const weekend = isodow(d) >= 6;
+  const slots = {};
+  if (!weekend) {
+    const evs = (occurrences(d, d)[d] || []).map(o => o.t).filter(t => isEvent(t) && t.start_time);
+    for (const [k, s] of Object.entries(SLOTS)) {
+      // событие пересекает окошко (без времени конца — если начинается внутри него)
+      const busy = evs.filter(t => hhmm(t.start_time) < s.to && (t.end_time ? hhmm(t.end_time) > s.from : hhmm(t.start_time) >= s.from)).map(t => t.title);
+      slots[k] = busy.concat(of('mid').filter(t => t.slot === k).map(t => t.title));
+    }
+    // средние без «когда» занимают свободное окошко (сначала вечернее — там больше времени)
+    for (const t of of('mid').filter(t => !SLOTS[t.slot])) {
+      const k = ['after', 'lunch'].find(k => !slots[k].length);
+      if (k) slots[k].push(t.title);
+    }
+  }
+  return { weekend, slots, freeSlots: Object.keys(slots).filter(k => !slots[k].length), big: of('big').length, idea: of('idea').length };
+}
+
+// Задачи без срока этого размера, которые сегодня можно предложить (дольше всего лежащие — первыми).
+const offerList = (size, d = today()) => active()
+  .filter(t => !isEvent(t) && t.kind !== 'habit' && !t.due_date && sizeOf(t) === size
+    && (!t.offer_after || t.offer_after <= d) && (!t.start_date || t.start_date <= d))
+  .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
+
+// Какие группы показать: mode 'full' — утром (всё), 'eve' — вечером (только вдохновение).
+function offerGroups(mode) {
+  const d = today(), fit = dayFit(d);
+  const groups = [];
+  const add = (size, note, list = offerList(size)) => { if (list.length || note) groups.push({ size, note, list }); };
+  if (mode === 'full') {
+    add('quick', '');
+    const midList = offerList('mid');
+    if (midList.length) {
+      if (fit.weekend) add('mid', 'Выходной — время найдётся', midList);
+      else {
+        const lines = Object.entries(SLOTS).map(([k, s]) => `${s.name} (${s.from.slice(0, 2)}–${s.to.slice(0, 2)}): ${fit.slots[k].length ? 'занято — ' + fit.slots[k].map(esc).join(', ') : 'свободно, ' + s.free}`);
+        groups.push({ size: 'mid', note: lines.join('<br>'), list: fit.freeSlots.length ? midList : [], full: !fit.freeSlots.length });
+      }
+    }
+    if (fit.weekend && !fit.big) add('big', '');
+  }
+  if (!fit.idea) add('idea', '');
+  return groups.filter(g => g.list.length || g.full);
+}
+
+function maybeOffer() {
+  if (!S.user || !S.loaded || S.space !== 'personal' || $modal.dataset.kind || reviewList().length) return;
+  const d = today(), h = new Date().getHours(), eve = h >= 16 && h < 19;
+  let mode = null;
+  if (localGet('offer') !== d) mode = 'full';
+  else if (eve && localGet('offerEve') !== d) mode = 'eve';
+  if (!mode) return;
+  // отметку ставим, даже если предложить нечего — чтобы не проверять каждую минуту
+  localSet('offer', d);
+  if (eve) localSet('offerEve', d);
+  if (!offerGroups(mode).some(g => g.list.length)) return;
+  S.offerMode = mode;
+  renderOffer();
+}
+
+function renderOffer() {
+  const groups = offerGroups(S.offerMode);
+  const scroll = $modal.querySelector('.rv-list')?.scrollTop || 0;
+  const daysLying = t => Math.max(0, Math.round((parse(today()) - parse((t.created_at || '').slice(0, 10) || today())) / 864e5));
+  const row = t => {
+    const sec = sectionOf(t), n = daysLying(t);
+    return `<div class="task${sec ? ' tinted' : ''}"${sec ? ` style="--sec:${esc(sec.color)}"` : ''}>
+      <div class="body" data-act="edit" data-id="${t.id}"><div class="title">${esc(t.title)}</div>
+        <div class="meta">${sec ? `<span>${esc(sec.name)}</span>` : ''}${n ? `<span>лежит ${n} дн.</span>` : ''}</div></div>
+      <div class="yn">
+        <button class="btn" data-act="of-today" data-id="${t.id}">Сегодня</button>
+        <button class="btn" data-act="of-tomorrow" data-id="${t.id}" title="Предложить снова завтра">Не сегодня</button>
+        <button class="btn" data-act="of-later" data-id="${t.id}" title="Не предлагать 4 дня">Потом</button>
+      </div></div>`;
+  };
+  const eve = S.offerMode === 'eve';
+  $modal.dataset.kind = 'offer';
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet review offer">
+    <h3>${eve ? 'Может, займёмся чем-то по вдохновению?' : `${userName() ? esc(userName()) + ', что' : 'Что'} можно сделать сегодня`}</h3>
+    <div class="rv-list">${groups.map(g => `<h2>${SIZES[g.size].icon} ${SIZES[g.size].title}</h2>
+      <div class="hint">${g.note || SIZES[g.size].hint}${g.full ? '<br>Свободных окошек сегодня нет.' : ''}</div>
+      ${g.list.map(row).join('')}`).join('') || '<div class="empty">Всё разобрано</div>'}</div>
+    <div class="rv-foot"><span class="hint">Не выбранные задачи предложу завтра</span><button class="btn main" data-act="of-close">Готово</button></div>
+  </div></div>`;
+  $modal.querySelector('.rv-list').scrollTop = scroll;
+}
+
+// «Сегодня» — срок на сегодня; «Не сегодня» — предложить завтра; «Потом» — через 4 дня.
+async function offerAct(id, act) {
+  const t = byId(id);
+  const upd = act === 'of-today' ? { due_date: today(), offer_after: null }
+    : { offer_after: addDays(today(), act === 'of-tomorrow' ? 1 : 4) };
+  Object.assign(t, upd);
+  renderOffer();
+  render();
+  await call(sb.from('tasks').update(upd).eq('id', id));
+}
+
+function closeOffer() {
+  S.offerMode = null;
+  closeModal();
+  load().catch(() => { });
+}
+
+// Размер по умолчанию для всех задач раздела (в ⚙).
+function secSizesHTML() {
+  const secs = secsOf('personal');
+  if (!secs.length) return '';
+  return `<h2>Размер задач по разделам</h2>
+    <div class="hint">Все задачи раздела получат этот размер, если у задачи не выбран свой. Например, «Проекты» — ✦ вдохновение.</div>
+    <div class="limits">${secs.map(s => `<label><span><i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name)}</span>
+      <select class="inp" data-sec-size="${s.id}"><option value="">—</option>${Object.entries(SIZES).map(([k, z]) => `<option value="${k}" ${s.default_size === k ? 'selected' : ''}>${z.icon} ${z.name}</option>`).join('')}</select></label>`).join('')}</div>`;
+}
+
+async function setSecSize(id, v) {
+  const s = S.sections.find(x => x.id === id);
+  const old = s.default_size;
+  s.default_size = v || null;
+  render();
+  try { await call(sb.from('sections').update({ default_size: s.default_size }).eq('id', id)); toast('Сохранено'); }
+  catch (e) { s.default_size = old; render(); }
+}
+
+document.addEventListener('change', ev => {
+  const id = ev.target.dataset.secSize;
+  if (id) setSecSize(id, ev.target.value);
+  if (ev.target.id === 'f-section' && S.edit) syncEdit();
+});
+
 // ---------- окно задачи ----------
 function openEdit(t) {
   const isNew = !t.id;
@@ -1946,6 +2112,10 @@ function openEdit(t) {
     ${S.space === 'personal' || e.decor ? `<div class="field" id="f-decor-box"><label>Картинка</label>
       <div class="row">${[['', 'Нет', ''], ...Object.entries(DECOR).map(([k, d]) => [k, d.icon + ' ' + d.name, d.hint])]
         .map(([k, n, h]) => `<button class="pill" data-act="decor" data-v="${k}" title="${esc(h)}">${n}</button>`).join('')}</div></div>` : ''}
+    ${S.space === 'personal' || e.size ? `<div class="field" id="f-size-box"><label title="По размеру программа предлагает задачи без срока на день">Размер</label>
+      <div class="row"><button class="pill" data-act="size" data-v="" id="f-size-def">Нет</button>${Object.entries(SIZES).map(([k, z]) => `<button class="pill" data-act="size" data-v="${k}">${z.icon} ${z.name}</button>`).join('')}</div></div>
+    <div class="field" id="f-slot-box"><label title="Средняя задача занимает это окошко дня">Когда</label>
+      <div class="row"><button class="pill" data-act="slot" data-v="">В любое окошко</button>${Object.entries(SLOTS).map(([k, s]) => `<button class="pill" data-act="slot" data-v="${k}">${s.name}</button>`).join('')}</div></div>` : ''}
     </div></div>
     ${e.project_id && projectTasks(e.project_id).some(x => x.id !== e.id) ? `<div class="field"><label>Делать после (шаги этого проекта)</label>
       <div class="wds after">${projectTasks(e.project_id).filter(x => x.id !== e.id).map(x => `<button class="pill" data-act="after" data-v="${x.id}">${x.done_on ? '✓ ' : ''}${esc(x.title)}</button>`).join('')}</div></div>` : ''}
@@ -1992,6 +2162,16 @@ function syncEdit() {
   q('[data-act=wd]').forEach(b => b.classList.toggle('on', (e.repeat_weekdays || []).includes(+b.dataset.v)));
   q('[data-act=pet]').forEach(b => b.classList.toggle('on', b.dataset.v ? petsOf(e).includes(b.dataset.v) : !e.pet));
   q('[data-act=decor]').forEach(b => b.classList.toggle('on', b.dataset.v === (e.decor || '')));
+  // размер: «Нет» превращается в «как у раздела», если у выбранного раздела он задан
+  const defSize = isEvent(e) ? null : secSize(document.getElementById('f-section').value || null);
+  const sizeBtn = document.getElementById('f-size-def');
+  if (sizeBtn) {
+    sizeBtn.textContent = defSize ? `Как у раздела: ${SIZES[defSize].icon}` : 'Нет';
+    q('[data-act=size]').forEach(b => b.classList.toggle('on', b.dataset.v === (e.size || '')));
+    q('[data-act=slot]').forEach(b => b.classList.toggle('on', b.dataset.v === (e.slot || '')));
+    document.getElementById('f-size-box').style.display = isEvent(e) ? 'none' : '';
+    document.getElementById('f-slot-box').style.display = !isEvent(e) && (e.size || defSize) === 'mid' ? '' : 'none';
+  }
   q('[data-act=after]').forEach(b => b.classList.toggle('on', (e.after_ids || []).includes(b.dataset.v)));
   const rem = hhmm(e.remind_at);
   q('[data-act=remind]').forEach(b => b.classList.toggle('on', b.dataset.v.slice(0, 5) === rem));
@@ -2085,6 +2265,12 @@ async function saveEdit() {
   } else if (e.plan_date || e.estimate) { row.plan_date = null; row.estimate = null; }
   if (e.pet || (byId(e.id) || {}).pet) row.pet = e.pet || null;
   if (e.decor || (byId(e.id) || {}).decor) row.decor = e.decor || null; // пока 010 не запущен, у задач без картинки поле не отправляем
+  // размер и «когда» (пока 014 не запущен, у задач без размера поля не отправляем)
+  const was = byId(e.id) || {};
+  const midNow = !isEvent(e) && (e.size || secSize(row.section_id)) === 'mid';
+  if (e.size || was.size) row.size = isEvent(e) ? null : e.size || null;
+  if (e.slot || was.slot) row.slot = midNow ? e.slot || null : null;
+  if (row.due_date && was.offer_after) row.offer_after = null;
   // «делать после» отправляем, только если поменяли
   const wasAfter = (byId(e.id) || {}).after_ids || [];
   const nowAfter = e.after_ids || [];
@@ -2231,6 +2417,7 @@ function setSpace(space) {
   S.pick = null;
   render();
   renderReview();
+  maybeOffer();
 }
 
 // ---------- проекты и шаблоны (рабочий режим) ----------
@@ -2724,6 +2911,12 @@ document.addEventListener('click', async ev => {
         break;
       }
       case 'section': S.section = id || null; render(); scrollTo(0, 0); break;
+      case 'sort-az': await sortAZ(id === 'none' ? null : id); toast('Расставлено по алфавиту'); break;
+      case 'size': S.edit.size = v || null; syncEdit(); break;
+      case 'slot': S.edit.slot = v || null; syncEdit(); break;
+      case 'sec-size': await setSecSize(id, v); break;
+      case 'of-today': case 'of-tomorrow': case 'of-later': await offerAct(id, act); break;
+      case 'of-close': closeOffer(); break;
       case 'new-section': openSection(null); break;
       case 'edit-section': openSection(S.sections.find(s => s.id === id)); break;
       case 's-color': $modal.querySelectorAll('[data-act=s-color]').forEach(b => b.classList.toggle('on', b === el)); break;
