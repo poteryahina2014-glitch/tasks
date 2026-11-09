@@ -257,7 +257,9 @@ h2.group:hover .edit-sec, .edit-sec:focus { opacity: 1; }
   background: var(--top); border: 1px solid var(--border); border-radius: 14px; padding: 8px 10px;
   box-shadow: 0 6px 20px rgba(0,0,0,.45);
 }
-.pickbar span { color: var(--muted); padding: 0 6px; }
+.pickbar span { color: var(--muted); padding: 0 6px; min-width: 3ch; text-align: center; }
+.pickbar .btn { min-width: 44px; font-size: 17px; }
+.pill.pick-btn { min-width: 44px; text-align: center; }
 .btn:disabled { opacity: .45; cursor: default; }
 
 /* Компьютер: шире, разделы слева, фильтры календаря переносятся на новые строки */
