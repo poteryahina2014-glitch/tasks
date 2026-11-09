@@ -282,7 +282,7 @@ function render() {
   if (S.view === 'plan' && !planOn()) S.view = 'today';
   document.body.className = 'v-' + S.view + (S.space === 'work' ? ' work' : '') + (petsShown() ? ' pets' : '') + (S.bg ? ' bg' : '');
   $app.innerHTML = views[S.view]() + meterCard('side') + `
-    ${S.pick ? pickBar() : '<button class="fab" data-act="new" title="Новая задача">+</button>'}
+    ${S.pick ? pickBar() : '<button class="fab" data-act="new" aria-label="Новая задача">+</button>'}
     <nav class="bottom">
       ${[['today', 'Сегодня'], ['calendar', 'Календарь'], ['sections', 'Разделы'], ['habits', 'Привычки']]
         .concat(planOn() ? [['plan', 'План']] : []).map(([k, n]) => `<button class="pill ${S.view === k ? 'on' : ''}" data-act="view" data-v="${k}">${n}</button>`).join('')}
@@ -550,8 +550,8 @@ function renderSections() {
     if (sel === null && !all.length && !projs.length && (id === null || S.noDate)) continue;
     const head = `<h2 class="group ${paused ? 'paused' : ''}" data-drop-sec="${id || ''}">${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}${esc(name || '')}
       ${paused ? '<span class="off">⏸ выключен</span>' : ''}
-      ${list.length > 1 && !paused ? `<button class="az" data-act="sort-az" data-id="${id || 'none'}" title="Расставить задачи раздела по алфавиту (потом можно двигать вручную)">А→Я</button>` : ''}
-      ${id ? `<button class="edit-sec" data-act="edit-section" data-id="${id}" title="Изменить раздел">✎</button>` : ''}</h2>`;
+      ${list.length > 1 && !paused ? `<button class="az" data-act="sort-az" data-id="${id || 'none'}">А→Я</button>` : ''}
+      ${id ? `<button class="edit-sec" data-act="edit-section" data-id="${id}" aria-label="Изменить раздел">✎</button>` : ''}</h2>`;
     if (paused) {
       // в «Все» задачи выключенного раздела свёрнуты; в самом разделе — видны, но бледные
       body += head + `<div class="paused-note">Задачи этого раздела (${list.length}) скрыты в «Сегодня», календаре и утренней проверке.
@@ -566,7 +566,7 @@ function renderSections() {
   const tools = S.pick
     ? '<button class="pill" data-act="pick-all">Выбрать все</button>'
     : '<button class="pill" data-act="pick-start">Выбрать</button>';
-  const filter = `<button class="pill ${S.noDate ? 'on' : ''}" data-act="nodate" title="Показать только задачи без срока">Без срока</button>`;
+  const filter = `<button class="pill ${S.noDate ? 'on' : ''}" data-act="nodate">Без срока</button>`;
   return `<header class="top"><h1>Разделы</h1><div class="tools">${filter}${tools}${MODE()}${GEAR}</div></header>
     <div class="split">
       <nav class="side">${side.join('')}</nav>
@@ -1530,7 +1530,7 @@ function openBulk() {
   S.bulk = { weekdays: [], from: 'due' };
   const opt = (v, n) => `<option value="${v}">${n}</option>`;
   const personal = S.space === 'personal';
-  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet edit">
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet edit fixed">
     <h3>Изменить задачи: ${S.pick.size}</h3>
     <div class="msg" style="margin:-6px 0 12px">Меняется только то, где выбрано не «не менять».</div>
     <div class="cols"><div>
@@ -1651,14 +1651,14 @@ async function deleteBulk() {
 }
 
 // ---------- настройки (шестерёнка) ----------
-const GEAR = '<button class="icon" data-act="help" title="Справка">?</button><button class="icon" data-act="settings" title="Настройки">⚙</button>';
+const GEAR = '<button class="icon" data-act="help" aria-label="Справка">?</button><button class="icon" data-act="settings" aria-label="Настройки">⚙</button>';
 
 // ---------- справка ----------
 const HELP = [
   ['Сегодня', 'Всё, что нужно сделать сегодня: привычки, задачи (и просроченные), события. Кружок — отметить. Нажать на отметку ещё раз — отменить.'],
   ['Новая задача', '«+» внизу. Вид: <b>задача</b>, <b>привычка</b> (вода, зарядка) или <b>событие</b> (встреча, его не отмечают). Можно указать срок, время, повтор, напоминание и раздел.'],
   ['Повтор', 'Каждый день / неделю / месяц / N дней или по дням недели. «От выполнения»: следующий срок считается от дня, когда сделали, а не от старого срока.'],
-  ['Утренняя проверка', 'Утром спросит, что сделано из вчерашнего. Несделанная задача переедет на сегодня. У привычки засчитается пропуск. У привычки с подпунктами каждый подпункт отмечается отдельно: сделано 2 из 4 — день засчитается наполовину (в статистике и цветке по доле; серию такой день прерывает, питомцы не грустят, если сделано хотя бы половина).'],
+  ['Утренняя проверка', 'Утром спросит, что сделано из вчерашнего: ✓ — сделано, ✕ — не сделано, в конце «Подтвердить». Несделанная задача переедет на сегодня. У привычки засчитается пропуск. У привычки с подпунктами каждый подпункт отмечается отдельно: сделано 2 из 4 — день засчитается наполовину (в статистике и цветке по доле; серию такой день прерывает, питомцы не грустят, если сделано хотя бы половина).'],
   ['Привычки', 'Вкладка со статистикой: сколько дней из 30 / 3 месяцев / года получилось, серия подряд, лучшая серия, пропуски и квадратики по дням.'],
   ['Календарь', 'Месяц или неделя, фильтры по разделам. Нажми на день: там расписание и свободное время между делами.'],
   ['Разделы', 'Папки для задач. ✎ у раздела: название, цвет, «выключить» на время (задачи прячутся, но не удаляются). «Без срока» вверху — показать только задачи без даты. «Выбрать» меняет сразу несколько задач. На компьютере задачи можно перетаскивать мышкой.'],
@@ -1681,9 +1681,9 @@ const HELP = [
 
 function openHelp(first = false) {
   $modal.dataset.kind = 'help';
-  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet help">
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet help fixed">
     <h3>${first ? 'Добро пожаловать! Коротко о главном' : 'Справка'}</h3>
-    ${HELP.map(([h, t]) => `<div class="help-item"><b>${h}</b><div>${t}</div></div>`).join('')}
+    <div class="help-list">${HELP.map(([h, t]) => `<details class="help-item"><summary>${h}</summary><div>${t}</div></details>`).join('')}</div>
     ${first ? '<div class="msg">Эту справку всегда можно открыть снова: «?» вверху.</div>' : ''}
     <div class="actions"><span></span><button class="btn main" data-act="close">Понятно</button></div>
   </div></div>`;
@@ -1699,7 +1699,7 @@ function firstHelp() {
 
 function openSettings() {
   $modal.dataset.kind = 'settings';
-  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet">
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet fixed">
     <h3>Настройки</h3>
     <div class="menu">
       <button class="btn ${S.showDone ? 'on' : ''}" data-act="show-done">${S.showDone ? '✓ ' : ''}Показывать выполненные</button>
@@ -1868,13 +1868,13 @@ function renderReview() {
       if (rvSubs(t)) return `<div class="task habit rv-group">${head}</div>` + subsOf(t).map((s, i) => `<div class="task habit rv-sub">
         <div class="body"><div class="title">${esc(s.t)}</div></div>
         <div class="yn">
-          <button class="btn${ch[rvKey(t)][i] === 'yes' ? ' good' : ''}" data-act="r-sy" data-id="${t.id}" data-v="${i}">Сделано</button>
-          <button class="btn${ch[rvKey(t)][i] === 'no' ? ' no-on' : ''}" data-act="r-sn" data-id="${t.id}" data-v="${i}">Не сделано</button>
+          <button class="btn yes${ch[rvKey(t)][i] === 'yes' ? ' good' : ''}" data-act="r-sy" data-id="${t.id}" data-v="${i}" aria-label="Сделано">✓</button>
+          <button class="btn no${ch[rvKey(t)][i] === 'no' ? ' no-on' : ''}" data-act="r-sn" data-id="${t.id}" data-v="${i}" aria-label="Не сделано">✕</button>
         </div></div>`).join('');
       return `<div class="task ${t.kind === 'habit' ? 'habit' : ''}">${head}
       <div class="yn">
-        <button class="btn${ch[rvKey(t)] === 'yes' ? ' good' : ''}" data-act="r-yes" data-id="${t.id}">Сделано</button>
-        <button class="btn${ch[rvKey(t)] === 'no' ? ' no-on' : ''}" data-act="r-no" data-id="${t.id}" title="${t.kind === 'habit' && t.repeat_unit ? 'Засчитать пропуск' : 'Перенести на сегодня'}">Не сделано</button>
+        <button class="btn yes${ch[rvKey(t)] === 'yes' ? ' good' : ''}" data-act="r-yes" data-id="${t.id}" aria-label="Сделано">✓</button>
+        <button class="btn no${ch[rvKey(t)] === 'no' ? ' no-on' : ''}" data-act="r-no" data-id="${t.id}" aria-label="Не сделано">✕</button>
       </div></div>`;
     }).join('')}</div>
     <div class="rv-foot"><span class="rv-count"></span><button class="btn main" data-act="r-save">Подтвердить</button></div>
@@ -2074,8 +2074,8 @@ function renderOffer() {
         <div class="meta">${sec ? `<span>${esc(sec.name)}</span>` : ''}${n ? `<span>лежит ${n} дн.</span>` : ''}</div></div>
       <div class="yn">
         <button class="btn" data-act="of-today" data-id="${t.id}">Сегодня</button>
-        <button class="btn" data-act="of-tomorrow" data-id="${t.id}" title="Предложить снова завтра">Не сегодня</button>
-        <button class="btn" data-act="of-later" data-id="${t.id}" title="Не предлагать 4 дня">Потом</button>
+        <button class="btn" data-act="of-tomorrow" data-id="${t.id}">Не сегодня</button>
+        <button class="btn" data-act="of-later" data-id="${t.id}">Потом</button>
       </div></div>`;
   };
   const eve = S.offerMode === 'eve';
@@ -2140,7 +2140,7 @@ function openEdit(t) {
   const st = !isNew && e.kind === 'habit' ? habitStats(e) : null;
   $modal.dataset.kind = 'edit';
   // компактно: на компьютере две колонки (когда — слева, повтор и прочее — справа), кнопки внизу всегда видны
-  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet edit">
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet edit fixed">
     <h3>${isNew ? 'Новая запись' : isEvent(e) ? 'Событие' : 'Задача'}</h3>
     <div class="field row title-row"><input class="inp" id="f-title" placeholder="Название" value="${esc(e.title || '')}">
       <div class="seg" id="f-kind">
@@ -2165,7 +2165,7 @@ function openEdit(t) {
     <div class="field"><label>Время</label>
       <div class="row"><input class="inp" id="f-start" type="time" value="${hhmm(e.start_time)}" title="с">–<input class="inp" id="f-end" type="time" value="${hhmm(e.end_time)}" title="до"></div></div>
     </div>
-    <div class="field" id="f-plan-box"><label title="«Срок» — дедлайн">План: день, когда делаю</label>
+    <div class="field" id="f-plan-box"><label>План: день, когда делаю</label>
       <div class="row"><input class="inp" id="f-plan" type="date" value="${e.plan_date || ''}">
         займёт <input class="inp num" id="f-est" type="number" min="0" step="0.5" value="${e.estimate || ''}" style="max-width:70px"> ч</div></div>
     <div class="field" id="f-remind-box"><label>Напомнить на телефон</label>
@@ -2199,15 +2199,15 @@ function openEdit(t) {
         <button class="pill" data-act="from" data-v="due">от старого срока</button>
         <button class="pill" data-act="from" data-v="done">от выполнения</button>
       </div></div>
-    ${S.space === 'personal' || e.pet ? `<div class="field" id="f-pet-box"><label title="Грустит, если задача пропущена; можно выбрать обоих">Питомец</label>
+    ${S.space === 'personal' || e.pet ? `<div class="field" id="f-pet-box"><label>Питомец</label>
       <div class="row">${[['', 'Нет'], ...Object.keys(PETS).filter(petOn).map(p => [p, PETS[p].icon + ' ' + esc(petName(p))])]
         .map(([p, n]) => `<button class="pill" data-act="pet" data-v="${p}">${n}</button>`).join('')}</div></div>` : ''}
     ${S.space === 'personal' || e.decor ? `<div class="field" id="f-decor-box"><label>Картинка</label>
       <div class="row">${[['', 'Нет', ''], ...Object.entries(DECOR).map(([k, d]) => [k, d.icon + ' ' + d.name, d.hint])]
         .map(([k, n, h]) => `<button class="pill" data-act="decor" data-v="${k}" title="${esc(h)}">${n}</button>`).join('')}</div></div>` : ''}
-    ${S.space === 'personal' || e.size ? `<div class="field" id="f-size-box"><label title="По размеру программа предлагает задачи без срока на день">Размер</label>
+    ${S.space === 'personal' || e.size ? `<div class="field" id="f-size-box"><label>Размер</label>
       <div class="row"><button class="pill" data-act="size" data-v="" id="f-size-def">Нет</button>${Object.entries(SIZES).map(([k, z]) => `<button class="pill" data-act="size" data-v="${k}">${z.icon} ${z.name}</button>`).join('')}</div></div>
-    <div class="field" id="f-slot-box"><label title="Средняя задача занимает это окошко дня">Когда</label>
+    <div class="field" id="f-slot-box"><label>Когда</label>
       <div class="row"><button class="pill" data-act="slot" data-v="">В любое окошко</button>${Object.entries(SLOTS).map(([k, s]) => `<button class="pill" data-act="slot" data-v="${k}">${s.name}</button>`).join('')}</div></div>` : ''}
     </div></div>
     ${e.project_id && projectTasks(e.project_id).some(x => x.id !== e.id) ? `<div class="field"><label>Делать после (шаги этого проекта)</label>
@@ -2501,7 +2501,8 @@ async function togglePause(id) {
 
 // ---------- режимы «Личное / Работа» ----------
 const SPACES = { personal: '🏠 Личное', work: '💼 Работа' };
-const MODE = () => `<button class="pill mode" data-act="space" title="Переключить на «${S.space === 'work' ? 'Личное' : 'Работа'}»">${SPACES[S.space].replace(' ', ' <span class="txt">')}</span></button>`;
+// только значок: 🏠 — личное, 💼 — работа (что это — в справке)
+const MODE = () => `<button class="icon mode" data-act="space" aria-label="${SPACES[S.space]}">${SPACES[S.space].split(' ')[0]}</button>`;
 
 function setSpace(space) {
   S.space = space;
@@ -2621,7 +2622,7 @@ function openTemplates() {
   $modal.dataset.kind = 'templates';
   const rows = S.templates.map(t => `<button class="btn tpl-row" data-act="tpl-edit" data-id="${t.id}">
       <b>${esc(t.title)}</b><span>${PERIODS[t.period]}${t.period === 'month' && t.months && t.months.length ? ': ' + t.months.map(m => MONTHS[m - 1].slice(0, 3)).join(', ') : ''} · шагов: ${(t.steps || []).length}</span></button>`).join('');
-  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet">
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet fixed">
     <h3>Шаблоны</h3>
     <div class="msg" style="margin:-6px 0 12px">Шаблон сам создаёт проект с задачами, когда заканчивается месяц, квартал или год (можно заранее — за несколько рабочих дней). Проект появляется в «Разделах», в разделе шаблона. Сроки шагов — числа месяца после конца периода.</div>
     <h2>Мои шаблоны</h2>
@@ -2664,7 +2665,7 @@ function openTemplate(tpl) {
   S.tpl = t;
   $modal.dataset.kind = 'template';
   const work = secsOf('work');
-  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet wide">
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet wide fixed">
     <h3>${t.id ? 'Шаблон' : 'Новый шаблон'}</h3>
     <div class="field"><input class="inp" id="t-title" placeholder="Название, например «Квартальная отчётность»" value="${esc(t.title || '')}"></div>
     <div class="field seg">${Object.entries(PERIODS).map(([k, n]) => `<button class="pill" data-act="t-period" data-v="${k}">${n}</button>`).join('')}</div>

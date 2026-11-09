@@ -611,3 +611,25 @@ body.bg h2, body.bg header h1, body.bg .empty { text-shadow: 0 1px 3px #000, 0 0
   .offer .yn { width: 100%; justify-content: flex-end; }
   .offer .rv-foot .hint { font-size: 11px; }
 }
+
+/* окна постоянного размера: что не помещается — прокручивается внутри, кнопки внизу */
+.sheet.fixed { height: min(860px, 92vh); display: flex; flex-direction: column; }
+.sheet.fixed > * { flex-shrink: 0; }
+.sheet.fixed > .actions { margin-top: auto; padding-top: 10px; }
+body.work .icon.mode { box-shadow: inset 0 0 0 1px var(--accent); }
+
+/* справка: только заголовки, по щелчку раскрывается текст */
+.help-item summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; gap: 8px; }
+.help-item summary::-webkit-details-marker { display: none; }
+.help-item summary::after { content: '›'; color: var(--muted); transition: transform .15s; }
+.help-item[open] summary::after { transform: rotate(90deg); }
+.help-item[open] summary { color: var(--accent); }
+.help-item > div { margin-top: 6px; }
+.help-list { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+.sheet.help.fixed > .help-list { flex-shrink: 1; }
+
+/* утренняя проверка: ✓ и ✕ вместо слов */
+.review .yn .btn.yes, .review .yn .btn.no { width: 44px; padding: 8px 0; font-size: 18px; line-height: 1; }
+.review .yn .btn.yes:not(.good) { color: var(--good); }
+.review .yn .btn.no:not(.no-on) { color: var(--bad); }
+.sheet.help.fixed { overflow: hidden; }
