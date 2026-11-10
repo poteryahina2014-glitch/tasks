@@ -324,7 +324,8 @@ function taskRow(t, opts = {}) {
     tags.push(`<span class="${t.due_date < today() || t.plan_date > t.due_date ? 'late' : ''}">до ${dateLabel(t.due_date)}</span>`);
   if (t.estimate) tags.push(`<span>⏱ ${fmtH(t.estimate)} ч</span>`);
   const size = sizeOf(t);
-  if (size) tags.push(`<span title="${SIZES[size].name}${t.slot && size === 'mid' ? ', ' + SLOTS[t.slot].name.toLowerCase() : ''}">${SIZES[size].icon}${t.slot && size === 'mid' ? ' ' + SLOTS[t.slot].name.toLowerCase() : ''}</span>`);
+  const slotName = SLOTS[t.slot] && (size === 'mid' || size === 'idea') ? SLOTS[t.slot].name.toLowerCase() : '';
+  if (size) tags.push(`<span title="${SIZES[size].name}${slotName ? ', ' + slotName : ''}">${SIZES[size].icon}${slotName ? ' ' + slotName : ''}</span>`);
   if (isEvent(t) && !opts.mark) opts = { ...opts, mark: '•', markStyle: 'border-color:var(--accent);color:var(--accent)' };
   if (sec && !opts.noSection) tags.push(`<span>${esc(sec.name)}</span>`);
   const rep = repeatLabel(t);
@@ -377,14 +378,20 @@ function renderToday() {
   const due = active().filter(t => !isEvent(t) && reviewDay(t) && reviewDay(t) <= t0)
     .sort((a, b) => (a.start_time || '99') < (b.start_time || '99') ? -1 : 1);
   const habits = due.filter(t => t.kind === 'habit');
-  // «Окошки»: средние задачи, попавшие в обед / после работы, и вдохновение на вечер — отдельно от остальных
-  const fit = S.space === 'personal' ? dayFit(t0) : { inSlot: {} };
+  // «Окошки»: обед / после работы (будни) с заполненностью и вдохновение на вечер — отдельно от остальных задач
+  const personal = S.space === 'personal';
+  const fit = personal ? dayFit(t0) : { inSlot: {}, slots: {} };
   const slotKey = t => t.kind === 'habit' || reviewDay(t) !== t0 ? null
-    : fit.inSlot[t.id] || (S.space === 'personal' && sizeOf(t) === 'idea' ? 'idea' : null);
-  const SLOT_ORDER = ['lunch', 'after', 'idea'];
-  const slotted = due.filter(slotKey).sort((a, b) => SLOT_ORDER.indexOf(slotKey(a)) - SLOT_ORDER.indexOf(slotKey(b)));
-  const slotNote = k => k === 'idea' ? '✦ Вечером, по вдохновению'
-    : `${k === 'lunch' ? '🍽' : '🌆'} ${SLOTS[k].name}, ${slotOf(k).from}–${slotOf(k).to}`;
+    : fit.inSlot[t.id] || (personal && sizeOf(t) === 'idea' ? 'idea' : null);
+  const slotIcon = { lunch: '🍽', after: '🌆' };
+  let slotHTML = '';
+  for (const k of Object.keys(fit.slots)) {
+    const list = due.filter(t => slotKey(t) === k), st = slotState(fit.slots[k]), s = slotOf(k);
+    slotHTML += `<div class="slot-head"><b>${slotIcon[k]} ${SLOTS[k].name}, ${s.from}–${s.to}</b><span class="${st.cls}">${st.text}</span></div>`
+      + list.map(t => taskRow(t)).join('');
+  }
+  const ideas = due.filter(t => slotKey(t) === 'idea');
+  if (ideas.length) slotHTML += '<div class="slot-head"><b>✦ Вечером, по вдохновению</b></div>' + ideas.map(t => taskRow(t)).join('');
   const tasks = due.filter(t => t.kind !== 'habit' && !slotKey(t));
   const started = t => t.start_date && t.start_date <= t0;
   // начатые, но со сроком позже — «в работе»
@@ -402,7 +409,7 @@ function renderToday() {
   }
   if (events.length) html += '<h2>События</h2>' + events.map(t => taskRow(t)).join('');
   if (habits.length) html += '<h2>Привычки</h2>' + habits.map(t => taskRow(t)).join('');
-  if (slotted.length) html += '<h2>Окошки</h2>' + slotted.map(t => taskRow(t, { note: slotNote(slotKey(t)), noteCls: 'slot-note' })).join('');
+  if (slotHTML) html += '<h2>Окошки</h2>' + slotHTML;
   if (tasks.length) html += '<h2>Задачи</h2>' + tasks.map(t => taskRow(t)).join('');
   if (inWork.length) html += '<h2>В работе</h2>' + inWork.map(t => taskRow(t, { date: true })).join('');
   if (doneToday.length) html += '<h2>Сделано сегодня</h2>' + doneToday.map(t => taskRow(t, { done: true })).join('');
@@ -1609,7 +1616,7 @@ function openBulk() {
       <select class="inp" id="b-section">${opt(KEEP, '— не менять —')}${opt('', 'Без раздела')}${mySecs().map(s => opt(s.id, esc(s.name))).join('')}</select></div>
     ${personal ? `<div class="field"><label>Размер</label>
       <select class="inp" id="b-size">${opt(KEEP, '— не менять —')}${opt('', 'Нет (или как у раздела)')}${Object.entries(SIZES).map(([k, z]) => opt(k, z.icon + ' ' + z.name)).join('')}</select></div>
-    <div class="field" id="b-slot-box"><label>Когда (у средних)</label>
+    <div class="field" id="b-slot-box"><label>Когда (у средних и вдохновения)</label>
       <select class="inp" id="b-slot">${opt('', 'В любое окошко')}${Object.entries(SLOTS).map(([k, s]) => opt(k, s.name)).join('')}</select></div>
     <div class="field"><label>Питомец</label>
       <select class="inp" id="b-pet">${opt(KEEP, '— не менять —')}${opt('', 'Нет')}${Object.keys(PETS).filter(petOn).map(p => opt(p, PETS[p].icon + ' ' + esc(petName(p)))).join('')}${Object.keys(PETS).filter(petOn).length === 2 ? opt('both', 'Оба') : ''}</select></div>
@@ -1632,7 +1639,7 @@ function syncBulk() {
   const unit = document.getElementById('b-unit').value;
   for (const m of BULK_MODES) { const el = document.getElementById(m); if (el) document.getElementById(BULK_FIELD[m]).style.display = el.value === 'set' ? '' : 'none'; }
   const size = document.getElementById('b-size');
-  if (size) document.getElementById('b-slot-box').style.display = size.value === 'mid' ? '' : 'none';
+  if (size) document.getElementById('b-slot-box').style.display = size.value === 'mid' || size.value === 'idea' ? '' : 'none';
   document.getElementById('b-every-box').style.display = unit && unit !== KEEP ? '' : 'none';
   document.getElementById('b-wd-box').style.display = unit === 'week' ? '' : 'none';
   document.getElementById('b-from-box').style.display = unit && unit !== KEEP ? '' : 'none';
@@ -1667,7 +1674,7 @@ async function saveBulk() {
   if (mode('b-remindmode') !== KEEP) { upd.remind_at = mode('b-remindmode') === 'set' ? v('b-remind') || '09:00' : null; upd.reminded_on = null; }
   if (mode('b-planmode') !== KEEP) upd.plan_date = mode('b-planmode') === 'set' ? v('b-plan') || today() : null;
   if (mode('b-estmode') !== KEEP) upd.estimate = mode('b-estmode') === 'set' ? parseFloat(v('b-est').replace(',', '.')) || null : null;
-  if (mode('b-size') !== KEEP) { upd.size = v('b-size') || null; upd.slot = upd.size === 'mid' ? v('b-slot') || null : null; }
+  if (mode('b-size') !== KEEP) { upd.size = v('b-size') || null; upd.slot = upd.size === 'mid' || upd.size === 'idea' ? v('b-slot') || null : null; }
   if (mode('b-pet') !== KEEP) upd.pet = v('b-pet') || null;
   if (mode('b-decor') !== KEEP) upd.decor = v('b-decor') || null;
   if (!Object.keys(upd).length) return toast('Ничего не выбрано для изменения');
@@ -2038,29 +2045,46 @@ const secSize = id => (S.sections.find(s => s.id === id) || {}).default_size || 
 // свой размер у задачи, иначе — размер раздела по умолчанию
 const sizeOf = t => (isEvent(t) ? null : t.size || secSize(t.section_id));
 
-// Что уже стоит на день d и какие окошки свободны.
+// Что уже стоит на день d и сколько места в окошках (в минутах).
+// Средняя задача и вдохновение в окошке — 30 мин или своё время ⏱. Событие — по своему времени (без конца — всё окошко).
+const MID_MIN = 30;
+const toMin = s => { const [h, m] = hhmm(s).split(':'); return +h * 60 + +m; };
+const taskMin = t => (t.estimate ? Math.round(t.estimate * 60) : MID_MIN);
+const slotsFor = t => sizeOf(t) === 'mid' || sizeOf(t) === 'idea'; // у кого есть «Когда»
 function dayFit(d) {
   const items = active().filter(t => !isEvent(t) && reviewDay(t) === d);
   const of = s => items.filter(t => sizeOf(t) === s);
   const weekend = isodow(d) >= 6;
-  const slots = {}, inSlot = {}; // inSlot: id задачи → окошко, куда она попала
+  const slots = {}, inSlot = {}; // slots[k] = { cap, used, titles }; inSlot: id задачи → окошко
   if (!weekend) {
     const evs = (occurrences(d, d)[d] || []).map(o => o.t).filter(t => isEvent(t) && t.start_time);
     for (const k of Object.keys(SLOTS)) {
-      const s = slotOf(k);
-      // событие пересекает окошко (без времени конца — если начинается внутри него)
-      const busy = evs.filter(t => hhmm(t.start_time) < s.to && (t.end_time ? hhmm(t.end_time) > s.from : hhmm(t.start_time) >= s.from)).map(t => t.title);
-      const mine = of('mid').filter(t => t.slot === k);
-      mine.forEach(t => (inSlot[t.id] = k));
-      slots[k] = busy.concat(mine.map(t => t.title));
+      const s = slotOf(k), from = toMin(s.from), to = toMin(s.to);
+      const sl = slots[k] = { cap: to - from, used: 0, titles: [] };
+      for (const t of evs) {
+        const a = toMin(t.start_time), e = t.end_time ? toMin(t.end_time) : null;
+        const part = e === null ? (a >= from && a < to ? to - from : 0) : Math.max(0, Math.min(e, to) - Math.max(a, from));
+        if (part) { sl.used += part; sl.titles.push(t.title); }
+      }
+      for (const t of items.filter(t => slotsFor(t) && t.slot === k)) { sl.used += taskMin(t); sl.titles.push(t.title); inSlot[t.id] = k; }
     }
-    // средние без «когда» занимают свободное окошко (сначала вечернее — там больше времени)
+    // средние без «когда» — в окошко, где больше места (при равенстве — после работы)
     for (const t of of('mid').filter(t => !SLOTS[t.slot])) {
-      const k = ['after', 'lunch'].find(k => !slots[k].length);
-      if (k) { slots[k].push(t.title); inSlot[t.id] = k; }
+      const k = ['after', 'lunch'].reduce((b, k) => (slots[k].cap - slots[k].used > slots[b].cap - slots[b].used ? k : b));
+      if (slots[k].cap - slots[k].used >= taskMin(t)) { slots[k].used += taskMin(t); slots[k].titles.push(t.title); inSlot[t.id] = k; }
     }
   }
-  return { weekend, slots, inSlot, freeSlots: Object.keys(slots).filter(k => !slots[k].length), big: of('big').length, idea: of('idea').length };
+  const room = k => (slots[k] ? slots[k].cap - slots[k].used : 0);
+  return { weekend, slots, inSlot, room, freeSlots: Object.keys(slots).filter(k => room(k) >= MID_MIN),
+    big: of('big').length, idea: of('idea').filter(t => !SLOTS[t.slot]).length };
+}
+// Подпись окошка: «30 из 60 мин · есть место ещё на одну»; cls — цвет (good / warn / bad)
+function slotState(sl) {
+  const free = sl.cap - sl.used, n = Math.floor(free / MID_MIN);
+  if (sl.used > sl.cap) return { cls: 'bad', text: `${sl.used} из ${sl.cap} мин · многовато, лишние ${sl.used - sl.cap} мин` };
+  if (!sl.used) return { cls: 'good', text: `свободно · можно взять ${n === 1 ? 'одну среднюю' : n + ' средних'}` };
+  if (n) return { cls: 'good', text: `${sl.used} из ${sl.cap} мин · есть место ещё на ${n === 1 ? 'одну' : n}` };
+  return { cls: 'warn', text: `${sl.used} из ${sl.cap} мин · заполнено` };
 }
 
 // Задачи без срока этого размера, которые сегодня можно предложить (дольше всего лежащие — первыми).
@@ -2080,7 +2104,7 @@ function offerGroups(mode) {
     if (midList.length) {
       if (fit.weekend) add('mid', 'Выходной — время найдётся', midList);
       else {
-        const lines = Object.keys(SLOTS).map(k => { const s = slotOf(k); return `${s.name} (${s.from}–${s.to}): ${fit.slots[k].length ? 'занято — ' + fit.slots[k].map(esc).join(', ') : 'свободно'}`; });
+        const lines = Object.keys(SLOTS).map(k => { const s = slotOf(k), sl = fit.slots[k]; return `${s.name} (${s.from}–${s.to}): ${slotState(sl).text}${sl.titles.length ? ' — ' + sl.titles.map(esc).join(', ') : ''}`; });
         groups.push({ size: 'mid', note: lines.join('<br>'), list: fit.freeSlots.length ? midList : [], full: !fit.freeSlots.length });
       }
     }
@@ -2124,8 +2148,8 @@ async function ideaExpire() {
   const t0 = today();
   const stale = S.tasks.filter(t => !t.done_on && !t.repeat_unit && t.kind !== 'habit' && !isEvent(t) && sizeOf(t) === 'idea' && t.due_date && t.due_date < t0);
   if (!stale.length) return;
-  await call(sb.from('tasks').update({ due_date: null, plan_date: null }).in('id', stale.map(t => t.id)));
-  stale.forEach(t => { t.due_date = null; t.plan_date = null; });
+  await call(sb.from('tasks').update({ due_date: null, plan_date: null, slot: null }).in('id', stale.map(t => t.id)));
+  stale.forEach(t => { t.due_date = null; t.plan_date = null; t.slot = null; });
 }
 
 // Окно предложений — черновик: отметки можно ставить, менять и снимать, в базу всё уходит по «Сохранить».
@@ -2144,13 +2168,18 @@ function renderOffer() {
   if (o.hidden) return;
   const scroll = $modal.querySelector('.rv-list')?.scrollTop || 0;
   const daysLying = t => Math.max(0, Math.round((parse(today()) - parse((t.created_at || '').slice(0, 10) || today())) / 864e5));
-  const btn = (t, act, label) => `<button class="btn ${o.pick[t.id] === act ? 'on' : ''}" data-act="${act}" data-id="${t.id}">${label}</button>`;
+  const btn = (t, act, label, off) => `<button class="btn ${o.pick[t.id] === act ? 'on' : ''}" data-act="${act}" data-id="${t.id}"${off ? ' disabled title="В обед уже нет места"' : ''}>${label}</button>`;
+  // «В обед» у вдохновения — в будни; место: сохранённое + уже отмеченное «В обед» в этом окне
+  const fit = dayFit(today());
+  const lunchLeft = fit.slots.lunch ? fit.room('lunch') - Object.keys(o.pick).filter(id => o.pick[id] === 'of-lunch').reduce((a, id) => a + taskMin(byId(id) || {}), 0) : null;
+  const lunchBtn = t => lunchLeft === null || sizeOf(t) !== 'idea' ? ''
+    : btn(t, 'of-lunch', 'В обед', o.pick[t.id] !== 'of-lunch' && lunchLeft < taskMin(t));
   const row = t => {
     const sec = sectionOf(t), n = daysLying(t);
     return `<div class="task${sec ? ' tinted' : ''}${o.pick[t.id] ? ' picked' : ''}"${sec ? ` style="--sec:${esc(sec.color)}"` : ''}>
       <div class="body" data-act="edit" data-id="${t.id}"><div class="title">${esc(t.title)}</div>
         <div class="meta">${sec ? `<span>${esc(sec.name)}</span>` : ''}${n ? `<span>лежит ${n} дн.</span>` : ''}</div></div>
-      <div class="yn">${btn(t, 'of-today', 'Сегодня')}${btn(t, 'of-tomorrow', 'Не сегодня')}${btn(t, 'of-later', 'Потом')}</div></div>`;
+      <div class="yn">${lunchBtn(t)}${btn(t, 'of-today', sizeOf(t) === 'idea' && lunchLeft !== null ? 'Вечером' : 'Сегодня')}${btn(t, 'of-tomorrow', 'Не сегодня')}${btn(t, 'of-later', 'Потом')}</div></div>`;
   };
   const live = id => { const t = byId(id); return t && !t.done_on ? t : null; };
   const groups = o.groups.map(g => ({ ...g, list: g.ids.map(live).filter(Boolean) })).filter(g => g.list.length || g.full);
@@ -2201,6 +2230,7 @@ async function closeOffer() {
   const ids = act => Object.keys(pick).filter(id => pick[id] === act);
   const jobs = [
     [ids('of-today'), { due_date: today(), offer_after: null }],
+    [ids('of-lunch'), { due_date: today(), offer_after: null, slot: 'lunch' }],
     [ids('of-tomorrow'), { offer_after: addDays(today(), 1) }],
     [ids('of-later'), { offer_after: addDays(today(), 4) }],
   ].filter(([list]) => list.length);
@@ -2374,7 +2404,10 @@ function syncEdit() {
     q('[data-act=size]').forEach(b => b.classList.toggle('on', b.dataset.v === (e.size || '')));
     q('[data-act=slot]').forEach(b => b.classList.toggle('on', b.dataset.v === (e.slot || '')));
     document.getElementById('f-size-box').style.display = isEvent(e) ? 'none' : '';
-    document.getElementById('f-slot-box').style.display = !isEvent(e) && (e.size || defSize) === 'mid' ? '' : 'none';
+    const sz = isEvent(e) ? null : e.size || defSize;
+    document.getElementById('f-slot-box').style.display = sz === 'mid' || sz === 'idea' ? '' : 'none';
+    const anyBtn = document.querySelector('[data-act=slot][data-v=""]');
+    if (anyBtn) anyBtn.textContent = sz === 'idea' ? 'Вечером' : 'В любое окошко';
   }
   q('[data-act=after]').forEach(b => b.classList.toggle('on', (e.after_ids || []).includes(b.dataset.v)));
   const rem = hhmm(e.remind_at);
@@ -2506,7 +2539,7 @@ async function saveEdit() {
   if (e.decor || (byId(e.id) || {}).decor) row.decor = e.decor || null; // пока 010 не запущен, у задач без картинки поле не отправляем
   // размер и «когда» (пока 014 не запущен, у задач без размера поля не отправляем)
   const was = byId(e.id) || {};
-  const midNow = !isEvent(e) && (e.size || secSize(row.section_id)) === 'mid';
+  const midNow = !isEvent(e) && ['mid', 'idea'].includes(e.size || secSize(row.section_id));
   if (e.size || was.size) row.size = isEvent(e) ? null : e.size || null;
   if (e.slot || was.slot) row.slot = midNow ? e.slot || null : null;
   if (row.due_date && was.offer_after) row.offer_after = null;
@@ -3174,7 +3207,7 @@ document.addEventListener('click', async ev => {
       case 'size': S.edit.size = v || null; syncEdit(); break;
       case 'slot': S.edit.slot = v || null; syncEdit(); break;
       case 'sec-size': await setSecSize(id, v); break;
-      case 'of-today': case 'of-tomorrow': case 'of-later': offerAct(id, act); break;
+      case 'of-today': case 'of-lunch': case 'of-tomorrow': case 'of-later': offerAct(id, act); break;
       case 'of-close': await closeOffer(); break;
       case 'of-hide': case 'of-hide-bg': offerHide(true); break;
       case 'of-show': offerHide(false); break;
