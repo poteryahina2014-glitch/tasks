@@ -476,11 +476,12 @@ body.bg h2, body.bg header h1, body.bg .empty { text-shadow: 0 1px 3px #000, 0 0
 @keyframes flap { from { transform: rotate(-22deg); } to { transform: rotate(14deg); } }
 @keyframes flapr { from { transform: rotate(22deg); } to { transform: rotate(-14deg); } }
 /* Тимофей крупнее и внизу; подписи над ним */
-.pet.cat { bottom: 74px; width: 280px; display: flex; flex-direction: column; align-items: center; }
-.pet.cat .pet-svg { width: 280px; height: 294px; }
-.pet.cat .pet-svg.walk { width: 300px; height: 185px; }
-.pet.cat.left { left: calc((100vw - var(--appw)) / 4 - 140px); }
-.pet.cat.right { left: calc(100vw - (100vw - var(--appw)) / 4 - 140px); }
+/* лапы (низ рисунка 200 из 210) — на доске подоконника, на высоте горшка цветка; кот в 1,5 раза выше цветка */
+.pet.cat { bottom: 52px; width: 400px; display: flex; flex-direction: column; align-items: center; }
+.pet.cat .pet-svg { width: 400px; height: 420px; }
+.pet.cat .pet-svg.walk { width: 435px; height: 268px; margin-bottom: 3px; }
+.pet.cat.left { left: calc((100vw - var(--appw)) / 4 - 200px); }
+.pet.cat.right { left: calc(100vw - (100vw - var(--appw)) / 4 - 200px); }
 .pet.cat.moving { transition: left 15.2s cubic-bezier(.45, 0, .55, 1) .8s; opacity: .8; }
 /* встаёт (лапы стоят), потом плавно разгоняется и плавно тормозит; на месте — садится */
 .pet .pet-svg.walk { animation: standUp .8s ease-out both; }
@@ -606,6 +607,13 @@ body.bg h2, body.bg header h1, body.bg .empty { text-shadow: 0 1px 3px #000, 0 0
 .offer .rv-list h2:first-child { margin-top: 4px; }
 .offer .rv-list .hint { margin: 2px 0 6px; }
 .offer .yn .btn { padding: 6px 10px; font-size: 13px; }
+.offer .yn .btn.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.offer .rv-foot .hint { flex: 1; margin: 0; }
+/* окно предложений скрыто — кнопка вернуться к нему, внизу по центру */
+#offer-chip { position: fixed; left: 50%; translate: -50% 0; bottom: calc(86px + env(safe-area-inset-bottom)); z-index: 3;
+  padding: 10px 18px; border-radius: 22px; box-shadow: 0 4px 14px rgba(0,0,0,.4); white-space: nowrap; }
+/* «Окошки» на «Сегодня»: подпись, когда делать */
+.task .meta .slot-note { color: var(--accent); }
 .offer .limits select { max-width: 170px; }
 .limits select.inp { width: auto; }
 @media (max-width: 600px) {

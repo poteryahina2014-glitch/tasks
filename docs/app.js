@@ -230,7 +230,7 @@ async function load() {
   await ideaExpire().catch(() => { });
   render();
   renderReview();
-  if ($modal.dataset.kind === 'offer') renderOffer(); // окно предложений открыто — обновить список
+  if (S.offer && ($modal.dataset.kind === 'offer' || S.offer.hidden)) renderOffer(); // окно предложений открыто — обновить список
   firstHelp();
   maybeOffer();
 }
@@ -377,7 +377,15 @@ function renderToday() {
   const due = active().filter(t => !isEvent(t) && reviewDay(t) && reviewDay(t) <= t0)
     .sort((a, b) => (a.start_time || '99') < (b.start_time || '99') ? -1 : 1);
   const habits = due.filter(t => t.kind === 'habit');
-  const tasks = due.filter(t => t.kind !== 'habit');
+  // «Окошки»: средние задачи, попавшие в обед / после работы, и вдохновение на вечер — отдельно от остальных
+  const fit = S.space === 'personal' ? dayFit(t0) : { inSlot: {} };
+  const slotKey = t => t.kind === 'habit' || reviewDay(t) !== t0 ? null
+    : fit.inSlot[t.id] || (S.space === 'personal' && sizeOf(t) === 'idea' ? 'idea' : null);
+  const SLOT_ORDER = ['lunch', 'after', 'idea'];
+  const slotted = due.filter(slotKey).sort((a, b) => SLOT_ORDER.indexOf(slotKey(a)) - SLOT_ORDER.indexOf(slotKey(b)));
+  const slotNote = k => k === 'idea' ? '✦ Вечером, по вдохновению'
+    : `${k === 'lunch' ? '🍽' : '🌆'} ${SLOTS[k].name}, ${slotOf(k).from}–${slotOf(k).to}`;
+  const tasks = due.filter(t => t.kind !== 'habit' && !slotKey(t));
   const started = t => t.start_date && t.start_date <= t0;
   // начатые, но со сроком позже — «в работе»
   const inWork = active().filter(t => !isEvent(t) && !t.plan_date && started(t) && (!t.due_date || t.due_date > t0)).sort(byPos);
@@ -394,6 +402,7 @@ function renderToday() {
   }
   if (events.length) html += '<h2>События</h2>' + events.map(t => taskRow(t)).join('');
   if (habits.length) html += '<h2>Привычки</h2>' + habits.map(t => taskRow(t)).join('');
+  if (slotted.length) html += '<h2>Окошки</h2>' + slotted.map(t => taskRow(t, { note: slotNote(slotKey(t)), noteCls: 'slot-note' })).join('');
   if (tasks.length) html += '<h2>Задачи</h2>' + tasks.map(t => taskRow(t)).join('');
   if (inWork.length) html += '<h2>В работе</h2>' + inWork.map(t => taskRow(t, { date: true })).join('');
   if (doneToday.length) html += '<h2>Сделано сегодня</h2>' + doneToday.map(t => taskRow(t, { done: true })).join('');
@@ -2034,22 +2043,24 @@ function dayFit(d) {
   const items = active().filter(t => !isEvent(t) && reviewDay(t) === d);
   const of = s => items.filter(t => sizeOf(t) === s);
   const weekend = isodow(d) >= 6;
-  const slots = {};
+  const slots = {}, inSlot = {}; // inSlot: id задачи → окошко, куда она попала
   if (!weekend) {
     const evs = (occurrences(d, d)[d] || []).map(o => o.t).filter(t => isEvent(t) && t.start_time);
     for (const k of Object.keys(SLOTS)) {
       const s = slotOf(k);
       // событие пересекает окошко (без времени конца — если начинается внутри него)
       const busy = evs.filter(t => hhmm(t.start_time) < s.to && (t.end_time ? hhmm(t.end_time) > s.from : hhmm(t.start_time) >= s.from)).map(t => t.title);
-      slots[k] = busy.concat(of('mid').filter(t => t.slot === k).map(t => t.title));
+      const mine = of('mid').filter(t => t.slot === k);
+      mine.forEach(t => (inSlot[t.id] = k));
+      slots[k] = busy.concat(mine.map(t => t.title));
     }
     // средние без «когда» занимают свободное окошко (сначала вечернее — там больше времени)
     for (const t of of('mid').filter(t => !SLOTS[t.slot])) {
       const k = ['after', 'lunch'].find(k => !slots[k].length);
-      if (k) slots[k].push(t.title);
+      if (k) { slots[k].push(t.title); inSlot[t.id] = k; }
     }
   }
-  return { weekend, slots, freeSlots: Object.keys(slots).filter(k => !slots[k].length), big: of('big').length, idea: of('idea').length };
+  return { weekend, slots, inSlot, freeSlots: Object.keys(slots).filter(k => !slots[k].length), big: of('big').length, idea: of('idea').length };
 }
 
 // Задачи без срока этого размера, которые сегодня можно предложить (дольше всего лежащие — первыми).
@@ -2082,7 +2093,7 @@ function offerGroups(mode) {
 
 // Окна предложений — раз утром и раз с 16 до 19 на весь аккаунт (отметки в user_metadata, видны всем устройствам).
 async function maybeOffer() {
-  if (!S.user || !S.loaded || S.space !== 'personal' || $modal.dataset.kind || reviewList().length || S.offerBusy) return;
+  if (!S.user || !S.loaded || S.space !== 'personal' || $modal.dataset.kind || S.offer || reviewList().length || S.offerBusy) return;
   const d = today(), h = new Date().getHours(), eve = h >= 16 && h < 19;
   // быстрая отметка этого устройства — чтобы не спрашивать сервер каждую минуту
   if (localGet('offer') === d && (!eve || localGet('offerEve') === d)) return;
@@ -2104,8 +2115,7 @@ async function maybeOffer() {
     sb.auth.updateUser({ data: mark }).then(({ data }) => { if (data?.user) S.user = data.user; });
     if (!offerGroups(mode).some(g => g.list.length)) return;
     if ($modal.dataset.kind || reviewList().length) return;
-    S.offerMode = mode;
-    renderOffer();
+    openOffer(mode);
   } finally { S.offerBusy = false; }
 }
 
@@ -2118,47 +2128,85 @@ async function ideaExpire() {
   stale.forEach(t => { t.due_date = null; t.plan_date = null; });
 }
 
+// Окно предложений — черновик: отметки можно ставить, менять и снимать, в базу всё уходит по «Сохранить».
+// Список задач запоминается при открытии, чтобы выбранное «Сегодня» не пропадало из окна (вдохновений можно взять несколько).
+// «Скрыть» убирает окно, не теряя отметок: внизу остаётся кнопка, чтобы вернуться.
+function openOffer(mode) {
+  const groups = offerGroups(mode).map(g => ({ ...g, ids: g.list.map(t => t.id) }));
+  S.offer = { mode, groups, pick: {}, hidden: false };
+  renderOffer();
+}
+
 function renderOffer() {
-  const groups = offerGroups(S.offerMode);
+  const o = S.offer;
+  if (!o) return;
+  offerChip();
+  if (o.hidden) return;
   const scroll = $modal.querySelector('.rv-list')?.scrollTop || 0;
   const daysLying = t => Math.max(0, Math.round((parse(today()) - parse((t.created_at || '').slice(0, 10) || today())) / 864e5));
+  const btn = (t, act, label) => `<button class="btn ${o.pick[t.id] === act ? 'on' : ''}" data-act="${act}" data-id="${t.id}">${label}</button>`;
   const row = t => {
     const sec = sectionOf(t), n = daysLying(t);
-    return `<div class="task${sec ? ' tinted' : ''}"${sec ? ` style="--sec:${esc(sec.color)}"` : ''}>
+    return `<div class="task${sec ? ' tinted' : ''}${o.pick[t.id] ? ' picked' : ''}"${sec ? ` style="--sec:${esc(sec.color)}"` : ''}>
       <div class="body" data-act="edit" data-id="${t.id}"><div class="title">${esc(t.title)}</div>
         <div class="meta">${sec ? `<span>${esc(sec.name)}</span>` : ''}${n ? `<span>лежит ${n} дн.</span>` : ''}</div></div>
-      <div class="yn">
-        <button class="btn" data-act="of-today" data-id="${t.id}">Сегодня</button>
-        <button class="btn" data-act="of-tomorrow" data-id="${t.id}">Не сегодня</button>
-        <button class="btn" data-act="of-later" data-id="${t.id}">Потом</button>
-      </div></div>`;
+      <div class="yn">${btn(t, 'of-today', 'Сегодня')}${btn(t, 'of-tomorrow', 'Не сегодня')}${btn(t, 'of-later', 'Потом')}</div></div>`;
   };
-  const eve = S.offerMode === 'eve';
+  const live = id => { const t = byId(id); return t && !t.done_on ? t : null; };
+  const groups = o.groups.map(g => ({ ...g, list: g.ids.map(live).filter(Boolean) })).filter(g => g.list.length || g.full);
+  const n = Object.keys(o.pick).length;
+  const eve = o.mode === 'eve';
   $modal.dataset.kind = 'offer';
-  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet review offer">
+  $modal.innerHTML = `<div class="overlay" data-act="of-hide-bg"><div class="sheet review offer">
     <h3>${eve ? 'Может, займёмся чем-то по вдохновению?' : `${userName() ? esc(userName()) + ', что' : 'Что'} можно сделать сегодня`}</h3>
     <div class="rv-list">${groups.map(g => `<h2>${SIZES[g.size].icon} ${SIZES[g.size].title}</h2>
       <div class="hint">${g.note || SIZES[g.size].hint}${g.full ? '<br>Свободных окошек сегодня нет.' : ''}</div>
       ${g.list.map(row).join('')}`).join('') || '<div class="empty">Всё разобрано</div>'}</div>
-    <div class="rv-foot"><span class="hint">Не выбранные задачи предложу завтра</span><button class="btn main" data-act="of-close">Готово</button></div>
+    <div class="rv-foot"><span class="hint">Отмечено: ${n}. Не выбранные предложу завтра</span>
+      <button class="btn" data-act="of-hide" title="Посмотреть дела на сегодня, отметки сохранятся">Скрыть</button>
+      <button class="btn main" data-act="of-close">Сохранить</button></div>
   </div></div>`;
   $modal.querySelector('.rv-list').scrollTop = scroll;
 }
 
-// «Сегодня» — срок на сегодня; «Не сегодня» — предложить завтра; «Потом» — через 4 дня.
-async function offerAct(id, act) {
-  const t = byId(id);
-  const upd = act === 'of-today' ? { due_date: today(), offer_after: null }
-    : { offer_after: addDays(today(), act === 'of-tomorrow' ? 1 : 4) };
-  Object.assign(t, upd);
-  renderOffer();
-  render();
-  await call(sb.from('tasks').update(upd).eq('id', id));
+// Кнопка внизу экрана, пока окно предложений скрыто.
+function offerChip() {
+  let el = document.getElementById('offer-chip');
+  const show = S.offer && S.offer.hidden;
+  if (!show) { el?.remove(); return; }
+  if (!el) { el = document.createElement('button'); el.id = 'offer-chip'; el.className = 'btn main'; el.dataset.act = 'of-show'; document.body.append(el); }
+  const n = Object.keys(S.offer.pick).length;
+  el.textContent = `${S.offer.mode === 'eve' ? '✦ Вдохновение' : '☀ Предложения'}${n ? ' · отмечено ' + n : ''}`;
 }
 
-function closeOffer() {
-  S.offerMode = null;
+// Повторное нажатие той же кнопки снимает отметку.
+function offerAct(id, act) {
+  const p = S.offer.pick;
+  if (p[id] === act) delete p[id]; else p[id] = act;
+  renderOffer();
+}
+
+function offerHide(hidden) {
+  S.offer.hidden = hidden;
+  if (hidden) { $modal.innerHTML = ''; $modal.dataset.kind = ''; }
+  renderOffer();
+}
+
+// «Сегодня» — срок на сегодня; «Не сегодня» — предложить завтра; «Потом» — через 4 дня.
+async function closeOffer() {
+  const pick = S.offer?.pick || {};
+  S.offer = null;
+  offerChip();
   closeModal();
+  const ids = act => Object.keys(pick).filter(id => pick[id] === act);
+  const jobs = [
+    [ids('of-today'), { due_date: today(), offer_after: null }],
+    [ids('of-tomorrow'), { offer_after: addDays(today(), 1) }],
+    [ids('of-later'), { offer_after: addDays(today(), 4) }],
+  ].filter(([list]) => list.length);
+  for (const [list, upd] of jobs) list.forEach(id => { const t = byId(id); if (t) Object.assign(t, upd); });
+  render();
+  for (const [list, upd] of jobs) await call(sb.from('tasks').update(upd).in('id', list));
   load().catch(() => { });
 }
 
@@ -2419,6 +2467,8 @@ function closeModal() {
   $modal.innerHTML = '';
   $modal.dataset.kind = '';
   renderReview();
+  // открыли задачу из окна предложений — после неё вернуться в окно
+  if (S.offer && !S.offer.hidden && !$modal.dataset.kind) renderOffer();
 }
 
 async function saveEdit() {
@@ -2969,7 +3019,7 @@ document.addEventListener('click', async ev => {
   const id = el.dataset.id;
   const v = el.dataset.v;
   // щелчок внутри окна, а не по фону; и не выделение текста, отпущенное за краем окна
-  if (act === 'close-bg' && (ev.target !== el || downAt !== el)) return;
+  if ((act === 'close-bg' || act === 'of-hide-bg') && (ev.target !== el || downAt !== el)) return;
   if (BUSY.has(act)) el.disabled = true; // от двойного нажатия, пока ждём базу
   try {
     switch (act) {
@@ -3124,8 +3174,10 @@ document.addEventListener('click', async ev => {
       case 'size': S.edit.size = v || null; syncEdit(); break;
       case 'slot': S.edit.slot = v || null; syncEdit(); break;
       case 'sec-size': await setSecSize(id, v); break;
-      case 'of-today': case 'of-tomorrow': case 'of-later': await offerAct(id, act); break;
-      case 'of-close': closeOffer(); break;
+      case 'of-today': case 'of-tomorrow': case 'of-later': offerAct(id, act); break;
+      case 'of-close': await closeOffer(); break;
+      case 'of-hide': case 'of-hide-bg': offerHide(true); break;
+      case 'of-show': offerHide(false); break;
       case 'slots-save': await saveSlots(); break;
       case 'new-section': openSection(null); break;
       case 'edit-section': openSection(S.sections.find(s => s.id === id)); break;
@@ -3152,7 +3204,8 @@ document.addEventListener('keydown', ev => {
   if (ev.key === 'Enter' && ev.target.id === 'f-title') saveEdit();
   if (ev.key === 'Enter' && ev.target.id === 's-name') saveSection($modal.querySelector('[data-act=s-save]').dataset.id);
   if (ev.key === 'Escape') hideCtx();
-  if (ev.key === 'Escape' && $modal.dataset.kind && $modal.dataset.kind !== 'review') closeModal();
+  if (ev.key === 'Escape' && $modal.dataset.kind === 'offer') offerHide(true);
+  else if (ev.key === 'Escape' && $modal.dataset.kind && $modal.dataset.kind !== 'review') closeModal();
 });
 
 // ---------- синхронизация ----------
