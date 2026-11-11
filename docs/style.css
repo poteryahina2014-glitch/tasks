@@ -765,3 +765,9 @@ body.bg .group-sep { text-shadow: 0 1px 3px #000; }
   border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); transform: translateX(-50%) rotate(45deg); }
 .book-bubble.below::after { bottom: auto; top: -7px; transform: translateX(-50%) rotate(225deg); }
 .book-bubble .btn { flex: none; }
+
+/* пустые места страницы не мешают схватить цветок и книги на подоконнике */
+body.bg #app { pointer-events: none; }
+body.bg #app * { pointer-events: auto; }
+body.bg #app .today-grid, body.bg #app .today-list, body.bg #app .slots-col { pointer-events: none; }
+body.bg #app .today-list > *, body.bg #app .slots-col > * { pointer-events: auto; }
