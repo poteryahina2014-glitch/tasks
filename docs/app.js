@@ -32,7 +32,8 @@ const S = {
   bg: localGet('bg') !== '0', // вид за окном на фоне
   noDate: localGet('nodate') === '1', // «Разделы»: только задачи без срока
   sizes: (localGet('sizes') || '').split(',').filter(Boolean), // «Разделы»: показать только эти размеры (пусто — все)
-  hRange: +localGet('hrange') || 30,  // «Привычки»: за сколько дней статистика
+  hRange: +localGet('hrange') || 30,
+  tRange: +localGet('trange') || 30,  // «Время»: за сколько дней  // «Привычки»: за сколько дней статистика
   hLogs: null,            // история привычек за год (грузится, когда открыта вкладка)
 };
 
@@ -212,18 +213,23 @@ function habitStats(t) {
 async function load() {
   const since = addDays(today(), -62);
   const monthFrom = S.month && S.month < since ? S.month : since;
-  const [tasks, sections, logs, templates, projects] = await Promise.all([
+  const [tasks, sections, logs, templates, projects, times] = await Promise.all([
     call(sb.from('tasks').select('*').or(`done_on.is.null,done_on.gte.${monthFrom},project_id.not.is.null`).order('position').order('created_at')),
     call(sb.from('sections').select('*').order('position').order('created_at')),
     call(sb.from('task_log').select('*').gte('day', monthFrom).order('id')),
     call(sb.from('templates').select('*').order('created_at')),
-    call(sb.from('projects').select('*').eq('archived', false).order('created_at', { ascending: false })),
+    call(sb.from('projects').select('*').order('created_at', { ascending: false })),
+    // фактическое время (017_time.sql); пока таблицы нет — просто пусто, без ошибки
+    sb.from('time_log').select('*').gte('day', addDays(today(), -400)).order('day').then(r => (r.error ? null : r.data)),
   ]);
   S.tasks = tasks;
   S.sections = sections;
   S.logs = logs;
   S.templates = templates;
-  S.projects = projects;
+  S.allProjects = projects; // с архивными — для статистики шаблонов
+  S.projects = projects.filter(p => !p.archived);
+  S.times = times || [];
+  S.timeOn = !!times;
   S.loaded = true;
   S.hLogs = null;
   if (await autoGenerate()) return load(); // закончился период — шаблоны создали задачи
@@ -294,16 +300,16 @@ function render() {
   updateDust();
   if (!S.user) return renderLogin();
   if (!S.loaded) { $app.innerHTML = '<div class="empty">Загружаю…</div>'; return; }
-  const views = { today: renderToday, calendar: renderCalendar, sections: renderSections, habits: renderHabits, plan: renderPlan };
+  const views = { today: renderToday, calendar: renderCalendar, sections: renderSections, habits: renderHabits, plan: renderPlan, time: renderTime };
   if (S.view === 'nodate') { S.view = 'sections'; S.noDate = true; } // вкладки «Без срока» нет — это фильтр в «Разделах»
   if (!views[S.view]) S.view = 'sections'; // была вкладка «Проекты» — теперь проекты живут в «Разделах»
-  if (S.view === 'plan' && !planOn()) S.view = 'today';
+  if ((S.view === 'plan' || S.view === 'time') && !planOn()) S.view = 'today';
   document.body.className = 'v-' + S.view + (S.space === 'work' ? ' work' : '') + (petsShown() ? ' pets' : '') + (S.bg ? ' bg' : '');
   $app.innerHTML = views[S.view]() + meterCard('side') + `
     ${S.pick ? pickBar() : '<button class="fab" data-act="new" aria-label="Новая задача">+</button>'}
     <nav class="bottom">
       ${[['today', 'Сегодня'], ['calendar', 'Календарь'], ['sections', 'Разделы'], ['habits', 'Привычки']]
-        .concat(planOn() ? [['plan', 'План']] : []).map(([k, n]) => `<button class="pill ${S.view === k ? 'on' : ''}" data-act="view" data-v="${k}">${n}</button>`).join('')}
+        .concat(planOn() ? [['plan', 'План'], ['time', 'Время']] : []).map(([k, n]) => `<button class="pill ${S.view === k ? 'on' : ''}" data-act="view" data-v="${k}">${n}</button>`).join('')}
     </nav>`;
 }
 
@@ -322,7 +328,9 @@ function taskRow(t, opts = {}) {
   // у запланированной задачи дедлайн виден всегда; красный — прошёл или план позже него
   if (t.plan_date && t.due_date && !opts.date && !opts.done)
     tags.push(`<span class="${t.due_date < today() || t.plan_date > t.due_date ? 'late' : ''}">до ${dateLabel(t.due_date)}</span>`);
-  if (t.estimate) tags.push(`<span>⏱ ${fmtH(t.estimate)} ч</span>`);
+  const spent = spentOf(t.id);
+  if (spent) tags.push(`<span class="${t.estimate && spent > t.estimate * 1.2 ? 'late' : ''}" title="Потрачено по факту${t.estimate ? ' / оценка' : ''}">⏱ ${fmtH(spent)}${t.estimate ? ' / ' + fmtH(t.estimate) : ''} ч</span>`);
+  else if (t.estimate) tags.push(`<span>⏱ ${fmtH(t.estimate)} ч</span>`);
   const size = sizeOf(t);
   const slotName = SLOTS[t.slot] && (size === 'mid' || size === 'idea') ? SLOTS[t.slot].name.toLowerCase() : '';
   if (size) tags.push(`<span title="${SIZES[size].name}${slotName ? ', ' + slotName : ''}">${SIZES[size].icon}${slotName ? ' ' + slotName : ''}</span>`);
@@ -733,6 +741,7 @@ function renderPlan() {
     return `<div class="pcol ${d === t0 ? 'today' : ''} ${d < t0 ? 'past' : ''}" data-pday="${d}">
       <div class="phead"><b>${WD[isodow(d) - 1]}, ${pd.getDate()} ${MONTHS_OF[pd.getMonth()].slice(0, 3)}</b>
         <span class="hours ${cls}" title="Рабочий день ${DAY_NORM} ч, больше ${DAY_MAX} ч — перегруз">${cls === 'over' ? '⚠ ' : ''}${fmtH(L.h)} ч</span></div>
+      ${dayFact(d) ? `<div class="pnote fact">по факту: ${fmtH(dayFact(d))} ч</div>` : ''}
       <div class="pbar ${cls}"><i style="width:${Math.min(100, L.h / DAY_MAX * 100)}%"></i></div>
       ${L.noEst ? `<div class="pnote">без оценки: ${L.noEst}</div>` : ''}
       ${L.meets.map(t => `<div class="meet" data-act="edit" data-id="${t.id}"><span class="time">${timeLabel(t)}</span> ${esc(t.title)}</div>`).join('')}
@@ -792,6 +801,150 @@ document.addEventListener('drop', async e => {
   }
   await call(sb.from('tasks').update({ plan_date: d }).eq('id', t.id));
 });
+
+// ---------- фактическое время (рабочий режим) ----------
+// Записи по дням в time_log: «11 нояб — 1,5 ч». Итог задачи — сумма записей.
+const timesOf = id => (S.times || []).filter(x => x.task_id === id);
+const spentOf = id => timesOf(id).reduce((s, x) => s + +x.hours, 0);
+const dayFact = d => (S.times || []).filter(x => x.day === d).reduce((s, x) => s + +x.hours, 0);
+// «1,5», «1.5», «1:30», «90м» → часы
+function parseH(v) {
+  v = String(v || '').trim().replace(',', '.');
+  if (/^\d+:\d{1,2}$/.test(v)) { const [h, m] = v.split(':').map(Number); return h + m / 60; }
+  if (/^\d+\s*м/.test(v)) return parseInt(v) / 60;
+  return parseFloat(v) || 0;
+}
+const round4 = h => Math.round(h * 4) / 4; // до четверти часа
+
+// Блок «Потрачено» в окне задачи (только у сохранённой задачи).
+function renderSpent() {
+  const box = document.getElementById('f-spent');
+  if (!box || !S.edit) return;
+  if (!S.timeOn) { box.innerHTML = '<div class="hint">Чтобы записывать потраченное время, запусти в Supabase файл 017_time.sql.</div>'; return; }
+  if (!S.edit.id) { box.innerHTML = '<div class="hint">Потраченное время можно записать после сохранения задачи.</div>'; return; }
+  const list = timesOf(S.edit.id).slice().sort((a, b) => (a.day < b.day ? 1 : -1));
+  const total = list.reduce((s, x) => s + +x.hours, 0);
+  box.innerHTML = `<div class="row spent-row"><span>Потрачено по факту: <b>${fmtH(total)} ч</b></span>
+      <input class="inp num" id="f-sp-h" placeholder="ч" title="Сколько часов (можно 1,5 или 1:30)" style="max-width:64px">
+      <input class="inp" id="f-sp-d" type="date" value="${today()}" style="max-width:150px">
+      <button class="btn small" data-act="sp-add">+ Записать</button></div>
+    ${list.length ? `<div class="wds spent-list">${list.map(x => `<span class="chip">${dateLabel(x.day)} · ${fmtH(+x.hours)} ч<button class="icon small" data-act="sp-del" data-v="${x.id}" aria-label="Убрать запись">✕</button></span>`).join('')}</div>` : ''}`;
+}
+
+async function addSpent() {
+  const h = round4(parseH(document.getElementById('f-sp-h').value));
+  const day = document.getElementById('f-sp-d').value || today();
+  if (!(h > 0) || h > 24) return toast('Напиши, сколько часов: например 1,5');
+  const [row] = await call(sb.from('time_log').insert({ task_id: S.edit.id, day, hours: h }).select());
+  S.times.push(row);
+  renderSpent();
+  render();
+  toast(`Записано: ${fmtH(h)} ч за ${dateLabel(day)}`);
+}
+
+async function delSpent(id) {
+  await call(sb.from('time_log').delete().eq('id', id));
+  S.times = S.times.filter(x => String(x.id) !== String(id));
+  renderSpent();
+  render();
+}
+
+// Сколько в среднем по факту занимает шаг шаблона: сделанные задачи прошлых периодов (последние 6), где время записано.
+function factAvg(tplId, title, i) {
+  const projs = (S.allProjects || []).filter(p => p.template_id === tplId).sort((a, b) => (a.period < b.period ? 1 : -1));
+  const vals = [];
+  for (const p of projs) {
+    const ts = S.tasks.filter(t => t.project_id === p.id);
+    const t = ts.find(x => x.title === title) || ts.find(x => x.position === i);
+    const h = t && t.done_on ? spentOf(t.id) : 0;
+    if (h > 0) vals.push(h);
+    if (vals.length >= 6) break;
+  }
+  return vals.length ? { avg: vals.reduce((a, b) => a + b, 0) / vals.length, n: vals.length } : null;
+}
+
+const periodName = p => (p.title || '').split(' — ').pop();
+
+// В окне шаблона: план и факт по периодам, среднее по шагам.
+function tplStatsHTML(t) {
+  if (!t.id || !S.timeOn) return '';
+  const projs = (S.allProjects || []).filter(p => p.template_id === t.id).sort((a, b) => (a.period < b.period ? 1 : -1)).slice(0, 12);
+  if (!projs.length) return '';
+  const rows = projs.map(p => {
+    const ts = S.tasks.filter(x => x.project_id === p.id);
+    const plan = ts.reduce((s, x) => s + (+x.estimate || 0), 0);
+    const fact = ts.reduce((s, x) => s + spentOf(x.id), 0);
+    const done = ts.filter(x => x.done_on).length;
+    return `<tr><td>${esc(periodName(p))}</td><td>${plan ? fmtH(plan) + ' ч' : '—'}</td>
+      <td class="${plan && fact > plan * 1.2 ? 'late' : ''}">${fact ? fmtH(fact) + ' ч' : '—'}</td><td>${done} из ${ts.length}</td></tr>`;
+  }).join('');
+  const avgs = (t.steps || []).filter(s => s.title).map((s, i) => [s, factAvg(t.id, s.title, i)]).filter(([, a]) => a);
+  return `<div class="field"><label>Время по периодам</label>
+    <table class="ttable"><tr><th>Период</th><th>План</th><th>Факт</th><th>Сделано</th></tr>${rows}</table>
+    ${avgs.length ? `<div class="hint" style="margin-top:6px">В среднем по факту: ${avgs.map(([s, a]) => `${esc(s.title)} — <b>${fmtH(a.avg)} ч</b> (${a.n} пер.)`).join('; ')}. Новые задачи получат эту оценку.</div>` : ''}</div>`;
+}
+
+// ---------- вкладка «Время» (рабочий режим, компьютер) ----------
+const T_RANGES = [[7, 'Неделя'], [30, 'Месяц'], [90, '3 месяца']];
+function renderTime() {
+  const t0 = today();
+  const from = addDays(t0, 1 - S.tRange);
+  const head = `<header class="top"><h1>Время</h1>
+    <div class="seg">${T_RANGES.map(([n, l]) => `<button class="pill ${S.tRange === n ? 'on' : ''}" data-act="t-range" data-v="${n}">${l}</button>`).join('')}</div>
+    <div class="tools">${MODE()}${GEAR}</div></header>`;
+  if (!S.timeOn) return head + '<div class="empty">Чтобы записывать потраченное время, запусти в Supabase файл 017_time.sql.</div>';
+  const known = id => byId(id) || (S.timeTasks || {})[id];
+  const list = S.times.filter(x => x.day >= from && x.day <= t0);
+  // задачи, которых нет в обычной загрузке (давно сделанные), подгрузить один раз
+  const miss = [...new Set(list.map(x => x.task_id))].filter(id => !known(id) && !(S.timeTried || new Set()).has(id));
+  if (miss.length) {
+    (S.timeTried ||= new Set()); miss.forEach(id => S.timeTried.add(id));
+    sb.from('tasks').select('id,title,estimate,project_id,section_id,space,done_on').in('id', miss).then(r => {
+      S.timeTasks = { ...(S.timeTasks || {}), ...Object.fromEntries((r.data || []).map(x => [x.id, x])) };
+      if (S.view === 'time') render();
+    });
+  }
+  if (!list.length) return head + '<div class="empty">За этот срок время не записано.<br>Открой рабочую задачу и в «Потрачено по факту» запиши часы.</div>';
+  const total = list.reduce((s, x) => s + +x.hours, 0);
+  // по дням
+  const days = [...Array(S.tRange)].map((_, i) => addDays(from, i));
+  const byDay = Object.fromEntries(days.map(d => [d, 0]));
+  list.forEach(x => { byDay[x.day] += +x.hours; });
+  const worked = days.filter(d => byDay[d] > 0).length;
+  const max = Math.max(DAY_NORM, ...Object.values(byDay));
+  const bars = days.map(d => `<div class="tbar ${isodow(d) > 5 ? 'we' : ''}" title="${dateLabel(d)}: ${fmtH(byDay[d])} ч"><i style="height:${byDay[d] / max * 100}%"></i>${S.tRange <= 30 ? `<span>${parse(d).getDate()}</span>` : ''}</div>`).join('');
+  // по дням недели: в среднем за такой день (считаются только дни, когда время записывали)
+  const wd = [...Array(7)].map((_, i) => {
+    const ds = days.filter(d => isodow(d) === i + 1 && byDay[d] > 0);
+    const sum = ds.reduce((s, d) => s + byDay[d], 0);
+    return { name: WD[i], avg: ds.length ? sum / ds.length : 0 };
+  });
+  const wmax = Math.max(1, ...wd.map(w => w.avg));
+  // по задачам
+  const per = {};
+  list.forEach(x => { per[x.task_id] = (per[x.task_id] || 0) + +x.hours; });
+  const rows = Object.entries(per).sort((a, b) => b[1] - a[1]).map(([id, h]) => {
+    const t = known(id);
+    const p = t && t.project_id && (S.allProjects || []).find(x => x.id === t.project_id);
+    const all = spentOf(id);
+    const est = t && +t.estimate;
+    return `<tr ${byId(id) ? `data-act="edit" data-id="${id}" class="click"` : ''}><td>${t ? esc(t.title) : '<span class="muted">задача удалена</span>'}${p ? ` <span class="muted">· ${esc(periodName(p))}</span>` : ''}${t && t.done_on ? ' ✓' : ''}</td>
+      <td>${fmtH(h)} ч</td><td>${all !== h ? fmtH(all) + ' ч' : ''}</td>
+      <td class="${est && all > est * 1.2 ? 'late' : ''}">${est ? fmtH(est) + ' ч' : '—'}</td></tr>`;
+  }).join('');
+  // шаблоны: сколько обычно занимает каждый шаг
+  const tpls = S.templates.map(tp => [tp, (tp.steps || []).filter(s => s.title).map((s, i) => [s, factAvg(tp.id, s.title, i)]).filter(([, a]) => a)]).filter(([, a]) => a.length);
+  return head + `<div class="time-view">
+    <div class="tsum">За ${T_RANGES.find(r => r[0] === S.tRange)[1].toLowerCase()}: <b>${fmtH(total)} ч</b> · дней с записями: ${worked} · в среднем <b>${fmtH(worked ? total / worked : 0)} ч</b> за такой день</div>
+    <h2>По дням</h2><div class="tbars r${S.tRange}">${bars}</div>
+    <h2>По дням недели (в среднем, где записано)</h2>
+    <div class="twd">${wd.map(w => `<div><span>${w.name}</span><div class="bar"><i style="width:${w.avg / wmax * 100}%"></i></div><b>${w.avg ? fmtH(w.avg) + ' ч' : '—'}</b></div>`).join('')}</div>
+    <h2>По задачам</h2>
+    <table class="ttable"><tr><th>Задача</th><th>За этот срок</th><th>Всего</th><th>Оценка</th></tr>${rows}</table>
+    ${tpls.length ? `<h2>Шаблоны: сколько обычно занимает</h2>${tpls.map(([tp, a]) => `<div class="tpl-time"><b>${esc(tp.title)}</b>
+      ${a.map(([s, x]) => `<div>${esc(s.title)} — <b>${fmtH(x.avg)} ч</b> <span class="muted">(среднее за ${x.n} пер.${s.hours ? `, в шаблоне ${fmtH(s.hours)} ч` : ''})</span></div>`).join('')}</div>`).join('')}` : ''}
+  </div>`;
+}
 
 // ---------- привычки: как получалось следовать ----------
 // История за год грузится, когда открыта вкладка (в обычной загрузке — только 2 месяца).
@@ -1736,6 +1889,8 @@ const HELP = [
   ['Быстрое меню', 'Долгое нажатие на задачу (на компьютере — правая кнопка): на сегодня, на завтра, в другой раздел.'],
   ['🏠 / 💼', 'Личное и работа отдельно, переключатель вверху. В работе есть «Шаблоны»: повторяющиеся проекты из шагов (например, квартальная отчётность), создаются сами.'],
   ['Подпункты', 'В окне задачи «+ Подпункт»: письма, проверки и т.п. Отмечаются прямо под задачей. В шаблоне у шага — «+ подзадача».'],
+  ['Потраченное время (работа)', 'В окне рабочей задачи — «Потрачено по факту»: напиши часы (1,5 или 1:30), выбери день и нажми «+ Записать». Можно записывать несколько раз — итог складывается. В строке задачи ⏱ факт / оценка (красным — если вышло больше оценки). На «Плане» у дня — «по факту». Вкладка <b>«Время»</b> (на компьютере): сколько ушло по дням, по дням недели, по задачам и сколько обычно занимают шаги шаблонов.'],
+  ['Шаблон из задачи', 'В окне рабочей задачи — «⟳ Сделать шаблон из этой задачи». Выбери, за какой период эта задача (например, октябрь 2026), и какие подпункты взять. Сама задача станет первой (за этот период), следующие шаблон создаст сам — «… — ноябрь 2026». Оценка часов у новых задач — среднее фактическое время за прошлые периоды. В окне шаблона — таблица «Время по периодам».'],
   ['План (работа, компьютер)', '«Срок» — дедлайн, «План» — день, когда делаешь, и сколько часов займёт. Во вкладке «План» неделя: задачи перетаскиваются по дням, вверху сумма часов вместе со встречами. Больше 8 ч — жёлтым, больше 11 ч — ⚠ красным.'],
   ['☀ Случаи и «Следом»', 'Бывает то, что нельзя спланировать заранее: пришла зарплата. Нажми ☀ вверху и выбери, что случилось. У случая (и у любой задачи) в окне есть «Следом» — задачи, которые спят и нигде не видны. Отметила случай или сделала задачу (например, «Оплатить коммуналку») — задачи «Следом» появятся на сегодня и будут висеть, пока их не сделаешь. Сделала — снова засыпают до следующего раза. Отменила отметку — снова прячутся. Сумму удобно писать прямо в названии: «Отложить 2000 ₴ в конверт». Новый случай — ☀ → «+ Новый случай».'],
   ['Порядок шагов', 'У задачи проекта — «Делать после» (в шаблоне — «после шагов: 1, 2»). Пока те шаги не сделаны, у задачи 🔒 «ждёт: …»; красный — если они запланированы позже. Ничего не запрещается.'],
@@ -2285,6 +2440,7 @@ function openEdit(t) {
         <button class="pill" data-act="kind" data-v="habit">Привычка</button>
         <button class="pill" data-act="kind" data-v="event">Событие</button>
       </div></div>
+    ${projHint(e)}
     ${st ? `<div class="stats">За 30 дней: <b>${st.done} из ${st.total}</b>
       <div class="strip">${st.days.map(([, s, p]) => dayCell(s, p)).join('')}</div></div>` : ''}
     <div class="cols"><div>
@@ -2304,7 +2460,8 @@ function openEdit(t) {
     </div>
     <div class="field" id="f-plan-box"><label>План: день, когда делаю</label>
       <div class="row"><input class="inp" id="f-plan" type="date" value="${e.plan_date || ''}">
-        займёт <input class="inp num" id="f-est" type="number" min="0" step="0.5" value="${e.estimate || ''}" style="max-width:70px"> ч</div></div>
+        займёт <input class="inp num" id="f-est" type="number" min="0" step="0.5" value="${e.estimate || ''}" style="max-width:70px"> ч</div>
+      <div id="f-spent"></div></div>
     <div class="field" id="f-remind-box"><label>Напомнить на телефон</label>
       <div class="wds remind">
         <button class="pill" data-act="remind" data-v="">Нет</button>
@@ -2366,6 +2523,7 @@ function openEdit(t) {
   document.getElementById('f-remind').onchange = ev => { e.remind_at = ev.target.value || null; syncEdit(); };
   for (const id of ['f-on', 'f-off', 'f-anchor']) document.getElementById(id).oninput = syncCycle;
   renderSubs();
+  renderSpent();
   if (!parent) renderKids();
   syncEdit();
   if (isNew) document.getElementById('f-title').focus();
@@ -2739,6 +2897,8 @@ async function createProject(tpl, p) {
     return false;
   }
   const steps = (tpl.steps || []).filter(s => s.title);
+  // оценка часов: среднее по факту прошлых периодов, если записано; иначе — часы из шаблона
+  const est = steps.map((s, i) => { const a = factAvg(tpl.id, s.title, i); return a ? round4(a.avg) : s.hours; });
   const rows = steps.map((s, i) => ({
     title: s.title,
     project_id: data[0].id,
@@ -2748,7 +2908,7 @@ async function createProject(tpl, p) {
     start_date: s.start_day ? dayAfter(p.end, s.month || 1, s.start_day) : null,
     due_date: s.due_day ? dayAfter(p.end, s.month || 1, s.due_day) : null,
     ...(s.subs && s.subs.length ? { checklist: s.subs.map(x => ({ t: x, d: false })) } : {}),
-    ...(s.hours ? { estimate: s.hours } : {}),
+    ...(est[i] ? { estimate: est[i] } : {}),
   }));
   if (rows.length) {
     const made = (await call(sb.from('tasks').insert(rows).select('id,position'))) || [];
@@ -2854,6 +3014,9 @@ function openTemplate(tpl) {
   $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet wide fixed">
     <h3>${t.id ? 'Шаблон' : 'Новый шаблон'}</h3>
     <div class="field"><input class="inp" id="t-title" placeholder="Название, например «Квартальная отчётность»" value="${esc(t.title || '')}"></div>
+    ${t.from ? `<div class="field"><label>Эта задача — за какой период (следующие шаблон создаст сам)</label>
+      <select class="inp" id="t-from-p"></select></div>
+      ${t.from.subs.length ? '<div class="field"><label>Какие подпункты взять в шаблон</label><div class="wds" id="t-fsubs"></div></div>' : ''}` : ''}
     <div class="field seg">${Object.entries(PERIODS).map(([k, n]) => `<button class="pill" data-act="t-period" data-v="${k}">${n}</button>`).join('')}</div>
     <div class="field" id="t-months-box"><label>В какие месяцы (по месяцу, за который считаем; не выбрано — каждый месяц)</label>
       <div class="wds months">${MONTHS.map((m, i) => `<button class="pill" data-act="t-month" data-v="${i + 1}">${m.slice(0, 3)}</button>`).join('')}</div></div>
@@ -2868,12 +3031,14 @@ function openTemplate(tpl) {
       <div class="row"><select class="inp" id="t-run" style="flex:1">${periodChoices(t.period).map(p => `<option value="${p.key}">${p.label}</option>`).join('')}</select>
       <button class="btn" data-act="t-run">Создать задачи</button></div></div>
       <div class="field"><button class="link" data-act="t-copy">Сделать копию шаблона (например, для годовой отчётности)</button></div>` : ''}
+    ${tplStatsHTML(t)}
     <div class="actions">
       ${t.id ? '<button class="btn danger" data-act="t-delete">Удалить</button>' : '<span></span>'}
       <div class="row"><button class="btn" data-act="close">Отмена</button><button class="btn main" data-act="t-save">Сохранить</button></div>
     </div>
   </div></div>`;
   document.getElementById('t-section').value = t.section_id || (work[0] && !t.id ? work[0].id : '');
+  if (t.from) document.getElementById('t-from-p').onchange = ev => { S.tpl.from.pkey = ev.target.value; fromDays(S.tpl); renderSteps(); };
   renderSteps();
   syncTemplate();
 }
@@ -2903,6 +3068,58 @@ function syncTemplate() {
   $modal.querySelectorAll('[data-act=t-period]').forEach(b => b.classList.toggle('on', b.dataset.v === t.period));
   $modal.querySelectorAll('[data-act=t-month]').forEach(b => b.classList.toggle('on', t.months.includes(+b.dataset.v)));
   document.getElementById('t-months-box').style.display = t.period === 'month' ? '' : 'none';
+  if (t.from) {
+    // сменили «каждый месяц / квартал / год» — заново список периодов и числа шага
+    const sel = document.getElementById('t-from-p');
+    if (sel.dataset.period !== t.period) {
+      const ch = periodChoices(t.period);
+      if (!ch.some(x => x.key === t.from.pkey)) t.from.pkey = lastPeriod(t.period).key;
+      sel.innerHTML = ch.map(p => `<option value="${p.key}">${p.label}</option>`).join('');
+      sel.value = t.from.pkey;
+      sel.dataset.period = t.period;
+      fromDays(t);
+      renderSteps();
+    }
+    const fs = document.getElementById('t-fsubs');
+    if (fs) fs.innerHTML = t.from.subs.map((x, i) => `<button class="pill ${x.on ? 'on' : ''}" data-act="t-fsub" data-v="${i}">${esc(x.t)}</button>`).join('');
+  }
+}
+
+// Шаблон из рабочей задачи: один шаг с её названием, сроком, часами (по факту, иначе оценка); подпункты — на выбор.
+function tplFromTask() {
+  const e = S.edit;
+  const t = byId(e.id);
+  const title = document.getElementById('f-title').value.trim() || t.title;
+  const spent = spentOf(t.id);
+  const est = parseFloat((document.getElementById('f-est').value || '').replace(',', '.')) || +t.estimate || 0;
+  const sec = S.sections.find(s => s.id === t.section_id && spaceOfSec(s) === 'work');
+  const tpl = { title, period: 'month', months: [], lead_days: 3, section_id: sec ? sec.id : null,
+    steps: [{ title, month: 1, hours: round4(spent) || est || null, subs: [] }],
+    from: { id: t.id, subs: cleanSubs(e.checklist).map(s => ({ t: s.t, on: true })), due: t.due_date, start: t.start_date,
+      repeat: !!t.repeat_unit, pkey: lastPeriod('month').key } };
+  fromDays(tpl);
+  openTemplate(tpl);
+}
+
+// Числа шага из сроков задачи: день месяца и какой это месяц после конца выбранного периода.
+function fromDays(tpl) {
+  const f = tpl.from;
+  const p = periodChoices(tpl.period).find(x => x.key === f.pkey) || lastPeriod(tpl.period);
+  const end = parse(p.end);
+  const off = d => { const x = parse(d); return Math.max(1, x.getFullYear() * 12 + x.getMonth() - end.getFullYear() * 12 - end.getMonth()); };
+  const s = tpl.steps[0];
+  if (!s) return;
+  s.month = f.due || f.start ? off(f.due || f.start) : 1;
+  s.due_day = f.due ? parse(f.due).getDate() : null;
+  s.start_day = f.start ? parse(f.start).getDate() : null;
+}
+
+// В окне рабочей задачи: из какого она проекта (шаблона) — или кнопка «сделать шаблон».
+function projHint(e) {
+  if (!e.id || isEvent(e) || e.kind === 'habit' || e.kind === 'occasion' || spaceOf(e) !== 'work') return '';
+  const p = e.project_id && (S.allProjects || []).find(x => x.id === e.project_id);
+  if (p) return `<div class="hint proj-of">📁 ${esc(p.title)}</div>`;
+  return `<div class="hint proj-of"><button class="link" data-act="tpl-from">⟳ Сделать шаблон из этой задачи</button></div>`;
 }
 
 // Поля шагов сохраняются в S.tpl при вводе.
@@ -2931,7 +3148,9 @@ async function saveTemplate(silent = false) {
     period: t.period,
     months: t.period === 'month' && t.months.length ? [...t.months].sort((a, b) => a - b) : null,
     section_id: document.getElementById('t-section').value || null,
-    steps: t.steps.filter(s => s.title && s.title.trim()).map((s, _, all) => ({
+    // подпункты, выбранные из задачи, — в первый шаг
+    steps: t.steps.map((s, i) => (i === 0 && t.from ? { ...s, subs: [...t.from.subs.filter(x => x.on).map(x => x.t), ...(s.subs || [])] } : s))
+      .filter(s => s.title && s.title.trim()).map((s, _, all) => ({
       title: s.title.trim(), start_day: s.start_day || null, due_day: s.due_day || null, month: s.month || 1,
       subs: (s.subs || []).map(x => x.trim()).filter(Boolean),
       hours: s.hours || null,
@@ -2943,7 +3162,17 @@ async function saveTemplate(silent = false) {
   if (t.id) [tpl] = await call(sb.from('templates').update(row).eq('id', t.id).select());
   else [tpl] = await call(sb.from('templates').insert(row).select());
   if (silent) return tpl;
-  if (!t.id) {
+  if (!t.id && t.from) {
+    // шаблон из задачи: сама задача становится проектом за выбранный период, следующие шаблон создаст сам
+    const p = periodChoices(tpl.period).find(x => x.key === t.from.pkey) || lastPeriod(tpl.period);
+    const [pr] = await call(sb.from('projects').insert({ template_id: tpl.id, period: p.key, title: `${tpl.title} — ${p.label}`, section_id: tpl.section_id }).select());
+    const upd = { project_id: pr.id, position: 0, section_id: tpl.section_id };
+    if (t.from.repeat && confirm('У задачи есть повтор. Убрать его? Дальше такие задачи будет создавать шаблон — иначе они задвоятся.'))
+      Object.assign(upd, { repeat_unit: null, repeat_every: null, repeat_weekdays: null });
+    await call(sb.from('tasks').update(upd).eq('id', t.from.id));
+    await call(sb.from('templates').update({ last_period: p.key }).eq('id', tpl.id));
+    toast(`Шаблон готов. Эта задача — за ${p.label}`);
+  } else if (!t.id) {
     // за уже закончившийся период — спросить; дальше шаблон работает сам
     const p = periodFor(tpl);
     const fits = tpl.period !== 'month' || !tpl.months || !tpl.months.length || tpl.months.includes(p.month);
@@ -3126,6 +3355,11 @@ document.addEventListener('click', async ev => {
         S.sizes = S.sizes.includes(v) ? S.sizes.filter(x => x !== v) : S.sizes.concat(v);
         localSet('sizes', S.sizes.join(',')); render(); break;
       case 'h-range': S.hRange = +v; localSet('hrange', v); render(); break;
+      case 't-range': S.tRange = +v; localSet('trange', v); render(); break;
+      case 'sp-add': await addSpent(); break;
+      case 'sp-del': await delSpent(v); break;
+      case 'tpl-from': tplFromTask(); break;
+      case 't-fsub': S.tpl.from.subs[+v].on = !S.tpl.from.subs[+v].on; syncTemplate(); break;
       case 'decor': S.edit.decor = v || null; syncEdit(); break;
       case 'view': S.view = v; S.pick = null; localSet('view', v); render(); scrollTo(0, 0); break;
       case 'done': el.classList.add('ok'); await complete(byId(id)); break;
