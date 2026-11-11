@@ -768,6 +768,6 @@ body.bg .group-sep { text-shadow: 0 1px 3px #000; }
 
 /* пустые места страницы не мешают схватить цветок и книги на подоконнике */
 body.bg #app { pointer-events: none; }
-body.bg #app * { pointer-events: auto; }
+:where(body.bg #app) * { pointer-events: auto; } /* :where — без веса, чтобы не перебить pointer-events: none у паутинки и т. п. */
 body.bg #app .today-grid, body.bg #app .today-list, body.bg #app .slots-col { pointer-events: none; }
 body.bg #app .today-list > *, body.bg #app .slots-col > * { pointer-events: auto; }
