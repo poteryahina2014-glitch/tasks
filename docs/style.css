@@ -754,3 +754,6 @@ body.bg .group-sep { text-shadow: 0 1px 3px #000; }
 @media (max-width: 899px) { #bg .books { display: none; } }
 .kid-book { opacity: .35; filter: grayscale(1); }
 .kid-book.on { opacity: 1; filter: none; }
+
+/* строка «Следом»: значок, текст, 📚, ✕ — в одну строку */
+#f-kids .subrow { grid-template-columns: 32px minmax(0, 1fr) 32px 32px; }
