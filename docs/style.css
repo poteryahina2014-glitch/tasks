@@ -710,3 +710,25 @@ body.work .icon.mode { box-shadow: inset 0 0 0 1px var(--accent); }
 .bpair { flex-wrap: nowrap; gap: 8px; }
 .bpair > * { flex: 1 1 50%; min-width: 0; }
 .bpair .row { flex-wrap: nowrap; gap: 4px; }
+
+/* «Сегодня» на компьютере: слева все дела, справа окошки ячейками по 30 мин */
+.today-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 0 22px; align-items: start; }
+.slots-col { position: sticky; top: 74px; }
+.slots-col > h2:first-child { margin-top: 18px; }
+.slot-box { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 4px 10px 10px; margin-bottom: 10px; }
+.slot-box.warn { border-color: color-mix(in srgb, var(--warn) 55%, var(--border)); }
+.slot-box.bad { border-color: var(--bad); }
+.slot-box .slot-head { margin: 6px 0 6px; justify-content: space-between; }
+.scell { --h: 30px; min-height: calc(var(--h) * var(--n, 1) + 4px * (var(--n, 1) - 1)); border-radius: 8px; margin-top: 4px; padding: 4px 8px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.scell.empty { border: 1px dashed var(--border); color: var(--muted); font-size: 12px; justify-content: center; }
+.scell.item { background: color-mix(in srgb, var(--accent) 18%, var(--card)); cursor: grab; }
+.scell.item.auto { background: color-mix(in srgb, var(--accent) 9%, var(--card)); border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent); }
+.scell.item.ev { background: color-mix(in srgb, var(--muted) 18%, var(--card)); cursor: pointer; }
+.scell.item.over { background: color-mix(in srgb, var(--bad) 22%, var(--card)); }
+.scell span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scell b { font-weight: 500; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.slot-box.drop-in, .today-list.drop-in { outline: 2px dashed var(--accent); outline-offset: 2px; }
+.slot-warn { background: color-mix(in srgb, var(--warn) 14%, var(--card)); border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent); color: var(--warn); border-radius: 10px; padding: 8px 10px; font-size: 13px; margin: 4px 0 10px; }
+.task.noslot { box-shadow: inset 3px 0 0 var(--warn); }
+.meta .warn { color: var(--warn); }

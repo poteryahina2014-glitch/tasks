@@ -355,7 +355,7 @@ function taskRow(t, opts = {}) {
     : '';
   const picked = S.pick && S.pick.has(t.id);
   const dusty = !opts.done && t.decor === 'dust' && petLate(t) >= lim('dust');
-  const cls = `task ${t.kind === 'habit' ? 'habit' : ''} ${waits.length ? 'locked' : ''} ${opts.done ? 'done' : ''} ${picked ? 'picked' : ''} ${opts.busy ? 'busy' : ''} ${dusty ? 'dusty' : ''} ${subList ? 'has-subs' : ''}`;
+  const cls = `task ${t.kind === 'habit' ? 'habit' : ''} ${waits.length ? 'locked' : ''} ${opts.done ? 'done' : ''} ${picked ? 'picked' : ''} ${opts.busy ? 'busy' : ''} ${dusty ? 'dusty' : ''} ${subList ? 'has-subs' : ''} ${opts.noslot ? 'noslot' : ''}`;
   // mark — значок без действия (прошлые отметки и будущие повторы в календаре)
   const check = S.pick && opts.drag
     ? `<div class="check pick">${picked ? '✓' : ''}</div>`
@@ -364,7 +364,8 @@ function taskRow(t, opts = {}) {
       : `<button class="check" data-act="${opts.done ? 'undo' : 'done'}" data-id="${t.id}" title="${opts.done ? 'Отменить' : 'Сделано'}">✓</button>`;
   // drag — строка в «Разделах»: её можно перетаскивать и выбирать
   const dnd = opts.drag ? ` data-drag="${t.id}" data-sec="${t.section_id || ''}"${S.pick ? '' : ' draggable="true"'}`
-    : opts.plan ? ` data-plan="${t.id}" draggable="true"` : ''; // plan — карточка в «Плане», тащится по дням
+    : opts.plan ? ` data-plan="${t.id}" draggable="true"` // plan — карточка в «Плане», тащится по дням
+    : opts.sdrag ? ` data-sdrag="${t.id}" draggable="true"` : ''; // sdrag — «Сегодня» на компьютере, тащится в окошки
   const act = S.pick && opts.drag ? 'pick' : 'edit';
   // строка залита бледным цветом своего раздела
   const tint = sec ? ` style="--sec:${esc(sec.color)}"` : '';
@@ -391,16 +392,25 @@ function renderToday() {
   const fit = personal ? dayFit(t0) : { inSlot: {}, slots: {} };
   const slotKey = t => t.kind === 'habit' || reviewDay(t) !== t0 ? null
     : fit.inSlot[t.id] || (personal && sizeOf(t) === 'idea' ? 'idea' : null);
-  const slotIcon = { lunch: '🍽', after: '🌆' };
+  const wide = personal && !fit.weekend && matchMedia('(min-width: 900px)').matches;
   let slotHTML = '';
-  for (const k of Object.keys(fit.slots)) {
+  if (!wide) for (const k of Object.keys(fit.slots)) {
     const list = due.filter(t => slotKey(t) === k), st = slotState(fit.slots[k]), s = slotOf(k);
-    slotHTML += `<div class="slot-head"><b>${slotIcon[k]} ${SLOTS[k].name}, ${s.from}–${s.to}</b><span class="${st.cls}">${st.text}</span></div>`
-      + list.map(t => taskRow(t)).join('');
+    slotHTML += `<div class="slot-head"><b>${SLOT_ICON[k]} ${SLOTS[k].name}, ${s.from}–${s.to}</b><span class="${st.cls}">${st.text}</span></div>`
+      + list.map(t => taskRow(t, fit.slots[k].items.find(i => i.t.id === t.id)?.over ? { note: 'не влезло в окошко', noteCls: 'late' } : {})).join('');
   }
   const ideas = due.filter(t => slotKey(t) === 'idea');
   if (ideas.length) slotHTML += '<div class="slot-head"><b>✦ Вечером, по вдохновению</b></div>' + ideas.map(t => taskRow(t)).join('');
-  const tasks = due.filter(t => t.kind !== 'habit' && !slotKey(t));
+  const outIds = new Set(fit.out.map(t => t.id));
+  const slotWarn = slotWarnHTML(fit);
+  // на компьютере слева общий список всех дел (окошко — значком), справа окошки ячейками
+  const tasks = due.filter(t => t.kind !== 'habit' && (wide || !slotKey(t)));
+  const rowOpts = t => {
+    const k = fit.inSlot[t.id];
+    if (outIds.has(t.id)) return { note: 'без окошка', noteCls: 'warn', sdrag: wide, noslot: true };
+    if (wide && k && k !== t.slot) return { note: `${SLOT_ICON[k]} ${SLOTS[k].name.toLowerCase()}`, sdrag: true }; // своё «Когда» и так видно справа в строке
+    return { sdrag: wide };
+  };
   const started = t => t.start_date && t.start_date <= t0;
   // начатые, но со сроком позже — «в работе»
   const inWork = active().filter(t => !isEvent(t) && !t.plan_date && started(t) && (!t.due_date || t.due_date > t0)).sort(byPos);
@@ -416,12 +426,17 @@ function renderToday() {
     html += '<div class="empty">Задач на сегодня нет.<br>Нажми «+», чтобы добавить.</div>';
   }
   if (events.length) html += '<h2>События</h2>' + events.map(t => taskRow(t)).join('');
-  if (habits.length) html += '<h2>Привычки</h2>' + habits.map(t => taskRow(t)).join('');
-  if (slotHTML) html += '<h2>Окошки</h2>' + slotHTML;
-  if (tasks.length) html += '<h2>Задачи</h2>' + tasks.map(t => taskRow(t)).join('');
-  if (inWork.length) html += '<h2>В работе</h2>' + inWork.map(t => taskRow(t, { date: true })).join('');
-  if (doneToday.length) html += '<h2>Сделано сегодня</h2>' + doneToday.map(t => taskRow(t, { done: true })).join('');
-  return html;
+  let list = '';
+  const slotNote = t => (wide && fit.inSlot[t.id] ? { note: `${SLOT_ICON[fit.inSlot[t.id]]} ${SLOTS[fit.inSlot[t.id]].name.toLowerCase()}`, sdrag: true } : { sdrag: wide });
+  if (habits.length) list += '<h2>Привычки</h2>' + habits.map(t => taskRow(t, slotNote(t))).join('');
+  if (slotHTML) list += '<h2>Окошки</h2>' + slotWarn + slotHTML;
+  if (tasks.length) list += '<h2>Задачи</h2>' + tasks.map(t => taskRow(t, rowOpts(t))).join('');
+  if (inWork.length) list += '<h2>В работе</h2>' + inWork.map(t => taskRow(t, { date: true })).join('');
+  if (doneToday.length) list += '<h2>Сделано сегодня</h2>' + doneToday.map(t => taskRow(t, { done: true })).join('');
+  if (!wide) return html + list;
+  return html + `<div class="today-grid"><div class="today-list" data-sdrop="none">${list}</div>
+    <aside class="slots-col"><h2>Окошки</h2>${slotWarn}${Object.keys(fit.slots).map(k => slotBox(k, fit)).join('')}
+      <div class="hint">Перетащи задачу в окошко или между окошками; обратно в список — убрать из окошка на сегодня. Средние без «Когда» встают сами, где есть место.</div></aside></div>`;
 }
 
 function occurrences(from, to) {
@@ -1893,6 +1908,7 @@ const HELP = [
   ['Подпункты', 'В окне задачи «+ Подпункт»: письма, проверки и т.п. Отмечаются прямо под задачей. В шаблоне у шага — «+ подзадача».'],
   ['Потраченное время (работа)', 'В окне рабочей задачи — «Потрачено по факту»: напиши часы (1,5 или 1:30), выбери день и нажми «+ Записать». Можно записывать несколько раз — итог складывается. В строке задачи ⏱ факт / оценка (красным — если вышло больше оценки). На «Плане» у дня — «по факту». Вкладка <b>«Время»</b> (на компьютере): сколько ушло по дням, по дням недели, по задачам и сколько обычно занимают шаги шаблонов.'],
   ['Шаблон из задачи', 'В окне рабочей задачи — «⟳ Сделать шаблон из этой задачи». Выбери, за какой период эта задача (например, октябрь 2026), и какие подпункты взять. Сама задача станет первой (за этот период), следующие шаблон создаст сам — «… — ноябрь 2026». Оценка часов у новых задач — среднее фактическое время за прошлые периоды. В окне шаблона — таблица «Время по периодам».'],
+  ['Окошки (личное, будни)', 'Обед, после работы и после ужина — ячейки по 30 минут (время — в ⚙). Задачи с «Когда» встают в своё окошко, средние без «Когда» — сами в свободное место, вдохновение — после ужина. На компьютере окошки справа на «Сегодня»: задачу можно перетащить в окошко, между окошками или обратно в список (только на сегодня, «Когда» не меняется). На телефоне — долгое нажатие → «В окошко». Если места не хватает, появится ⚠ и задачи «без окошка» подсвечены — сроки при этом не переносятся.'],
   ['План (работа, компьютер)', '«Срок» — дедлайн, «План» — день, когда делаешь, и сколько часов займёт. Во вкладке «План» неделя: задачи перетаскиваются по дням, вверху сумма часов вместе со встречами. Больше 8 ч — жёлтым, больше 11 ч — ⚠ красным.'],
   ['☀ Случаи и «Следом»', 'Бывает то, что нельзя спланировать заранее: пришла зарплата. Нажми ☀ вверху и выбери, что случилось. У случая (и у любой задачи) в окне есть «Следом» — задачи, которые спят и нигде не видны. Отметила случай или сделала задачу (например, «Оплатить коммуналку») — задачи «Следом» появятся на сегодня и будут висеть, пока их не сделаешь. Сделала — снова засыпают до следующего раза. Отменила отметку — снова прячутся. Сумму удобно писать прямо в названии: «Отложить 2000 ₴ в конверт». Новый случай — ☀ → «+ Новый случай».'],
   ['Порядок шагов', 'У задачи проекта — «Делать после» (в шаблоне — «после шагов: 1, 2»). Пока те шаги не сделаны, у задачи 🔒 «ждёт: …»; красный — если они запланированы позже. Ничего не запрещается.'],
@@ -2179,11 +2195,13 @@ const SIZES = {
 const SLOTS = {
   lunch: { name: 'Обед', from: '12:00', to: '13:00' },
   after: { name: 'После работы', from: '17:00', to: '18:00' },
+  eve: { name: 'После ужина', from: '20:00', to: '22:00' },
 };
+const SLOT_ICON = { lunch: '🍽', after: '🌆', eve: '🌙' };
 // время окошка: своё из ⚙ (user_metadata.slots) или по умолчанию
 const slotOf = k => ({ ...SLOTS[k], ...((S.user?.user_metadata?.slots || {})[k] || {}) });
 const slotsHTML = () => `<h2>Свободные окошки будних дней</h2>
-  <div class="hint">Сюда программа предлагает средние задачи. Окошко занято, если на сегодня уже стоит средняя задача или в это время есть событие.</div>
+  <div class="hint">Окошко делится на ячейки по 30 минут. Средние задачи без «Когда» встают в свободные ячейки сами; что не влезло — подсвечено «без окошка». Событие в это время занимает свои ячейки. Вдохновение без «Когда» — после ужина.</div>
   <div class="limits">${Object.keys(SLOTS).map(k => `<label>${SLOTS[k].name}<span>с <input class="inp" type="time" id="slot-${k}-from" value="${slotOf(k).from}"> до <input class="inp" type="time" id="slot-${k}-to" value="${slotOf(k).to}"></span></label>`).join('')}</div>
   <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn main" data-act="slots-save">Сохранить</button></div>`;
 async function saveSlots() {
@@ -2208,31 +2226,46 @@ const MID_MIN = 30;
 const toMin = s => { const [h, m] = hhmm(s).split(':'); return +h * 60 + +m; };
 const taskMin = t => (t.estimate ? Math.round(t.estimate * 60) : MID_MIN);
 const slotsFor = t => sizeOf(t) === 'mid' || sizeOf(t) === 'idea'; // у кого есть «Когда»
+// Окошко задачи на день d: своё «на сегодня» (перетащила — slot_now, 'none' — убрала), иначе постоянное «Когда»;
+// вдохновение без «Когда» — после ужина. null — окошко не задано (средняя встанет сама, если есть место).
+function fixedSlot(t, d) {
+  if (t.slot_day === d && t.slot_now) return t.slot_now;
+  if (SLOTS[t.slot] && slotsFor(t)) return t.slot;
+  return sizeOf(t) === 'idea' ? 'eve' : null;
+}
 function dayFit(d) {
   const items = active().filter(t => !isEvent(t) && reviewDay(t) === d);
   const of = s => items.filter(t => sizeOf(t) === s);
   const weekend = isodow(d) >= 6;
-  const slots = {}, inSlot = {}; // slots[k] = { cap, used, titles }; inSlot: id задачи → окошко
+  // slots[k] = { cap, used, titles, items: [{ t, min, ev, auto, over }] }; inSlot: id → окошко; out — средние без окошка
+  const slots = {}, inSlot = {}, out = [];
   if (!weekend) {
     const evs = (occurrences(d, d)[d] || []).map(o => o.t).filter(t => isEvent(t) && t.start_time);
     for (const k of Object.keys(SLOTS)) {
       const s = slotOf(k), from = toMin(s.from), to = toMin(s.to);
-      const sl = slots[k] = { cap: to - from, used: 0, titles: [] };
-      for (const t of evs) {
+      const sl = slots[k] = { cap: to - from, used: 0, titles: [], items: [] };
+      for (const t of [...new Map(evs.map(t => [t.id, t])).values()]) {
         const a = toMin(t.start_time), e = t.end_time ? toMin(t.end_time) : null;
         const part = e === null ? (a >= from && a < to ? to - from : 0) : Math.max(0, Math.min(e, to) - Math.max(a, from));
-        if (part) { sl.used += part; sl.titles.push(t.title); }
+        if (part) { sl.used += part; sl.titles.push(t.title); sl.items.push({ t, min: part, ev: true }); }
       }
-      for (const t of items.filter(t => slotsFor(t) && t.slot === k)) { sl.used += taskMin(t); sl.titles.push(t.title); inSlot[t.id] = k; }
     }
-    // средние без «когда» — в окошко, где больше места (при равенстве — после работы)
-    for (const t of of('mid').filter(t => !SLOTS[t.slot])) {
-      const k = ['after', 'lunch'].reduce((b, k) => (slots[k].cap - slots[k].used > slots[b].cap - slots[b].used ? k : b));
-      if (slots[k].cap - slots[k].used >= taskMin(t)) { slots[k].used += taskMin(t); slots[k].titles.push(t.title); inSlot[t.id] = k; }
+    const put = (t, k, auto) => {
+      const sl = slots[k], m = taskMin(t);
+      const over = sl.used + m > sl.cap;
+      sl.used += m; sl.titles.push(t.title); sl.items.push({ t, min: m, auto, over }); inSlot[t.id] = k;
+    };
+    // сначала те, у кого окошко задано (может не влезть — тогда «не влезло»), потом средние сами — где больше места
+    for (const t of items) { const k = fixedSlot(t, d); if (SLOTS[k]) put(t, k, false); }
+    const room = k => slots[k].cap - slots[k].used;
+    for (const t of of('mid').filter(t => !fixedSlot(t, d))) {
+      const k = ['after', 'eve', 'lunch'].reduce((b, k) => (room(k) > room(b) ? k : b));
+      if (room(k) >= taskMin(t)) put(t, k, true); else out.push(t);
     }
+    for (const t of of('mid').filter(t => fixedSlot(t, d) === 'none')) out.push(t);
   }
   const room = k => (slots[k] ? slots[k].cap - slots[k].used : 0);
-  return { weekend, slots, inSlot, room, freeSlots: Object.keys(slots).filter(k => room(k) >= MID_MIN),
+  return { weekend, slots, inSlot, out, room, freeSlots: Object.keys(slots).filter(k => room(k) >= MID_MIN),
     big: of('big').length, idea: of('idea').filter(t => !SLOTS[t.slot]).length };
 }
 // Подпись окошка: «30 из 60 мин · есть место ещё на одну»; cls — цвет (good / warn / bad)
@@ -2243,6 +2276,76 @@ function slotState(sl) {
   if (n) return { cls: 'good', text: `${sl.used} из ${sl.cap} мин · есть место ещё на ${n === 1 ? 'одну' : n}` };
   return { cls: 'warn', text: `${sl.used} из ${sl.cap} мин · заполнено` };
 }
+
+// Предупреждение: средние, которым не хватило места, и то, что не влезло в своё окошко (сроки не трогаем).
+function slotWarnHTML(fit) {
+  const over = Object.values(fit.slots).flatMap(sl => sl.items.filter(i => i.over));
+  if (!fit.out.length && !over.length) return '';
+  const need = fit.out.reduce((s, t) => s + taskMin(t), 0) + over.reduce((s, i) => s + i.min, 0);
+  const free = Object.keys(fit.slots).reduce((s, k) => s + Math.max(0, fit.room(k)), 0);
+  return `<div class="slot-warn">⚠ ${fit.out.length ? `Без окошка: ${fit.out.length}` : ''}${fit.out.length && over.length ? ' · ' : ''}${over.length ? `не влезло: ${over.length}` : ''}
+    — нужно ещё ${fmtMin(need)}${free ? `, свободно ${fmtMin(free)}` : ', свободных окошек нет'}</div>`;
+}
+const fmtMin = m => (m >= 60 ? `${fmtH(m / 60)} ч` : `${m} мин`);
+
+// Окошко на «Сегодня» (компьютер): ячейки по 30 мин, задача на час — две ячейки, пустые — куда перетащить.
+const CELL = 30;
+function slotBox(k, fit) {
+  const sl = fit.slots[k], s = slotOf(k), st = slotState(sl);
+  const block = i => `<div class="scell item ${i.ev ? 'ev' : ''} ${i.auto ? 'auto' : ''} ${i.over ? 'over' : ''}" style="--n:${Math.max(1, Math.round(i.min / CELL))}"
+      ${i.ev ? '' : `data-sdrag="${i.t.id}" draggable="true"`} data-act="edit" data-id="${i.t.id}" title="${i.auto ? 'Встала сама — можно перетащить' : ''}">
+      <span>${i.ev ? `${hhmm(i.t.start_time)} ` : ''}${esc(i.t.title)}</span><b>${i.over ? 'не влезло · ' : ''}${i.min} мин</b></div>`;
+  const free = Math.max(0, Math.floor((sl.cap - sl.used) / CELL));
+  return `<div class="slot-box ${st.cls}" data-sdrop="${k}">
+    <div class="slot-head"><b>${SLOT_ICON[k]} ${SLOTS[k].name}, ${s.from}–${s.to}</b><span class="${st.cls}">${st.text}</span></div>
+    ${sl.items.map(block).join('')}${'<div class="scell empty">свободно</div>'.repeat(free)}
+  </div>`;
+}
+
+// Окошко на сегодня: перетащила или выбрала в меню. Постоянное «Когда» не меняется; 'none' — убрать из окошка.
+async function setDaySlot(t, k) {
+  if (!('slot_now' in t)) return toast('Сначала запусти в Supabase файл 018_day_slot.sql');
+  const d = today();
+  const fit = dayFit(d);
+  if ((fit.inSlot[t.id] || (fixedSlot(t, d) === 'none' ? 'none' : null)) === k) return;
+  if (k === 'none' && !fit.inSlot[t.id]) return;
+  if (k !== 'none' && fit.room(k) < taskMin(t)) return toast(`Не помещается: в «${SLOTS[k].name}» свободно ${Math.max(0, fit.room(k))} мин, а задача на ${taskMin(t)} мин`);
+  const old = { slot_day: t.slot_day ?? null, slot_now: t.slot_now ?? null };
+  Object.assign(t, { slot_day: d, slot_now: k });
+  render();
+  await call(sb.from('tasks').update({ slot_day: d, slot_now: k }).eq('id', t.id));
+  toast(k === 'none' ? 'Убрано из окошка на сегодня' : `${SLOT_ICON[k]} ${SLOTS[k].name} — на сегодня`,
+    async () => { Object.assign(t, old); render(); await call(sb.from('tasks').update(old).eq('id', t.id)); });
+}
+
+// Перетаскивание в окошки (только «Сегодня» на компьютере)
+let slotDragId = null;
+document.addEventListener('dragstart', e => {
+  const c = e.target.closest && e.target.closest('[data-sdrag]');
+  if (!c) return;
+  slotDragId = c.dataset.sdrag;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', slotDragId);
+});
+document.addEventListener('dragend', () => { slotDragId = null; document.querySelectorAll('.drop-in').forEach(x => x.classList.remove('drop-in')); });
+document.addEventListener('dragover', e => {
+  if (!slotDragId) return;
+  const z = e.target.closest('[data-sdrop]');
+  document.querySelectorAll('.drop-in').forEach(x => x !== z && x.classList.remove('drop-in'));
+  if (!z) return;
+  e.preventDefault();
+  z.classList.add('drop-in');
+});
+document.addEventListener('drop', async e => {
+  if (!slotDragId) return;
+  const z = e.target.closest('[data-sdrop]');
+  const t = byId(slotDragId);
+  slotDragId = null;
+  document.querySelectorAll('.drop-in').forEach(x => x.classList.remove('drop-in'));
+  if (!z || !t) return;
+  e.preventDefault();
+  await setDaySlot(t, z.dataset.sdrop);
+});
 
 // Задачи без срока этого размера, которые сегодня можно предложить (дольше всего лежащие — первыми).
 const offerList = (size, d = today()) => active()
@@ -3328,6 +3431,7 @@ function openCtx(t, x, y) {
     + item('d:' + t0, 'На сегодня', t.due_date === t0)
     + item('d:' + t1, 'На завтра', t.due_date === t1)
     + (t.repeat_unit ? '' : item('d:', 'Без срока', !t.due_date))
+    + ctxSlots(t, item)
     + '<div class="ctx-sep">В раздел</div>'
     + secs.map(([id, name, color]) => item('s:' + id, `${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}${esc(name)}`, (t.section_id || '') === id)).join('')
     + '<hr>'
@@ -3339,9 +3443,20 @@ function openCtx(t, x, y) {
   $ctx.style.top = Math.max(8, Math.min(y, innerHeight - h - 8)) + 'px';
 }
 
+// «В окошко» в быстром меню: личный режим, будний день, задача на сегодня.
+function ctxSlots(t, item) {
+  const d = today();
+  if (S.space !== 'personal' || isodow(d) >= 6 || isEvent(t) || reviewDay(t) !== d) return '';
+  const fit = dayFit(d), cur = fit.inSlot[t.id];
+  return '<div class="ctx-sep">В окошко — на сегодня</div>'
+    + Object.keys(SLOTS).map(k => item('w:' + k, `${SLOT_ICON[k]} ${SLOTS[k].name}`, cur === k)).join('')
+    + (cur ? item('w:none', 'Убрать из окошка', false) : '');
+}
+
 // Поменять срок (d:ГГГГ-ММ-ДД, d: — без срока) или раздел (s:id, s: — без раздела); с «Отменить».
 async function quick(t, v) {
   const [k, val] = [v.slice(0, 2), v.slice(2) || null];
+  if (k === 'w:') return setDaySlot(t, val);
   const row = k === 'd:' ? { due_date: val } : { section_id: val, space: S.space };
   const old = Object.fromEntries(Object.keys(row).map(f => [f, t[f] ?? null]));
   if (Object.keys(row).every(f => old[f] === row[f])) return;
