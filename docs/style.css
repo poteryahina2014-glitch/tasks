@@ -699,3 +699,14 @@ body.work .icon.mode { box-shadow: inset 0 0 0 1px var(--accent); }
 @media (max-width: 500px) { .sheet.edit .e-tabs .pill { padding: 6px 7px; font-size: 13px; } .tdot { margin-left: 4px; } }
 .tdot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: 6px; vertical-align: middle; }
 .tdot[hidden] { display: none; }
+
+/* замер высоты окна (fitSheet): поля, которые появляются от кнопок, считаем показанными */
+.sheet.measure [style*="display: none"]:not([hidden]):not(option) { display: block !important; }
+.sheet.measure .tpl-pane #t-months-list { display: block !important; }
+
+[hidden] { display: none !important; }
+@media (min-width: 700px) { .tpl-pane .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; } }
+.sheet.edit .cols:has(> #f-when[hidden]) { display: block; }
+.bpair { flex-wrap: nowrap; gap: 8px; }
+.bpair > * { flex: 1 1 50%; min-width: 0; }
+.bpair .row { flex-wrap: nowrap; gap: 4px; }

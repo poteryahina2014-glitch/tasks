@@ -1735,23 +1735,27 @@ function openBulk() {
     <div class="msg" style="margin:-6px 0 12px">Меняется только то, где выбрано не «не менять».</div>
     <div class="cols"><div>
     <div class="field"><label>Срок</label>
-      <select class="inp" id="b-datemode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить дату')}${opt('none', 'Без срока')}</select>
-      <input class="inp" id="b-date" type="date" value="${today()}" style="margin-top:8px"></div>
+      <div class="row bpair"><select class="inp" id="b-datemode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить дату')}${opt('none', 'Без срока')}</select>
+      <input class="inp" id="b-date" type="date" value="${today()}"></div></div>
     <div class="field"><label>Начать с</label>
-      <select class="inp" id="b-startmode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить дату')}${opt('none', 'Убрать')}</select>
-      <input class="inp" id="b-start" type="date" value="${today()}" style="margin-top:8px"></div>
+      <div class="row bpair"><select class="inp" id="b-startmode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить дату')}${opt('none', 'Убрать')}</select>
+      <input class="inp" id="b-start" type="date" value="${today()}"></div></div>
     <div class="field"><label>Время</label>
-      <select class="inp" id="b-timemode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить время')}${opt('none', 'Без времени')}</select>
-      <div class="row" id="b-time-box" style="margin-top:8px"><input class="inp" id="b-t1" type="time" value="09:00">–<input class="inp" id="b-t2" type="time"></div></div>
+      <div class="row bpair"><select class="inp" id="b-timemode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить время')}${opt('none', 'Без времени')}</select>
+      <div class="row" id="b-time-box"><input class="inp" id="b-t1" type="time" value="09:00">–<input class="inp" id="b-t2" type="time"></div></div></div>
     <div class="field"><label>Напомнить на телефон</label>
-      <select class="inp" id="b-remindmode">${opt(KEEP, '— не менять —')}${opt('set', 'В это время')}${opt('none', 'Не напоминать')}</select>
-      <input class="inp" id="b-remind" type="time" value="09:00" style="margin-top:8px"></div>
+      <div class="row bpair"><select class="inp" id="b-remindmode">${opt(KEEP, '— не менять —')}${opt('set', 'В это время')}${opt('none', 'Не напоминать')}</select>
+      <input class="inp" id="b-remind" type="time" value="09:00"></div></div>
     ${planOn() || S.space === 'work' ? `<div class="field"><label>План: день, когда делаю</label>
-      <select class="inp" id="b-planmode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить день')}${opt('none', 'Убрать план')}</select>
-      <input class="inp" id="b-plan" type="date" value="${today()}" style="margin-top:8px"></div>
+      <div class="row bpair"><select class="inp" id="b-planmode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить день')}${opt('none', 'Убрать план')}</select>
+      <input class="inp" id="b-plan" type="date" value="${today()}"></div></div>
     <div class="field"><label>Займёт часов</label>
-      <select class="inp" id="b-estmode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить')}${opt('none', 'Убрать')}</select>
-      <input class="inp num" id="b-est" type="number" min="0" step="0.5" value="1" style="margin-top:8px;max-width:90px"></div>` : ''}
+      <div class="row bpair"><select class="inp" id="b-estmode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить')}${opt('none', 'Убрать')}</select>
+      <input class="inp num" id="b-est" type="number" min="0" step="0.5" value="1" style="max-width:90px"></div></div>` : ''}
+    <div class="field"><label>Вид</label>
+      <select class="inp" id="b-kind">${opt(KEEP, '— не менять —')}${opt('task', 'Обычная')}${opt('habit', 'Привычка')}${opt('event', 'Событие')}</select></div>
+    <div class="field"><label>Раздел</label>
+      <select class="inp" id="b-section">${opt(KEEP, '— не менять —')}${opt('', 'Без раздела')}${mySecs().map(s => opt(s.id, esc(s.name))).join('')}</select></div>
     </div><div>
     <div class="field"><label>Повтор</label>
       <div class="row">
@@ -1765,10 +1769,6 @@ function openBulk() {
         <button class="pill" data-act="b-from" data-v="due">от старого срока</button>
         <button class="pill" data-act="b-from" data-v="done">от дня выполнения</button>
       </div></div>
-    <div class="field"><label>Вид</label>
-      <select class="inp" id="b-kind">${opt(KEEP, '— не менять —')}${opt('task', 'Обычная')}${opt('habit', 'Привычка')}${opt('event', 'Событие')}</select></div>
-    <div class="field"><label>Раздел</label>
-      <select class="inp" id="b-section">${opt(KEEP, '— не менять —')}${opt('', 'Без раздела')}${mySecs().map(s => opt(s.id, esc(s.name))).join('')}</select></div>
     ${personal ? `<div class="field"><label>Размер</label>
       <select class="inp" id="b-size">${opt(KEEP, '— не менять —')}${opt('', 'Нет (или как у раздела)')}${Object.entries(SIZES).map(([k, z]) => opt(k, z.icon + ' ' + z.name)).join('')}</select></div>
     <div class="field" id="b-slot-box"><label>Когда (у средних и вдохновения)</label>
@@ -2454,7 +2454,7 @@ function openEdit(t) {
       <button class="pill" data-act="e-tab" data-v="more">Ещё<i class="tdot"></i></button>
     </div>
     <div class="e-pane" data-pane="main">
-    <div id="f-when">
+    <div class="cols"><div id="f-when">
     <div class="field"><label id="f-date-label">Срок</label>
       <div class="row"><input class="inp" id="f-date" type="date" value="${e.due_date || ''}">
         <button class="pill" data-act="date" data-v="0">Сегодня</button>
@@ -2472,13 +2472,15 @@ function openEdit(t) {
     <div class="field"><label>Раздел</label>
       <select class="inp" id="f-section"><option value="">Без раздела</option>
         ${mySecs().map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
-    </div>
+    </div><div>
     <div class="field" id="f-subs-box"><div id="f-subs"></div>
       <button class="link" data-act="sub-add">+ Подпункт</button></div>
     ${occ ? kidsBox : ''}
     <div class="field"><textarea class="inp" id="f-notes" placeholder="Заметка">${esc(e.notes || '')}</textarea></div>
+    </div></div>
     </div>
     <div class="e-pane" data-pane="repeat">
+    <div class="cols"><div>
     <div class="field"><label>Повтор</label>
       <div class="row">
         <select class="inp" id="f-unit">
@@ -2493,6 +2495,7 @@ function openEdit(t) {
       <div class="row">делать <input class="inp" id="f-on" type="number" min="1" value="${e.repeat_unit === 'cycle' ? e.repeat_every || 1 : 2}" style="max-width:64px"> дн., пропускать <input class="inp" id="f-off" type="number" min="1" value="${e.repeat_off || 1}" style="max-width:64px"> дн.</div>
       <div class="row" style="margin-top:6px">первый день цикла <input class="inp" id="f-anchor" type="date" value="${e.repeat_anchor || ''}" style="max-width:160px"></div>
       <div class="hint" id="f-cycle-next"></div></div>
+    </div><div>
     <div class="field" id="f-wd-box"><label>Дни недели (можно не выбирать)</label>
       <div class="wds">${WD.map((w, i) => `<button class="pill" data-act="wd" data-v="${i + 1}">${w}</button>`).join('')}</div></div>
     <div class="field" id="f-from-box"><label>Новый срок считать</label>
@@ -2500,6 +2503,7 @@ function openEdit(t) {
         <button class="pill" data-act="from" data-v="due">от старого срока</button>
         <button class="pill" data-act="from" data-v="done">от выполнения</button>
       </div></div>
+    </div></div>
     </div>
     <div class="e-pane" data-pane="plan">
     ${projHint(e)}
@@ -2509,6 +2513,7 @@ function openEdit(t) {
       <div id="f-spent"></div></div>
     </div>
     <div class="e-pane" data-pane="more">
+    <div class="cols"><div>
     <div class="field" id="f-remind-box"><label>Напомнить на телефон</label>
       <div class="wds remind">
         <button class="pill" data-act="remind" data-v="">Нет</button>
@@ -2516,19 +2521,21 @@ function openEdit(t) {
         <input class="inp" id="f-remind" type="time" title="Своё время" value="${hhmm(e.remind_at)}">
         <span class="early" id="f-early-box">и за <input class="inp num" id="f-early" type="number" min="1" max="60" placeholder="—" value="${e.remind_days || ''}" title="Напомнить заранее: за сколько дней до срока" style="max-width:56px"> дн.</span>
       </div></div>
-    ${S.space === 'personal' || e.pet ? `<div class="field" id="f-pet-box"><label>Питомец</label>
-      <div class="row">${[['', 'Нет'], ...Object.keys(PETS).filter(petOn).map(p => [p, PETS[p].icon + ' ' + esc(petName(p))])]
-        .map(([p, n]) => `<button class="pill" data-act="pet" data-v="${p}">${n}</button>`).join('')}</div></div>` : ''}
-    ${S.space === 'personal' || e.decor ? `<div class="field" id="f-decor-box"><label>Картинка</label>
-      <div class="row">${[['', 'Нет', ''], ...Object.entries(DECOR).map(([k, d]) => [k, d.icon + ' ' + d.name, d.hint])]
-        .map(([k, n, h]) => `<button class="pill" data-act="decor" data-v="${k}" title="${esc(h)}">${n}</button>`).join('')}</div></div>` : ''}
     ${S.space === 'personal' || e.size ? `<div class="field" id="f-size-box"><label>Размер</label>
       <div class="row"><button class="pill" data-act="size" data-v="" id="f-size-def">Нет</button>${Object.entries(SIZES).map(([k, z]) => `<button class="pill" data-act="size" data-v="${k}">${z.icon} ${z.name}</button>`).join('')}</div></div>
     <div class="field" id="f-slot-box"><label>Когда</label>
       <div class="row"><button class="pill" data-act="slot" data-v="">В любое окошко</button>${Object.entries(SLOTS).map(([k, s]) => `<button class="pill" data-act="slot" data-v="${k}">${s.name}</button>`).join('')}</div></div>` : ''}
     ${e.project_id && projectTasks(e.project_id).some(x => x.id !== e.id) ? `<div class="field"><label>Делать после (шаги этого проекта)</label>
       <div class="wds after">${projectTasks(e.project_id).filter(x => x.id !== e.id).map(x => `<button class="pill" data-act="after" data-v="${x.id}">${x.done_on ? '✓ ' : ''}${esc(x.title)}</button>`).join('')}</div></div>` : ''}
+    </div><div>
+    ${S.space === 'personal' || e.pet ? `<div class="field" id="f-pet-box"><label>Питомец</label>
+      <div class="row">${[['', 'Нет'], ...Object.keys(PETS).filter(petOn).map(p => [p, PETS[p].icon + ' ' + esc(petName(p))])]
+        .map(([p, n]) => `<button class="pill" data-act="pet" data-v="${p}">${n}</button>`).join('')}</div></div>` : ''}
+    ${S.space === 'personal' || e.decor ? `<div class="field" id="f-decor-box"><label>Картинка</label>
+      <div class="row">${[['', 'Нет', ''], ...Object.entries(DECOR).map(([k, d]) => [k, d.icon + ' ' + d.name, d.hint])]
+        .map(([k, n, h]) => `<button class="pill" data-act="decor" data-v="${k}" title="${esc(h)}">${n}</button>`).join('')}</div></div>` : ''}
     ${occ ? '' : kidsBox}
+    </div></div>
     </div>
     <div class="actions">
       ${isNew ? '<span></span>' : '<button class="btn danger" data-act="delete">Удалить</button>'}
@@ -2608,7 +2615,7 @@ function syncEdit() {
   document.getElementById('f-plan-box').style.display = planFields(e) ? '' : 'none';
   // случай: только название, «Следом» и заметка
   const occ = e.kind === 'occasion';
-  if (occ) for (const sel of ['#f-kind', '#f-when', '#f-subs-box', '#f-tabs']) $modal.querySelector(sel).style.display = 'none';
+  if (occ) for (const sel of ['#f-kind', '#f-when', '#f-subs-box', '#f-tabs']) $modal.querySelector(sel).hidden = true;
   const kb = document.getElementById('f-kids-box');
   if (kb) kb.style.display = isEvent(e) ? 'none' : '';
   // вкладки: «План и время» — только у рабочих задач; точка — на вкладке что-то задано
@@ -2687,6 +2694,29 @@ async function toggleSubModal(i) {
     await call(sb.from('tasks').update({ checklist: saved }).eq('id', e.id));
   }
 }
+
+// Высота окна — по содержимому, а не «на весь экран»: при открытии меряем самую высокую вкладку
+// так, будто все поля, которые появляются от кнопок, уже показаны. Потом окно уже не меняет размер
+// от нажатий; что не поместилось (много подпунктов) — прокручивается внутри.
+function fitSheet() {
+  const sh = $modal.querySelector('.sheet.fixed, .sheet.review');
+  if (!sh) return;
+  const panes = [...sh.querySelectorAll(':scope > .e-pane, :scope > .tpl-pane')];
+  const was = panes.map(p => p.hidden);
+  const tabOff = p => { const b = sh.querySelector(`[data-act$="-tab"][data-v="${p.dataset.pane}"]`); return b && b.style.display === 'none'; };
+  sh.style.height = 'auto';
+  sh.classList.add('measure');
+  let h = 0;
+  const live = panes.filter(p => !tabOff(p));
+  if (live.length) live.forEach(p => { panes.forEach(x => { x.hidden = x !== p; }); h = Math.max(h, sh.scrollHeight); });
+  else h = sh.scrollHeight;
+  panes.forEach((p, i) => { p.hidden = was[i]; });
+  sh.classList.remove('measure');
+  sh.style.height = Math.min(h + 2, innerHeight * 0.92) + 'px';
+}
+// новое окно (или окно целиком перерисовано) — подогнать высоту
+new MutationObserver(() => fitSheet()).observe($modal, { childList: true });
+addEventListener('resize', () => fitSheet());
 
 function closeModal() {
   S.edit = null;
@@ -3059,7 +3089,7 @@ function openTemplate(tpl) {
       <button class="pill" data-act="t-tab" data-v="steps">Шаги</button>
       ${stats ? '<button class="pill" data-act="t-tab" data-v="time">Время</button>' : ''}
     </div>
-    <div class="tpl-pane" data-pane="main">
+    <div class="tpl-pane" data-pane="main"><div class="cols"><div>
       ${t.from ? `<div class="field"><label>Эта задача — за какой период</label>
         <select class="inp" id="t-from-p"></select>
         <div class="hint">Следующие задачи шаблон создаст сам — за следующий период.</div></div>` : ''}
@@ -3070,6 +3100,7 @@ function openTemplate(tpl) {
         <div id="t-months-list">
           <div class="hint">Например, оценка урожая нужна только за июль–октябрь: задачи создадутся только за отмеченные месяцы.</div>
           <div class="wds months">${MONTHS.map((m, i) => `<button class="pill" data-act="t-month" data-v="${i + 1}">${m.slice(0, 3)}</button>`).join('')}</div></div></div>
+      </div><div>
       <div class="field"><label>Создавать заранее</label>
         <div class="row">за <input class="inp num" id="t-lead" type="number" min="0" max="20" value="${t.lead_days}" style="max-width:70px"> рабочих дн. до конца периода</div>
         <div class="hint">0 — на следующий день после конца периода.</div></div>
@@ -3079,7 +3110,7 @@ function openTemplate(tpl) {
         <div class="row"><select class="inp" id="t-run" style="flex:1">${periodChoices(t.period).map(p => `<option value="${p.key}">${p.label}</option>`).join('')}</select>
         <button class="btn" data-act="t-run">Создать задачи</button></div></div>
         <div class="field"><button class="link" data-act="t-copy">Сделать копию шаблона (например, для годовой отчётности)</button></div>` : ''}
-    </div>
+    </div></div></div>
     <div class="tpl-pane" data-pane="steps">
       ${t.from && t.from.subs.length ? `<div class="field"><label>Какие подпункты задачи взять в шаблон</label>
         <div class="fsubs" id="t-fsubs"></div></div>` : ''}
