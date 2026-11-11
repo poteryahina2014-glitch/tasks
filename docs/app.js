@@ -3011,27 +3011,48 @@ function openTemplate(tpl) {
   S.tpl = t;
   $modal.dataset.kind = 'template';
   const work = secsOf('work');
+  const stats = tplStatsHTML(t);
+  t.someMonths = t.months.length > 0;
+  t.tab = 'main';
+  // окно на вкладках: «Основное» / «Шаги» / «Время» — чтобы настройки не громоздились
   $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet wide fixed">
     <h3>${t.id ? 'Шаблон' : 'Новый шаблон'}</h3>
     <div class="field"><input class="inp" id="t-title" placeholder="Название, например «Квартальная отчётность»" value="${esc(t.title || '')}"></div>
-    ${t.from ? `<div class="field"><label>Эта задача — за какой период (следующие шаблон создаст сам)</label>
-      <select class="inp" id="t-from-p"></select></div>
-      ${t.from.subs.length ? '<div class="field"><label>Какие подпункты взять в шаблон</label><div class="wds" id="t-fsubs"></div></div>' : ''}` : ''}
-    <div class="field seg">${Object.entries(PERIODS).map(([k, n]) => `<button class="pill" data-act="t-period" data-v="${k}">${n}</button>`).join('')}</div>
-    <div class="field" id="t-months-box"><label>В какие месяцы (по месяцу, за который считаем; не выбрано — каждый месяц)</label>
-      <div class="wds months">${MONTHS.map((m, i) => `<button class="pill" data-act="t-month" data-v="${i + 1}">${m.slice(0, 3)}</button>`).join('')}</div></div>
-    <div class="field"><label>Создавать заранее</label>
-      <div class="row">за <input class="inp num" id="t-lead" type="number" min="0" max="20" value="${t.lead_days}" style="max-width:70px"> рабочих дн. до конца периода (0 — на следующий день после конца)</div></div>
-    <div class="field"><label>Раздел для задач</label>
-      <select class="inp" id="t-section"><option value="">Без раздела</option>${work.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
-    <div class="field"><label>Шаги: «с» и «до» — числа месяца; «мес.» — какой по счёту месяц после конца периода (1 — следующий). У шага могут быть подзадачи — без своих сроков.</label>
-      <div id="t-steps"></div>
-      <button class="link" data-act="t-add">+ Шаг</button></div>
-    ${t.id ? `<div class="field"><label>Создать задачи вручную (если не хочешь ждать конца периода)</label>
-      <div class="row"><select class="inp" id="t-run" style="flex:1">${periodChoices(t.period).map(p => `<option value="${p.key}">${p.label}</option>`).join('')}</select>
-      <button class="btn" data-act="t-run">Создать задачи</button></div></div>
-      <div class="field"><button class="link" data-act="t-copy">Сделать копию шаблона (например, для годовой отчётности)</button></div>` : ''}
-    ${tplStatsHTML(t)}
+    <div class="seg tpl-tabs">
+      <button class="pill" data-act="t-tab" data-v="main">Основное</button>
+      <button class="pill" data-act="t-tab" data-v="steps">Шаги</button>
+      ${stats ? '<button class="pill" data-act="t-tab" data-v="time">Время</button>' : ''}
+    </div>
+    <div class="tpl-pane" data-pane="main">
+      ${t.from ? `<div class="field"><label>Эта задача — за какой период</label>
+        <select class="inp" id="t-from-p"></select>
+        <div class="hint">Следующие задачи шаблон создаст сам — за следующий период.</div></div>` : ''}
+      <div class="field"><label>Как часто</label>
+        <div class="seg">${Object.entries(PERIODS).map(([k, n]) => `<button class="pill" data-act="t-period" data-v="${k}">${n}</button>`).join('')}</div></div>
+      <div class="field" id="t-months-box"><label>Какие месяцы</label>
+        <div class="seg"><button class="pill" data-act="t-some" data-v="">Все месяцы</button><button class="pill" data-act="t-some" data-v="1">Только некоторые</button></div>
+        <div id="t-months-list">
+          <div class="hint">Например, оценка урожая нужна только за июль–октябрь: задачи создадутся только за отмеченные месяцы.</div>
+          <div class="wds months">${MONTHS.map((m, i) => `<button class="pill" data-act="t-month" data-v="${i + 1}">${m.slice(0, 3)}</button>`).join('')}</div></div></div>
+      <div class="field"><label>Создавать заранее</label>
+        <div class="row">за <input class="inp num" id="t-lead" type="number" min="0" max="20" value="${t.lead_days}" style="max-width:70px"> рабочих дн. до конца периода</div>
+        <div class="hint">0 — на следующий день после конца периода.</div></div>
+      <div class="field"><label>Раздел для задач</label>
+        <select class="inp" id="t-section"><option value="">Без раздела</option>${work.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
+      ${t.id ? `<div class="field"><label>Создать задачи вручную (если не хочешь ждать конца периода)</label>
+        <div class="row"><select class="inp" id="t-run" style="flex:1">${periodChoices(t.period).map(p => `<option value="${p.key}">${p.label}</option>`).join('')}</select>
+        <button class="btn" data-act="t-run">Создать задачи</button></div></div>
+        <div class="field"><button class="link" data-act="t-copy">Сделать копию шаблона (например, для годовой отчётности)</button></div>` : ''}
+    </div>
+    <div class="tpl-pane" data-pane="steps">
+      ${t.from && t.from.subs.length ? `<div class="field"><label>Какие подпункты задачи взять в шаблон</label>
+        <div class="fsubs" id="t-fsubs"></div></div>` : ''}
+      <div class="field"><label>Шаги</label>
+        <div class="hint" style="margin:0 0 8px">«с» и «до» — числа месяца; «мес.» — какой по счёту месяц после конца периода (1 — следующий). У шага могут быть подзадачи — без своих сроков.</div>
+        <div id="t-steps"></div>
+        <button class="link" data-act="t-add">+ Шаг</button></div>
+    </div>
+    ${stats ? `<div class="tpl-pane" data-pane="time">${stats}</div>` : ''}
     <div class="actions">
       ${t.id ? '<button class="btn danger" data-act="t-delete">Удалить</button>' : '<span></span>'}
       <div class="row"><button class="btn" data-act="close">Отмена</button><button class="btn main" data-act="t-save">Сохранить</button></div>
@@ -3068,6 +3089,10 @@ function syncTemplate() {
   $modal.querySelectorAll('[data-act=t-period]').forEach(b => b.classList.toggle('on', b.dataset.v === t.period));
   $modal.querySelectorAll('[data-act=t-month]').forEach(b => b.classList.toggle('on', t.months.includes(+b.dataset.v)));
   document.getElementById('t-months-box').style.display = t.period === 'month' ? '' : 'none';
+  $modal.querySelectorAll('[data-act=t-some]').forEach(b => b.classList.toggle('on', !!b.dataset.v === t.someMonths));
+  document.getElementById('t-months-list').style.display = t.someMonths ? '' : 'none';
+  $modal.querySelectorAll('[data-act=t-tab]').forEach(b => b.classList.toggle('on', b.dataset.v === t.tab));
+  $modal.querySelectorAll('.tpl-pane').forEach(p => { p.hidden = p.dataset.pane !== t.tab; });
   if (t.from) {
     // сменили «каждый месяц / квартал / год» — заново список периодов и числа шага
     const sel = document.getElementById('t-from-p');
@@ -3081,7 +3106,8 @@ function syncTemplate() {
       renderSteps();
     }
     const fs = document.getElementById('t-fsubs');
-    if (fs) fs.innerHTML = t.from.subs.map((x, i) => `<button class="pill ${x.on ? 'on' : ''}" data-act="t-fsub" data-v="${i}">${esc(x.t)}</button>`).join('');
+    if (fs) fs.innerHTML = t.from.subs.map((x, i) => `<button class="fsub" data-act="t-fsub" data-v="${i}"><span class="sub-box ${x.on ? 'on' : ''}">${x.on ? '✓' : ''}</span>${esc(x.t)}</button>`).join('')
+      + `<div class="hint">Взято ${t.from.subs.filter(x => x.on).length} из ${t.from.subs.length}. Щелчок — взять или не брать.</div>`;
   }
 }
 
@@ -3146,7 +3172,7 @@ async function saveTemplate(silent = false) {
   const row = {
     title,
     period: t.period,
-    months: t.period === 'month' && t.months.length ? [...t.months].sort((a, b) => a - b) : null,
+    months: t.period === 'month' && t.someMonths && t.months.length ? [...t.months].sort((a, b) => a - b) : null,
     section_id: document.getElementById('t-section').value || null,
     // подпункты, выбранные из задачи, — в первый шаг
     steps: t.steps.map((s, i) => (i === 0 && t.from ? { ...s, subs: [...t.from.subs.filter(x => x.on).map(x => x.t), ...(s.subs || [])] } : s))
@@ -3315,6 +3341,8 @@ document.addEventListener('click', async ev => {
       case 'tpl-edit': openTemplate(S.templates.find(t => t.id === id)); break;
       case 'tpl-example': openTemplate(EXAMPLES[v]); break;
       case 't-period': S.tpl.period = v; syncTemplate(); break;
+      case 't-tab': S.tpl.tab = v; syncTemplate(); break;
+      case 't-some': S.tpl.someMonths = !!v; syncTemplate(); break;
       case 't-month': S.tpl.months = S.tpl.months.includes(+v) ? S.tpl.months.filter(m => m !== +v) : S.tpl.months.concat(+v); syncTemplate(); break;
       case 't-add': S.tpl.steps.push({ title: '', month: 1 }); renderSteps(); break;
       case 't-del-step': {
