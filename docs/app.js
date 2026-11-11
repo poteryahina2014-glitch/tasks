@@ -838,6 +838,7 @@ async function addSpent() {
   const [row] = await call(sb.from('time_log').insert({ task_id: S.edit.id, day, hours: h }).select());
   S.times.push(row);
   renderSpent();
+  syncEdit();
   render();
   toast(`Записано: ${fmtH(h)} ч за ${dateLabel(day)}`);
 }
@@ -846,6 +847,7 @@ async function delSpent(id) {
   await call(sb.from('time_log').delete().eq('id', id));
   S.times = S.times.filter(x => String(x.id) !== String(id));
   renderSpent();
+  syncEdit();
   render();
 }
 
@@ -2430,6 +2432,9 @@ function openEdit(t) {
   const parent = e.wake_after && byId(e.wake_after);
   const st = !isNew && e.kind === 'habit' ? habitStats(e) : null;
   $modal.dataset.kind = 'edit';
+  const kidsBox = parent ? '' : `<div class="field" id="f-kids-box"><label>Следом — появятся на сегодня, когда ${occ ? 'случай отмечен' : 'эта задача сделана'}</label>
+      <div id="f-kids"></div><button class="link" data-act="kid-add">+ Задача следом</button></div>`;
+  e.tab = 'main';
   // компактно: на компьютере две колонки (когда — слева, повтор и прочее — справа), кнопки внизу всегда видны
   $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet edit fixed">
     <h3>${occ ? (isNew ? 'Новый случай' : 'Случай') : isNew ? 'Новая запись' : isEvent(e) ? 'Событие' : 'Задача'}</h3>
@@ -2440,10 +2445,16 @@ function openEdit(t) {
         <button class="pill" data-act="kind" data-v="habit">Привычка</button>
         <button class="pill" data-act="kind" data-v="event">Событие</button>
       </div></div>
-    ${projHint(e)}
     ${st ? `<div class="stats">За 30 дней: <b>${st.done} из ${st.total}</b>
       <div class="strip">${st.days.map(([, s, p]) => dayCell(s, p)).join('')}</div></div>` : ''}
-    <div class="cols"><div>
+    <div class="seg e-tabs" id="f-tabs">
+      <button class="pill" data-act="e-tab" data-v="main">Главное</button>
+      <button class="pill" data-act="e-tab" data-v="repeat">Повтор<i class="tdot"></i></button>
+      <button class="pill" data-act="e-tab" data-v="plan">План и время<i class="tdot"></i></button>
+      <button class="pill" data-act="e-tab" data-v="more">Ещё<i class="tdot"></i></button>
+    </div>
+    <div class="e-pane" data-pane="main">
+    <div id="f-when">
     <div class="field"><label id="f-date-label">Срок</label>
       <div class="row"><input class="inp" id="f-date" type="date" value="${e.due_date || ''}">
         <button class="pill" data-act="date" data-v="0">Сегодня</button>
@@ -2458,21 +2469,16 @@ function openEdit(t) {
     <div class="field"><label>Время</label>
       <div class="row"><input class="inp" id="f-start" type="time" value="${hhmm(e.start_time)}" title="с">–<input class="inp" id="f-end" type="time" value="${hhmm(e.end_time)}" title="до"></div></div>
     </div>
-    <div class="field" id="f-plan-box"><label>План: день, когда делаю</label>
-      <div class="row"><input class="inp" id="f-plan" type="date" value="${e.plan_date || ''}">
-        займёт <input class="inp num" id="f-est" type="number" min="0" step="0.5" value="${e.estimate || ''}" style="max-width:70px"> ч</div>
-      <div id="f-spent"></div></div>
-    <div class="field" id="f-remind-box"><label>Напомнить на телефон</label>
-      <div class="wds remind">
-        <button class="pill" data-act="remind" data-v="">Нет</button>
-        ${REMIND_TIMES.map(h => `<button class="pill" data-act="remind" data-v="${h}">${h.replace(/^0/, '').slice(0, -3)}</button>`).join('')}
-        <input class="inp" id="f-remind" type="time" title="Своё время" value="${hhmm(e.remind_at)}">
-        <span class="early" id="f-early-box">и за <input class="inp num" id="f-early" type="number" min="1" max="60" placeholder="—" value="${e.remind_days || ''}" title="Напомнить заранее: за сколько дней до срока" style="max-width:56px"> дн.</span>
-      </div></div>
     <div class="field"><label>Раздел</label>
       <select class="inp" id="f-section"><option value="">Без раздела</option>
         ${mySecs().map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
-    </div><div>
+    </div>
+    <div class="field" id="f-subs-box"><div id="f-subs"></div>
+      <button class="link" data-act="sub-add">+ Подпункт</button></div>
+    ${occ ? kidsBox : ''}
+    <div class="field"><textarea class="inp" id="f-notes" placeholder="Заметка">${esc(e.notes || '')}</textarea></div>
+    </div>
+    <div class="e-pane" data-pane="repeat">
     <div class="field"><label>Повтор</label>
       <div class="row">
         <select class="inp" id="f-unit">
@@ -2494,6 +2500,22 @@ function openEdit(t) {
         <button class="pill" data-act="from" data-v="due">от старого срока</button>
         <button class="pill" data-act="from" data-v="done">от выполнения</button>
       </div></div>
+    </div>
+    <div class="e-pane" data-pane="plan">
+    ${projHint(e)}
+    <div class="field" id="f-plan-box"><label>План: день, когда делаю</label>
+      <div class="row"><input class="inp" id="f-plan" type="date" value="${e.plan_date || ''}">
+        займёт <input class="inp num" id="f-est" type="number" min="0" step="0.5" value="${e.estimate || ''}" style="max-width:70px"> ч</div>
+      <div id="f-spent"></div></div>
+    </div>
+    <div class="e-pane" data-pane="more">
+    <div class="field" id="f-remind-box"><label>Напомнить на телефон</label>
+      <div class="wds remind">
+        <button class="pill" data-act="remind" data-v="">Нет</button>
+        ${REMIND_TIMES.map(h => `<button class="pill" data-act="remind" data-v="${h}">${h.replace(/^0/, '').slice(0, -3)}</button>`).join('')}
+        <input class="inp" id="f-remind" type="time" title="Своё время" value="${hhmm(e.remind_at)}">
+        <span class="early" id="f-early-box">и за <input class="inp num" id="f-early" type="number" min="1" max="60" placeholder="—" value="${e.remind_days || ''}" title="Напомнить заранее: за сколько дней до срока" style="max-width:56px"> дн.</span>
+      </div></div>
     ${S.space === 'personal' || e.pet ? `<div class="field" id="f-pet-box"><label>Питомец</label>
       <div class="row">${[['', 'Нет'], ...Object.keys(PETS).filter(petOn).map(p => [p, PETS[p].icon + ' ' + esc(petName(p))])]
         .map(([p, n]) => `<button class="pill" data-act="pet" data-v="${p}">${n}</button>`).join('')}</div></div>` : ''}
@@ -2504,14 +2526,10 @@ function openEdit(t) {
       <div class="row"><button class="pill" data-act="size" data-v="" id="f-size-def">Нет</button>${Object.entries(SIZES).map(([k, z]) => `<button class="pill" data-act="size" data-v="${k}">${z.icon} ${z.name}</button>`).join('')}</div></div>
     <div class="field" id="f-slot-box"><label>Когда</label>
       <div class="row"><button class="pill" data-act="slot" data-v="">В любое окошко</button>${Object.entries(SLOTS).map(([k, s]) => `<button class="pill" data-act="slot" data-v="${k}">${s.name}</button>`).join('')}</div></div>` : ''}
-    </div></div>
     ${e.project_id && projectTasks(e.project_id).some(x => x.id !== e.id) ? `<div class="field"><label>Делать после (шаги этого проекта)</label>
       <div class="wds after">${projectTasks(e.project_id).filter(x => x.id !== e.id).map(x => `<button class="pill" data-act="after" data-v="${x.id}">${x.done_on ? '✓ ' : ''}${esc(x.title)}</button>`).join('')}</div></div>` : ''}
-    <div class="field" id="f-subs-box"><div id="f-subs"></div>
-      <button class="link" data-act="sub-add">+ Подпункт</button></div>
-    ${parent ? '' : `<div class="field" id="f-kids-box"><label>Следом — появятся на сегодня, когда ${occ ? 'случай отмечен' : 'эта задача сделана'}</label>
-      <div id="f-kids"></div><button class="link" data-act="kid-add">+ Задача следом</button></div>`}
-    <div class="field"><textarea class="inp" id="f-notes" placeholder="Заметка">${esc(e.notes || '')}</textarea></div>
+    ${occ ? '' : kidsBox}
+    </div>
     <div class="actions">
       ${isNew ? '<span></span>' : '<button class="btn danger" data-act="delete">Удалить</button>'}
       <div class="row"><button class="btn" data-act="close">Отмена</button><button class="btn main" data-act="save">Сохранить</button></div>
@@ -2589,9 +2607,27 @@ function syncEdit() {
   document.getElementById('f-subs-box').style.display = isEvent(e) ? 'none' : '';
   document.getElementById('f-plan-box').style.display = planFields(e) ? '' : 'none';
   // случай: только название, «Следом» и заметка
-  if (e.kind === 'occasion') for (const sel of ['#f-kind', '.cols', '#f-subs-box']) $modal.querySelector(sel).style.display = 'none';
+  const occ = e.kind === 'occasion';
+  if (occ) for (const sel of ['#f-kind', '#f-when', '#f-subs-box', '#f-tabs']) $modal.querySelector(sel).style.display = 'none';
   const kb = document.getElementById('f-kids-box');
   if (kb) kb.style.display = isEvent(e) ? 'none' : '';
+  // вкладки: «План и время» — только у рабочих задач; точка — на вкладке что-то задано
+  const tabOk = { main: true, repeat: !occ, plan: !occ && planFields(e), more: !occ };
+  if (!tabOk[e.tab]) e.tab = 'main';
+  const sizeSet = !isEvent(e) && (e.size || e.slot);
+  const dots = {
+    repeat: !!e.repeat_unit,
+    plan: !!(e.plan_date || e.estimate || (e.id && spentOf(e.id))),
+    more: !!(e.remind_at || e.remind_days || e.pet || e.decor || sizeSet || (e.after_ids || []).length || (!isEvent(e) && (e.kids || []).some(k => k.t.trim()))),
+  };
+  q('[data-act=e-tab]').forEach(b => {
+    const k = b.dataset.v;
+    b.classList.toggle('on', k === e.tab);
+    b.style.display = tabOk[k] ? '' : 'none';
+    const dot = b.querySelector('.tdot');
+    if (dot) dot.hidden = !dots[k];
+  });
+  q('.e-pane').forEach(p => { p.hidden = p.dataset.pane !== e.tab; });
 }
 
 // Задачи «Следом» в окне задачи: ☾ спит / ● уже на сегодня, текст, ✕.
@@ -3342,6 +3378,7 @@ document.addEventListener('click', async ev => {
       case 'tpl-example': openTemplate(EXAMPLES[v]); break;
       case 't-period': S.tpl.period = v; syncTemplate(); break;
       case 't-tab': S.tpl.tab = v; syncTemplate(); break;
+      case 'e-tab': S.edit.tab = v; syncEdit(); break;
       case 't-some': S.tpl.someMonths = !!v; syncTemplate(); break;
       case 't-month': S.tpl.months = S.tpl.months.includes(+v) ? S.tpl.months.filter(m => m !== +v) : S.tpl.months.concat(+v); syncTemplate(); break;
       case 't-add': S.tpl.steps.push({ title: '', month: 1 }); renderSteps(); break;

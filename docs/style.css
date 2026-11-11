@@ -692,3 +692,10 @@ body.work .icon.mode { box-shadow: inset 0 0 0 1px var(--accent); }
 .fsub { display: flex; align-items: center; gap: 10px; text-align: left; padding: 6px 8px; border-radius: 8px; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
 .fsub:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .fsub .sub-box { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+
+/* окно задачи на вкладках; точка — на вкладке что-то задано */
+.e-tabs { margin: 0 0 12px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.e-tabs .pill { white-space: nowrap; flex: none; }
+@media (max-width: 500px) { .sheet.edit .e-tabs .pill { padding: 6px 7px; font-size: 13px; } .tdot { margin-left: 4px; } }
+.tdot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: 6px; vertical-align: middle; }
+.tdot[hidden] { display: none; }
