@@ -739,3 +739,18 @@ body.work .icon.mode { box-shadow: inset 0 0 0 1px var(--accent); }
   .sheet.edit .notes-col > .field:last-child { flex: 1; display: flex; flex-direction: column; }
   .sheet.edit .notes-col textarea.inp { flex: 1; resize: none; }
 }
+
+/* «Сегодня»: тонкие разделители групп вместо заголовков «Привычки» / «Задачи» */
+.group-sep { display: flex; align-items: center; gap: 8px; margin: 12px 2px 4px; color: var(--muted); font-size: 12px; }
+.group-sep::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.group-sep.slot-head { flex-wrap: wrap; }
+.group-sep.slot-head::after { order: 1; flex-basis: 100%; margin-top: 2px; }
+body.bg .group-sep { text-shadow: 0 1px 3px #000; }
+
+/* книги на подоконнике (тихая задача) */
+#bg .books { position: absolute; bottom: 70px; width: 140px; pointer-events: auto; cursor: pointer; filter: drop-shadow(0 4px 4px #0006); transition: transform .15s; }
+#bg .books:hover { transform: translateY(-3px); }
+#bg .books svg { display: block; width: 100%; }
+@media (max-width: 899px) { #bg .books { display: none; } }
+.kid-book { opacity: .35; filter: grayscale(1); }
+.kid-book.on { opacity: 1; filter: none; }

@@ -171,7 +171,10 @@ const spaceOf = t => {
 };
 const secsOf = space => S.sections.filter(x => spaceOfSec(x) === space);
 const mySecs = () => secsOf(S.space);
-const active = () => activeAll().filter(t => !pausedSec(t.section_id) && spaceOf(t) === S.space);
+// «тихая» задача (картинка «Книги»): в списках, утренней проверке, календаре и погоде её нет — только книги на подоконнике
+const quiet = t => t.decor === 'books';
+const active = () => activeAll().filter(t => !quiet(t) && !pausedSec(t.section_id) && spaceOf(t) === S.space);
+const booksNow = () => activeAll().filter(t => quiet(t) && t.due_date && t.due_date <= today() && !pausedSec(t.section_id) && spaceOf(t) === S.space);
 // рабочие события — в личном календаре видны бледно, как «занято»
 const busyEvents = () => (S.space === 'personal'
   ? activeAll().filter(t => isEvent(t) && spaceOf(t) === 'work' && !pausedSec(t.section_id)) : []);
@@ -386,36 +389,39 @@ function renderToday() {
   const t0 = today();
   const due = active().filter(t => !isEvent(t) && reviewDay(t) && reviewDay(t) <= t0)
     .sort((a, b) => (a.start_time || '99') < (b.start_time || '99') ? -1 : 1);
-  const habits = due.filter(t => t.kind === 'habit');
-  // «Окошки»: обед / после работы (будни) с заполненностью и вдохновение на вечер — отдельно от остальных задач
+  // «Окошки»: обед / после работы / после ужина (будни) с заполненностью
   const personal = S.space === 'personal';
   const fit = personal ? dayFit(t0) : { inSlot: {}, slots: {}, out: [], room: () => 0, weekend: true };
-  const slotKey = t => t.kind === 'habit' || reviewDay(t) !== t0 ? null
-    : fit.inSlot[t.id] || (personal && sizeOf(t) === 'idea' ? 'idea' : null);
   const wide = personal && !fit.weekend && matchMedia('(min-width: 900px)').matches;
-  let slotHTML = '';
-  if (!wide) for (const k of Object.keys(fit.slots)) {
-    const list = due.filter(t => slotKey(t) === k), st = slotState(fit.slots[k]), s = slotOf(k);
-    slotHTML += `<div class="slot-head"><b>${SLOT_ICON[k]} ${SLOTS[k].name}, ${s.from}–${s.to}</b><span class="${st.cls}">${st.text}</span></div>`
-      + list.map(t => taskRow(t, fit.slots[k].items.find(i => i.t.id === t.id)?.over ? { note: 'не влезло в окошко', noteCls: 'late' } : {})).join('');
-  }
-  const ideas = due.filter(t => slotKey(t) === 'idea');
-  if (ideas.length) slotHTML += '<div class="slot-head"><b>✦ Вечером, по вдохновению</b></div>' + ideas.map(t => taskRow(t)).join('');
   const outIds = new Set(fit.out.map(t => t.id));
+  const overIds = new Set(Object.values(fit.slots).flatMap(sl => sl.items.filter(i => i.over).map(i => i.t.id)));
   const slotWarn = slotWarnHTML(fit);
-  // на компьютере слева общий список всех дел (окошко — значком), справа окошки ячейками
-  // порядок (её просьба): пятиминутки → обед → после работы → после ужина → остальное
+  // один список — привычки и задачи вместе, порядок (её просьба): пятиминутки → обед → после работы → после ужина → остальное
   const ORDER = { lunch: 1, after: 2, eve: 3 };
-  const rank = t => (fit.inSlot[t.id] ? ORDER[fit.inSlot[t.id]] : sizeOf(t) === 'quick' ? 0 : 4);
-  const tasks = due.filter(t => t.kind !== 'habit' && (wide || !slotKey(t)))
-    .map((t, i) => [t, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([t]) => t);
-  const quick = wide ? [] : tasks.filter(t => rank(t) === 0);
+  const ideaEve = t => personal && sizeOf(t) === 'idea' && reviewDay(t) === t0; // вдохновение в выходные — «вечером»
+  const rank = t => (fit.inSlot[t.id] ? ORDER[fit.inSlot[t.id]] : sizeOf(t) === 'quick' ? 0 : ideaEve(t) ? 3 : 4);
+  const sorted = due.map((t, i) => [t, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([t]) => t);
   const rowOpts = t => {
     const k = fit.inSlot[t.id];
+    if (overIds.has(t.id)) return { note: 'не влезло в окошко', noteCls: 'late', sdrag: wide };
     if (outIds.has(t.id)) return { note: 'без окошка', noteCls: 'warn', sdrag: wide, noslot: true };
     if (wide && k && k !== t.slot) return { note: `${SLOT_ICON[k]} ${SLOTS[k].name.toLowerCase()}`, sdrag: true }; // своё «Когда» и так видно справа в строке
     return { sdrag: wide };
   };
+  const GROUPS = [[0, '⚡ пятиминутки'], [1, 'lunch'], [2, 'after'], [3, 'eve'], [4, 'остальное']];
+  const used = GROUPS.filter(([r, k]) => sorted.some(t => rank(t) === r) || (!wide && fit.slots[k]));
+  let groups = '';
+  for (const [r, k] of used) {
+    const items = sorted.filter(t => rank(t) === r);
+    const sl = fit.slots[k];
+    // разделитель: у окошек на телефоне — с заполненностью; одна группа — без разделителя
+    let head = '';
+    if (sl) {
+      const st = slotState(sl), sv = slotOf(k);
+      head = `<div class="group-sep slot-head"><b>${SLOT_ICON[k]} ${SLOTS[k].name}, ${sv.from}–${sv.to}</b>${wide ? '' : `<span class="${st.cls}">${st.text}</span>`}</div>`;
+    } else if (used.length > 1) head = `<div class="group-sep"><span>${r === 3 ? '🌙 вечером' : k}</span></div>`;
+    groups += head + items.map(t => taskRow(t, rowOpts(t))).join('');
+  }
   const started = t => t.start_date && t.start_date <= t0;
   // начатые, но со сроком позже — «в работе»
   const inWork = active().filter(t => !isEvent(t) && !t.plan_date && started(t) && (!t.due_date || t.due_date > t0)).sort(byPos);
@@ -425,19 +431,14 @@ function renderToday() {
   const doneIds = [...new Set(S.logs.filter(l => l.status === 'done' && l.done_on === t0).map(l => l.task_id))];
   const doneToday = S.showDone ? doneIds.map(id => S.tasks.find(t => t.id === id)).filter(Boolean) : [];
 
-  let html = `<header class="top"><h1>Сегодня <span class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</span></h1><div class="tools">${MODE()}${GEAR}</div></header>`;
+  let html = `<header class="top"><h1>Сегодня <span class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</span></h1><div class="tools">${MODE()}${GEARS.v}</div></header>`;
   html += meterCard('top');
   if (!due.length && !doneToday.length && !events.length && !inWork.length) {
     html += '<div class="empty">Задач на сегодня нет.<br>Нажми «+», чтобы добавить.</div>';
   }
   if (events.length) html += '<h2>События</h2>' + events.map(t => taskRow(t)).join('');
   let list = '';
-  const slotNote = t => (wide && fit.inSlot[t.id] ? { note: `${SLOT_ICON[fit.inSlot[t.id]]} ${SLOTS[fit.inSlot[t.id]].name.toLowerCase()}`, sdrag: true } : { sdrag: wide });
-  if (habits.length) list += '<h2>Привычки</h2>' + habits.map(t => taskRow(t, slotNote(t))).join('');
-  if (quick.length) list += '<h2>⚡ Пятиминутки</h2>' + quick.map(t => taskRow(t, rowOpts(t))).join('');
-  if (slotHTML) list += '<h2>Окошки</h2>' + slotWarn + slotHTML;
-  const rest = tasks.filter(t => !quick.includes(t));
-  if (rest.length) list += '<h2>Задачи</h2>' + rest.map(t => taskRow(t, rowOpts(t))).join('');
+  if (groups) list += (wide ? '' : slotWarn) + groups;
   if (inWork.length) list += '<h2>В работе</h2>' + inWork.map(t => taskRow(t, { date: true })).join('');
   if (doneToday.length) list += '<h2>Сделано сегодня</h2>' + doneToday.map(t => taskRow(t, { done: true })).join('');
   if (!wide) return html + list;
@@ -561,7 +562,7 @@ function renderCalendar() {
   const rest = items.filter(o => !timed.includes(o));
   const d = parse(S.day);
   return `<header class="top"><h1>Календарь</h1>
-      <div class="seg"><button class="pill ${week ? '' : 'on'}" data-act="cal-mode" data-v="month">Месяц</button><button class="pill ${week ? 'on' : ''}" data-act="cal-mode" data-v="week">Неделя</button></div><div class="tools">${MODE()}${GEAR}</div>
+      <div class="seg"><button class="pill ${week ? '' : 'on'}" data-act="cal-mode" data-v="month">Месяц</button><button class="pill ${week ? 'on' : ''}" data-act="cal-mode" data-v="week">Неделя</button></div><div class="tools">${MODE()}${GEARS.v}</div>
     </header>
     <div class="chips">${filters.join('')}</div>
     <div class="cal-head">
@@ -635,7 +636,7 @@ function renderSections() {
     : '<button class="pill pick-btn" data-act="pick-start" aria-label="Выбрать">☐</button>';
   const filter = `<button class="pill ${S.noDate ? 'on' : ''}" data-act="nodate">Без срока</button>`;
   const sizes = `<div class="seg sizes">${Object.entries(SIZES).map(([k, z]) => `<button class="pill ${S.sizes.includes(k) ? 'on' : ''}" data-act="size-filter" data-v="${k}" aria-label="${z.title}">${z.icon}</button>`).join('')}<button class="pill ${S.sizes.includes('none') ? 'on' : ''}" data-act="size-filter" data-v="none" aria-label="Без размера">○</button></div>`;
-  return `<header class="top"><h1>Разделы</h1>${sizes}<div class="tools">${filter}${tools}${MODE()}${GEAR}</div></header>
+  return `<header class="top"><h1>Разделы</h1>${sizes}<div class="tools">${filter}${tools}${MODE()}${GEARS.v}</div></header>
     <div class="split">
       <nav class="side">${side.join('')}</nav>
       <div class="main">${body || '<div class="empty">Здесь пока пусто</div>'}</div>
@@ -774,7 +775,7 @@ function renderPlan() {
   const label = ws === weekStart(t0) ? 'Эта неделя' : `${dateLabel(ws)} — ${dateLabel(addDays(ws, 6))}`;
   return `<header class="top"><h1>План</h1>
       <div class="seg"><button class="pill" data-act="pweek" data-n="-1">‹</button><button class="pill" data-act="pweek" data-n="0">${label}</button><button class="pill" data-act="pweek" data-n="1">›</button></div>
-      <div class="tools">${MODE()}${GEAR}</div></header>
+      <div class="tools">${MODE()}${GEARS.v}</div></header>
     <div class="plan" style="grid-template-columns:repeat(${days.length}, minmax(0, 1fr)) minmax(250px, 1.4fr)">
       ${cols}
       <div class="pcol unplanned" data-pday="">
@@ -913,7 +914,7 @@ function renderTime() {
   const from = addDays(t0, 1 - S.tRange);
   const head = `<header class="top"><h1>Время</h1>
     <div class="seg">${T_RANGES.map(([n, l]) => `<button class="pill ${S.tRange === n ? 'on' : ''}" data-act="t-range" data-v="${n}">${l}</button>`).join('')}</div>
-    <div class="tools">${MODE()}${GEAR}</div></header>`;
+    <div class="tools">${MODE()}${GEARS.v}</div></header>`;
   if (!S.timeOn) return head + '<div class="empty">Чтобы записывать потраченное время, запусти в Supabase файл 017_time.sql.</div>';
   const known = id => byId(id) || (S.timeTasks || {})[id];
   const list = S.times.filter(x => x.day >= from && x.day <= t0);
@@ -1020,7 +1021,7 @@ function renderHabits() {
   const ranges = [[30, '30 дней'], [90, '3 месяца'], [365, 'год']];
   let html = `<header class="top"><h1>Привычки</h1>
     <div class="seg">${ranges.map(([n, l]) => `<button class="pill ${S.hRange === n ? 'on' : ''}" data-act="h-range" data-v="${n}">${l}</button>`).join('')}</div>
-    <div class="tools">${MODE()}${GEAR}</div></header>`;
+    <div class="tools">${MODE()}${GEARS.v}</div></header>`;
   if (!list.length) return html + '<div class="empty">Привычек пока нет.<br>В окне задачи выбери вид «Привычка».</div>';
   html += '<div class="legend"><i class="done"></i> сделано <i class="missed"></i> пропущено <i class="part" style="--p:50%"></i> частично <i></i> не нужно было / ещё не отмечено</div>';
   return html + list.map(habitCard).join('');
@@ -1029,6 +1030,7 @@ function renderHabits() {
 // ---------- картинки у задач ----------
 const DECOR = {
   dust: { icon: '🕸', name: 'Пыль и паутина', get hint() { return `Пыль и паутина — если задача просрочена на ${lim('dust')} дн. и больше (уборка).`; } },
+  books: { icon: '📚', name: 'Книги', hint: 'Только картинкой: в списках задачи нет, на подоконнике лежат книги' },
   meter: { icon: '🔢', name: 'Счётчики', hint: 'Счётчики — когда подошёл срок (или «Начать с»), сбоку появляется счётчик (газ, вода или свет — по названию задачи). Его можно перетащить мышкой.' },
 };
 
@@ -1097,11 +1099,24 @@ function bgState() {
   // привычки на погоду не влияют — только обычные задачи
   const left = active().filter(t => !isEvent(t) && t.kind !== 'habit' && reviewDay(t) && reviewDay(t) <= t0);
   const done = new Set(S.logs.filter(l => l.status === 'done' && l.done_on === t0 && S.tasks.some(t => t.id === l.task_id && t.kind !== 'habit' && spaceOf(t) === S.space)).map(l => l.task_id)).size;
-  const p = left.length + done ? done / (left.length + done) : 1;
+  // её решение: дело портит погоду, только когда его время прошло (окошко закончилось, прошло время задачи,
+  // или срок был раньше сегодня); без окошка и времени — не портит до конца дня. Сделанное — делает ярче.
+  const now = h * 60 + new Date().getMinutes();
+  const fit = S.space === 'personal' ? dayFit(t0) : { inSlot: {} };
+  const passed = t => {
+    if (reviewDay(t) < t0) return true;
+    const k = fit.inSlot[t.id];
+    if (k) return now >= toMin(slotOf(k).to);
+    if (t.start_time) return now >= toMin(t.end_time || t.start_time);
+    return false;
+  };
+  const missed = left.filter(passed).length;
+  const p = missed + done ? done / (missed + done) : 1;
   const late = Math.max(0, ...left.map(petLate));
   const day = Math.floor(Date.parse(t0) / 864e5);
   return {
     scene: SCENES[day % SCENES.length], tod, p: Math.round(p * 10) / 10, all: !left.length && done > 0,
+    bright: left.length + done ? Math.round(done / (left.length + done) * 4) / 4 : 0, // доля сделанного — солнце ярче
     rain: late >= lim('faint') ? 2 : late >= lim('sad') ? 1 : 0, late: late > 0,
   };
 }
@@ -1117,12 +1132,42 @@ function updateBg() {
   if (document.body.firstChild !== $bg) document.body.prepend($bg); // всегда позади питомцев
   $bg.hidden = !on;
   if (!on) return;
-  const st = bgState(), fl = flowerState();
-  const sig = JSON.stringify([st, fl]);
+  const st = bgState(), fl = flowerState(), bk = booksNow().map(t => [t.id, bookVar(t)]);
+  const sig = JSON.stringify([st, fl, bk]);
   if ($bg.dataset.sig === sig) return;
   $bg.dataset.sig = sig;
   $bg.innerHTML = bgSVG(st) + '<div class="frame"><i class="v"></i><i class="h"></i></div><div class="sill"></div>'
-    + (fl ? `<div class="flower" title="${fl.tip}"${flowerX() !== null ? ` style="left:${flowerX() * 100}vw"` : ''}>${flowerSVG(fl)}</div>` : '');
+    + (fl ? `<div class="flower" title="${fl.tip}"${flowerX() !== null ? ` style="left:${flowerX() * 100}vw"` : ''}>${flowerSVG(fl)}</div>` : '')
+    + bk.map(([id, v], i) => `<div class="books" data-act="book" data-id="${id}" style="right:calc(14vw + ${i * 150}px)">${booksSVG(v)}</div>`).join('');
+}
+
+// Книги: 5 вариантов, при каждом появлении (новый срок) — случайный, но постоянный в этот раз.
+const bookVar = t => { let h = 0; for (const c of t.id + (t.due_date || '')) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 5; };
+function booksSVG(v) {
+  const P = [['#b5523b', '#3f6fb0', '#5f9a5a', '#d9a441', '#7b4fa0'], ['#2f4858', '#86bbd8', '#f6ae2d', '#f26419', '#33658a'],
+    ['#6d2e46', '#a26769', '#d5b9b2', '#ece2d0', '#582c4d'], ['#264653', '#2a9d8f', '#e9c46a', '#f4a261', '#e76f51'], ['#3d405b', '#81b29a', '#f2cc8f', '#e07a5f', '#8d5a97']][v];
+  // лежащая книга: обложка, корешок с полосками, страницы справа
+  const lie = (x, y, w, h, c) => `<g><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${c}"/>
+    <rect x="${x + w - 7}" y="${y + 2}" width="6" height="${h - 4}" fill="#f3ead6"/><path d="M${x + 6} ${y + 3}v${h - 6}M${x + 11} ${y + 3}v${h - 6}" stroke="#0003" stroke-width="1.5"/></g>`;
+  // стоящая книга (можно наклонить вокруг нижнего угла)
+  const up = (x, w, h, c, rot = 0) => `<g transform="rotate(${rot} ${x + (rot > 0 ? w : 0)} 110)"><rect x="${x}" y="${110 - h}" width="${w}" height="${h}" rx="2" fill="${c}"/>
+    <path d="M${x + 2} ${116 - h}h${w - 4}M${x + 2} ${104}h${w - 4}" stroke="#fff6" stroke-width="2"/></g>`;
+  const open = (x, y, w) => `<path d="M${x} ${y + 10}Q${x + w / 4} ${y} ${x + w / 2} ${y + 8}Q${x + w * .75} ${y} ${x + w} ${y + 10}V${y + 18}Q${x + w * .75} ${y + 9} ${x + w / 2} ${y + 16}Q${x + w / 4} ${y + 9} ${x} ${y + 18}Z" fill="#f6efdd" stroke="#c9b991"/><path d="M${x + w / 2} ${y + 8}V${y + 16}" stroke="#c9b991"/>`;
+  const art = [
+    lie(10, 84, 130, 26, P[0]) + lie(22, 60, 108, 24, P[1]) + lie(14, 38, 118, 22, P[2]),
+    up(14, 22, 92, P[0]) + up(38, 18, 78, P[1]) + up(58, 26, 100, P[2]) + up(86, 20, 84, P[3]) + up(108, 22, 88, P[4], 18),
+    lie(20, 92, 112, 18, P[0]) + lie(14, 74, 120, 18, P[1]) + lie(26, 56, 104, 18, P[2]) + lie(18, 38, 112, 18, P[3]) + lie(30, 20, 96, 18, P[4]),
+    lie(12, 82, 128, 28, P[0]) + lie(24, 58, 108, 24, P[1]) + open(28, 36, 100),
+    up(10, 20, 96, P[0]) + up(32, 24, 86, P[1]) + up(58, 18, 90, P[2], 12) + lie(88, 88, 64, 22, P[3]) + lie(92, 66, 56, 22, P[4]),
+  ][v];
+  return `<svg viewBox="0 0 160 112" aria-hidden="true">${art}</svg>`;
+}
+// На телефоне (и без «вида за окном») подоконника нет — книги значком в заголовке.
+const booksIcon = () => (S.bg && matchMedia('(min-width: 900px)').matches) ? ''
+  : booksNow().map(t => `<button class="icon" data-act="book" data-id="${t.id}" aria-label="${esc(t.title)}">📚</button>`).join('');
+async function bookDone(t) {
+  if (!t || !confirm(`${t.title} — сделано?`)) return;
+  await complete(t);
 }
 
 // Цветок можно передвинуть мышкой вдоль подоконника; место — tm.flower, доля ширины экрана.
@@ -1211,7 +1256,7 @@ function flowerSVG({ lvl, all }) {
   </svg>`;
 }
 
-function bgSVG({ scene, tod, p, all, rain, late }) {
+function bgSVG({ scene, tod, p, all, rain, late, bright }) {
   const gloom = Math.min(1, (1 - p) * .6 + (late ? .25 : 0) + rain * .15);
   const night = tod === 'night';
   const grey = night ? ['#11131b', '#1d2029'] : ['#69707f', '#9aa0ab'];
@@ -1224,7 +1269,7 @@ function bgSVG({ scene, tod, p, all, rain, late }) {
   const light = night
     ? `<circle cx="${cx}" cy="${cy}" r="34" fill="#f4f1e0" opacity="${.5 + .5 * (1 - gloom)}"/><circle cx="${cx + 14}" cy="${cy - 8}" r="30" fill="${top}" opacity="${.9 * (1 - gloom * .5)}"/>`
     : `<circle cx="${cx}" cy="${cy}" r="${tod === 'day' ? 46 : 56}" fill="${tod === 'day' ? '#ffe68a' : '#ffb36b'}" opacity="${Math.max(.15, 1 - gloom)}"/>
-       <circle cx="${cx}" cy="${cy}" r="90" fill="${tod === 'day' ? '#ffe68a' : '#ffb36b'}" opacity="${Math.max(0, .25 - gloom * .3)}"/>`;
+       <circle cx="${cx}" cy="${cy}" r="${90 + (bright || 0) * 50}" fill="${tod === 'day' ? '#ffe68a' : '#ffb36b'}" opacity="${Math.max(0, .25 + (bright || 0) * .2 - gloom * .3)}"/>`;
   const stars = night || tod === 'evening'
     ? Array.from({ length: Math.round((night ? 70 : 25) * (1 - gloom * .8)) }, () => `<circle class="star" cx="${(r() * 1600).toFixed(0)}" cy="${(r() * 480).toFixed(0)}" r="${(.8 + r() * 1.6).toFixed(1)}" fill="#fff" style="animation-delay:-${(r() * 4).toFixed(1)}s"/>`).join('')
       + (all && night ? '<path class="shoot" d="M1200 90l-160 70" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>' : '')
@@ -1869,7 +1914,8 @@ async function deleteBulk() {
 }
 
 // ---------- настройки (шестерёнка) ----------
-const GEAR = '<button class="icon" data-act="occ" aria-label="Что случилось сегодня">☀</button><button class="icon" data-act="help" aria-label="Справка">?</button><button class="icon" data-act="settings" aria-label="Настройки">⚙</button>';
+const GEAR0 = '<button class="icon" data-act="occ" aria-label="Что случилось сегодня">☀</button><button class="icon" data-act="help" aria-label="Справка">?</button><button class="icon" data-act="settings" aria-label="Настройки">⚙</button>';
+const GEARS = { get v() { return booksIcon() + GEAR0; } };
 
 // ---------- случаи (☀): то, что нельзя запланировать заранее ----------
 const occasions = () => S.tasks.filter(t => t.kind === 'occasion').sort(byPos);
@@ -1916,11 +1962,13 @@ const HELP = [
   ['Окошки (личное, будни)', 'Обед, после работы и после ужина — ячейки по 30 минут (время — в ⚙). Задачи с «Когда» встают в своё окошко, средние без «Когда» — сами в свободное место, вдохновение — после ужина. На компьютере окошки справа на «Сегодня»: задачу можно перетащить в окошко, между окошками или обратно в список (только на сегодня, «Когда» не меняется). На телефоне — долгое нажатие → «В окошко». Если места не хватает, появится ⚠ и задачи «без окошка» подсвечены — сроки при этом не переносятся.'],
   ['План (работа, компьютер)', '«Срок» — дедлайн, «План» — день, когда делаешь, и сколько часов займёт. Во вкладке «План» неделя: задачи перетаскиваются по дням (обратно в «Не распланировано» — снять план), вверху сумма часов вместе со встречами. Больше 8 ч — жёлтым, больше 11 ч — ⚠ красным.'],
   ['☀ Случаи и «Следом»', 'Бывает то, что нельзя спланировать заранее: пришла зарплата. Нажми ☀ вверху и выбери, что случилось. У случая (и у любой задачи) в окне есть «Следом» — задачи, которые спят и нигде не видны. Отметила случай или сделала задачу (например, «Оплатить коммуналку») — задачи «Следом» появятся на сегодня и будут висеть, пока их не сделаешь. Сделала — снова засыпают до следующего раза. Отменила отметку — снова прячутся. Сумму удобно писать прямо в названии: «Отложить 2000 ₴ в конверт». Новый случай — ☀ → «+ Новый случай».'],
+  ['📚 Книги на подоконнике', 'Тихое дело — без списков и напоминаний, просто намёк. Пример: ☀ → «+ Новый случай» «Купила книги» → в «Следом» задача «Каталогизировать книги» и нажми 📚 рядом с ней. Купила книги — ☀ → «Купила книги»: на подоконнике появится стопка книг (каждый раз другая, из пяти вариантов). Щелчок по книгам — «сделано?», и они исчезнут до следующего раза. На телефоне вместо подоконника — значок 📚 вверху. Любой задаче можно выбрать картинку «📚 Книги» во вкладке «Ещё» — тогда её не видно в списках, утренней проверке и календаре.'],
+  ['Порядок на «Сегодня»', 'Привычки и задачи одним списком: ⚡ пятиминутки, 🍽 обед, 🌆 после работы, 🌙 после ужина, потом остальное. На телефоне у окошек видно, сколько в них места.'],
   ['Порядок шагов', 'У задачи проекта — «Делать после» (в шаблоне — «после шагов: 1, 2»). Пока те шаги не сделаны, у задачи 🔒 «ждёт: …»; красный — если они запланированы позже. Ничего не запрещается.'],
   ['Питомцы', 'В окне задачи (в личном режиме) — «Питомец». На широком экране по бокам сидят кот и попугай: доволен, если всё сделано, грустит от пропусков. Наведи на питомца — увидишь, почему грустит. Нажми на имя, чтобы переименовать. Яша перелетает, только когда доволен; кот гуляет, если не очень грустит. Подвесные жёрдочки можно перетаскивать мышкой — Яша перелетит на свою. Кот сидит на подоконнике; щёлкни по нему — перейдёт на другую сторону (если не грустит).'],
   ['Как считаются дни', 'Сколько дней до грусти, обморока и пыли — в ⚙. У обычной задачи считаются дни просрочки (с первоначального срока, даже если утренняя проверка перенесла её на сегодня), у привычки — пропуски подряд. Питомец смотрит на свою самую запущенную задачу.'],
   ['Картинки', 'В окне задачи — «Картинка». 🕸 Пыль и паутина: уборка просрочена — появляется паутина, летает пыль, и с каждым днём на экране всё больше пыльных пятен. Уберёшь — всё исчезнет. 🔢 Счётчики: в день срока (или с даты «Начать с») появляется счётчик — газ, вода или свет, по названию задачи. Пропадает, когда задача отмечена. На компьютере его можно перетащить мышкой.'],
-  ['Вид за окном', 'На фоне — окно, вид за ним каждый день свой: город, лес, море, горы, деревня, зима. Время суток настоящее. Погода — от того, как идут дела сегодня (привычки не считаются): чем больше сделано, тем меньше туч и ярче солнце; всё сделано — радуга (ночью — падающая звезда). Утром, пока ничего не сделано, просто пасмурно. Дождь и гроза — от самой просроченной задачи на сегодня: дождь — с того же числа дней, что «очень грустит», гроза — что «обморок» (по умолчанию 2 и 4 дня, меняется в ⚙). Сколько дней просрочено — значок ⏳ у задачи. Выключается в ⚙.'],
+  ['Вид за окном', 'На фоне — окно, вид за ним каждый день свой: город, лес, море, горы, деревня, зима. Время суток настоящее. Погода — от того, как идут дела сегодня (привычки не считаются). Дело портит погоду, только когда его время прошло: окошко закончилось, прошло время задачи или срок был раньше сегодня; дело без окошка и времени — не раньше конца дня. Утром ясно; чем больше сделано, тем ярче солнце; всё сделано — радуга (ночью — падающая звезда). Тучи — от дел, время которых прошло, а они не сделаны. Дождь и гроза — от самой просроченной задачи: дождь — с того же числа дней, что «очень грустит», гроза — что «обморок» (по умолчанию 2 и 4 дня, меняется в ⚙). Сколько дней просрочено — значок ⏳ у задачи. Выключается в ⚙.'],
   ['Повтор по циклу', 'Для графиков вроде «2 дня делать, 1 пропустить»: в окне задачи Повтор → «Цикл». Укажи, сколько дней делать, сколько пропускать и первый день цикла — ниже видны ближайшие дни. В дни пропуска задачи нет, и пропуском это не считается. Сбился график — поменяй первый день цикла.'],
   ['Цветок на подоконнике', 'Растёт от привычек: смотрит, сколько из отметок за последние 7 дней — «сделано». Почти всё (от 85%) — цветёт, больше половины (от 60%) — бутоны, меньше — вянет, совсем мало (меньше 35%) — засыхает, листья падают. Сегодня все привычки сделаны — прилетает бабочка. Наведи на цветок — увидишь «X из Y». Цветок можно передвинуть мышкой вдоль подоконника. В ⚙ → «Цветок» можно выбрать, привычки из каких разделов он считает. Виден, когда включён вид за окном и есть хоть одна такая привычка.'],
   ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных, вид за окном. <b>Размер задач по разделам</b> — все задачи раздела получат этот размер, если у задачи не выбран свой (например, «Проекты» — ✦ вдохновение). <b>Цветок</b> — привычки каких разделов он считает (светится — считается). <b>Питомцы</b> — кого показывать (светится — видно). <b>Режим раздела</b> (✎ у раздела) — задачи раздела переезжают вместе с ним.'],
@@ -2532,7 +2580,7 @@ document.addEventListener('change', ev => {
 function openEdit(t) {
   const isNew = !t.id;
   S.edit = { ...t, remind_at_was: t.remind_at, checklist: subsOf(t).map(s => ({ ...s })), had_subs: subsOf(t).length > 0,
-    kids: t.id ? S.tasks.filter(x => x.wake_after === t.id).sort(byPos).map(x => ({ id: x.id, t: x.title, on: !!x.due_date })) : [] };
+    kids: t.id ? S.tasks.filter(x => x.wake_after === t.id).sort(byPos).map(x => ({ id: x.id, t: x.title, on: !!x.due_date, decor: x.decor || null })) : [] };
   const e = S.edit;
   const occ = e.kind === 'occasion';
   const parent = e.wake_after && byId(e.wake_after);
@@ -2748,6 +2796,7 @@ function renderKids() {
   document.getElementById('f-kids').innerHTML = S.edit.kids.map((k, i) => `<div class="subrow">
       <span class="kid-mark ${k.on ? 'on' : ''}" title="${k.on ? 'Уже на сегодня' : 'Спит'}">${k.on ? '●' : '☾'}</span>
       <input class="inp" data-kid="${i}" placeholder="Что сделать потом" value="${esc(k.t)}">
+      <button class="icon small kid-book ${k.decor === 'books' ? 'on' : ''}" data-act="kid-book" data-v="${i}" aria-label="Книгами на подоконнике">📚</button>
       <button class="icon small" data-act="kid-del" data-v="${i}" aria-label="Убрать">✕</button>
     </div>`).join('');
 }
@@ -2762,8 +2811,11 @@ async function saveKids(pid, row) {
     const title = k.t.trim();
     if (!title) continue;
     if (!k.id) await call(sb.from('tasks').insert({ title, kind: 'task', wake_after: pid, repeat_from: 'due',
-      section_id: row.kind === 'occasion' ? null : row.section_id, space: row.space }));
-    else if ((byId(k.id) || {}).title !== title) await call(sb.from('tasks').update({ title }).eq('id', k.id));
+      section_id: row.kind === 'occasion' ? null : row.section_id, space: row.space, ...(k.decor ? { decor: k.decor } : {}) }));
+    else {
+      const was = byId(k.id) || {};
+      if (was.title !== title || (was.decor || null) !== (k.decor || null)) await call(sb.from('tasks').update({ title, decor: k.decor || null }).eq('id', k.id));
+    }
   }
 }
 
@@ -3506,6 +3558,8 @@ document.addEventListener('click', async ev => {
         $modal.querySelector(`[data-kid="${S.edit.kids.length - 1}"]`).focus();
         break;
       case 'kid-del': S.edit.kids.splice(+v, 1); renderKids(); break;
+      case 'kid-book': { const k = S.edit.kids[+v]; k.decor = k.decor === 'books' ? null : 'books'; renderKids(); break; }
+      case 'book': await bookDone(byId(id)); break;
       case 'show-done': S.showDone = !S.showDone; localSet('done', S.showDone ? '1' : ''); openSettings(); render(); break;
       case 'flower-sec': await flowerSec(el); break;
       case 'bg-toggle': S.bg = !S.bg; localSet('bg', S.bg ? '1' : '0'); openSettings(); render(); break;
