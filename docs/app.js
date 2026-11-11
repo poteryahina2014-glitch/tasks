@@ -389,7 +389,7 @@ function renderToday() {
   const habits = due.filter(t => t.kind === 'habit');
   // «Окошки»: обед / после работы (будни) с заполненностью и вдохновение на вечер — отдельно от остальных задач
   const personal = S.space === 'personal';
-  const fit = personal ? dayFit(t0) : { inSlot: {}, slots: {} };
+  const fit = personal ? dayFit(t0) : { inSlot: {}, slots: {}, out: [], room: () => 0, weekend: true };
   const slotKey = t => t.kind === 'habit' || reviewDay(t) !== t0 ? null
     : fit.inSlot[t.id] || (personal && sizeOf(t) === 'idea' ? 'idea' : null);
   const wide = personal && !fit.weekend && matchMedia('(min-width: 900px)').matches;
@@ -435,8 +435,7 @@ function renderToday() {
   if (doneToday.length) list += '<h2>Сделано сегодня</h2>' + doneToday.map(t => taskRow(t, { done: true })).join('');
   if (!wide) return html + list;
   return html + `<div class="today-grid"><div class="today-list" data-sdrop="none">${list}</div>
-    <aside class="slots-col"><h2>Окошки</h2>${slotWarn}${Object.keys(fit.slots).map(k => slotBox(k, fit)).join('')}
-      <div class="hint">Перетащи задачу в окошко или между окошками; обратно в список — убрать из окошка на сегодня. Средние без «Когда» встают сами, где есть место.</div></aside></div>`;
+    <aside class="slots-col"><h2>Окошки</h2>${slotWarn}${Object.keys(fit.slots).map(k => slotBox(k, fit)).join('')}</aside></div>`;
 }
 
 function occurrences(from, to) {
@@ -773,7 +772,6 @@ function renderPlan() {
       ${cols}
       <div class="pcol unplanned" data-pday="">
         <div class="phead"><b>Не распланировано</b><span class="hours">${free.length}</span></div>
-        <div class="pnote">Перетащи задачу на день. Обратно сюда — снять план.</div>
         ${free.map(t => taskRow(t, { plan: true, date: true, noSection: true })).join('') || '<div class="empty small">Всё распланировано</div>'}
       </div>
     </div>`;
@@ -836,11 +834,11 @@ function renderSpent() {
   const box = document.getElementById('f-spent');
   if (!box || !S.edit) return;
   if (!S.timeOn) { box.innerHTML = '<div class="hint">Чтобы записывать потраченное время, запусти в Supabase файл 017_time.sql.</div>'; return; }
-  if (!S.edit.id) { box.innerHTML = '<div class="hint">Потраченное время можно записать после сохранения задачи.</div>'; return; }
+  if (!S.edit.id) { box.innerHTML = ''; return; }
   const list = timesOf(S.edit.id).slice().sort((a, b) => (a.day < b.day ? 1 : -1));
   const total = list.reduce((s, x) => s + +x.hours, 0);
   box.innerHTML = `<div class="row spent-row"><span>Потрачено по факту: <b>${fmtH(total)} ч</b></span>
-      <input class="inp num" id="f-sp-h" placeholder="ч" title="Сколько часов (можно 1,5 или 1:30)" style="max-width:64px">
+      <input class="inp num" id="f-sp-h" placeholder="ч" style="max-width:64px">
       <input class="inp" id="f-sp-d" type="date" value="${today()}" style="max-width:150px">
       <button class="btn small" data-act="sp-add">+ Записать</button></div>
     ${list.length ? `<div class="wds spent-list">${list.map(x => `<span class="chip">${dateLabel(x.day)} · ${fmtH(+x.hours)} ч<button class="icon small" data-act="sp-del" data-v="${x.id}" aria-label="Убрать запись">✕</button></span>`).join('')}</div>` : ''}`;
@@ -898,7 +896,7 @@ function tplStatsHTML(t) {
   const avgs = (t.steps || []).filter(s => s.title).map((s, i) => [s, factAvg(t.id, s.title, i)]).filter(([, a]) => a);
   return `<div class="field"><label>Время по периодам</label>
     <table class="ttable"><tr><th>Период</th><th>План</th><th>Факт</th><th>Сделано</th></tr>${rows}</table>
-    ${avgs.length ? `<div class="hint" style="margin-top:6px">В среднем по факту: ${avgs.map(([s, a]) => `${esc(s.title)} — <b>${fmtH(a.avg)} ч</b> (${a.n} пер.)`).join('; ')}. Новые задачи получат эту оценку.</div>` : ''}</div>`;
+    ${avgs.length ? `<div class="hint" style="margin-top:6px">В среднем по факту: ${avgs.map(([s, a]) => `${esc(s.title)} — <b>${fmtH(a.avg)} ч</b> (${a.n} пер.)`).join('; ')}</div>` : ''}</div>`;
 }
 
 // ---------- вкладка «Время» (рабочий режим, компьютер) ----------
@@ -921,7 +919,7 @@ function renderTime() {
       if (S.view === 'time') render();
     });
   }
-  if (!list.length) return head + '<div class="empty">За этот срок время не записано.<br>Открой рабочую задачу и в «Потрачено по факту» запиши часы.</div>';
+  if (!list.length) return head + '<div class="empty">За этот срок время не записано</div>';
   const total = list.reduce((s, x) => s + +x.hours, 0);
   // по дням
   const days = [...Array(S.tRange)].map((_, i) => addDays(from, i));
@@ -954,7 +952,7 @@ function renderTime() {
   return head + `<div class="time-view">
     <div class="tsum">За ${T_RANGES.find(r => r[0] === S.tRange)[1].toLowerCase()}: <b>${fmtH(total)} ч</b> · дней с записями: ${worked} · в среднем <b>${fmtH(worked ? total / worked : 0)} ч</b> за такой день</div>
     <h2>По дням</h2><div class="tbars r${S.tRange}">${bars}</div>
-    <h2>По дням недели (в среднем, где записано)</h2>
+    <h2>По дням недели, в среднем</h2>
     <div class="twd">${wd.map(w => `<div><span>${w.name}</span><div class="bar"><i style="width:${w.avg / wmax * 100}%"></i></div><b>${w.avg ? fmtH(w.avg) + ' ч' : '—'}</b></div>`).join('')}</div>
     <h2>По задачам</h2>
     <table class="ttable"><tr><th>Задача</th><th>За этот срок</th><th>Всего</th><th>Оценка</th></tr>${rows}</table>
@@ -1167,7 +1165,6 @@ function flowerSecsHTML() {
   if (!keys.size) return '';
   const pill = (id, label) => `<button class="pill ${flowerOff().includes(id) ? '' : 'on'}" data-act="flower-sec" data-id="${id}">${label}</button>`;
   return `<h2>Цветок</h2>
-    <div class="hint">Привычки из каких разделов он считает. Светится — считается.</div>
     <div class="flower-secs">${mySecs().filter(s => keys.has(s.id)).map(s => pill(s.id, `<i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name)}`)).join('')}${keys.has('none') ? pill('none', 'Без раздела') : ''}</div>`;
 }
 
@@ -1747,7 +1744,6 @@ function openBulk() {
   const personal = S.space === 'personal';
   $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet edit fixed">
     <h3>Изменить задачи: ${S.pick.size}</h3>
-    <div class="msg" style="margin:-6px 0 12px">Меняется только то, где выбрано не «не менять».</div>
     <div class="cols"><div>
     <div class="field"><label>Срок</label>
       <div class="row bpair"><select class="inp" id="b-datemode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить дату')}${opt('none', 'Без срока')}</select>
@@ -1777,7 +1773,7 @@ function openBulk() {
         <select class="inp" id="b-unit">${opt(KEEP, '— не менять —')}${opt('', 'Не повторять')}${opt('day', 'Дни')}${opt('week', 'Недели')}${opt('month', 'Месяцы')}${opt('year', 'Годы')}</select>
         <span id="b-every-box" class="row" style="flex:1">каждые <input class="inp" id="b-every" type="number" min="1" value="1" style="max-width:80px"></span>
       </div></div>
-    <div class="field" id="b-wd-box"><label>Дни недели (можно не выбирать)</label>
+    <div class="field" id="b-wd-box"><label>Дни недели</label>
       <div class="wds">${WD.map((w, i) => `<button class="pill" data-act="b-wd" data-v="${i + 1}">${w}</button>`).join('')}</div></div>
     <div class="field" id="b-from-box"><label>Новый срок считать</label>
       <div class="seg">
@@ -1786,7 +1782,7 @@ function openBulk() {
       </div></div>
     ${personal ? `<div class="field"><label>Размер</label>
       <select class="inp" id="b-size">${opt(KEEP, '— не менять —')}${opt('', 'Нет (или как у раздела)')}${Object.entries(SIZES).map(([k, z]) => opt(k, z.icon + ' ' + z.name)).join('')}</select></div>
-    <div class="field" id="b-slot-box"><label>Когда (у средних и вдохновения)</label>
+    <div class="field" id="b-slot-box"><label>Когда</label>
       <select class="inp" id="b-slot">${opt('', 'В любое окошко')}${Object.entries(SLOTS).map(([k, s]) => opt(k, s.name)).join('')}</select></div>
     <div class="field"><label>Питомец</label>
       <select class="inp" id="b-pet">${opt(KEEP, '— не менять —')}${opt('', 'Нет')}${Object.keys(PETS).filter(petOn).map(p => opt(p, PETS[p].icon + ' ' + esc(petName(p)))).join('')}${Object.keys(PETS).filter(petOn).length === 2 ? opt('both', 'Оба') : ''}</select></div>
@@ -1877,7 +1873,7 @@ function openOcc() {
   const lastDay = id => S.logs.filter(l => l.task_id === id && l.status === 'done').map(l => l.day).sort().pop();
   $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet occ">
     <h3>Что случилось сегодня?</h3>
-    ${list.length ? '' : '<div class="hint">Здесь — то, что не спланировать заранее: пришла зарплата и т. п. У случая есть задачи «Следом»: отметишь случай — они появятся на сегодня и будут висеть, пока не сделаешь.</div>'}
+    ${list.length ? '' : '<div class="empty small">Случаев пока нет</div>'}
     <div class="occ-list">${list.map(t => {
       const kids = S.tasks.filter(x => x.wake_after === t.id).sort(byPos);
       const last = lastDay(t.id);
@@ -1885,7 +1881,7 @@ function openOcc() {
       return `<div class="occ-row">
         <button class="btn occ-go ${done ? 'good' : ''}" data-act="occ-go" data-id="${t.id}" ${done ? 'disabled' : ''}>${done ? '✓ ' : ''}${esc(t.title)}</button>
         <button class="icon small" data-act="edit" data-id="${t.id}" aria-label="Изменить">✎</button>
-        <div class="hint">${kids.length ? '→ ' + kids.map(k => esc(k.title)).join(' · ') : 'Нет задач «Следом» — добавь через ✎'}${last && !done ? ` · прошлый раз: ${dateLabel(last)}` : ''}</div>
+        <div class="hint">${kids.length ? '→ ' + kids.map(k => esc(k.title)).join(' · ') : 'Нет задач «Следом»'}${last && !done ? ` · прошлый раз: ${dateLabel(last)}` : ''}</div>
       </div>`;
     }).join('')}</div>
     <div class="actions"><button class="link" data-act="occ-new">+ Новый случай</button><button class="btn" data-act="close">Закрыть</button></div>
@@ -1902,14 +1898,16 @@ const HELP = [
   ['Календарь', 'Месяц или неделя, фильтры по разделам. Нажми на день: там расписание и свободное время между делами.'],
   ['Разделы', 'Папки для задач. ✎ у раздела: название, цвет, «выключить» на время (задачи прячутся, но не удаляются). «Без срока» вверху — показать только задачи без даты. ☐ («Выбрать») — изменить или удалить сразу несколько задач (☑ — выбрать все). На компьютере задачи можно перетаскивать мышкой.'],
   ['А→Я', 'Кнопка у заголовка раздела в «Разделах»: расставляет его задачи по алфавиту. Потом их можно двигать мышкой, а нажать А→Я снова — когда захочется. Новая задача встаёт в конец.'],
-  ['Размер и предложения на день', 'В окне задачи — «Размер»: ⚡ пятиминутка, ◐ средняя, ● на весь день, ✦ вдохновение. В ⚙ можно задать размер сразу всем задачам раздела (например, «Проекты» — вдохновение). Каждое утро после проверки (в личном режиме) открывается окно со всеми задачами <b>без срока</b>, которые можно взять сегодня: все пятиминутки; средние — если есть свободное окошко (обед или после работы, время — в ⚙; у средней задачи можно указать «Когда»; окошко занимают средние задачи на сегодня и события в это время), в выходные — всегда; большие — в субботу и воскресенье, если на этот день ещё нет большой; вдохновение — если на сегодня ещё не взято ни вдохновение, ни большая задача. Если вечер так и остался свободным, с 16 до 19 вдохновение предлагается ещё раз. Оба окна — по одному разу в день на весь аккаунт: показалось на телефоне — на компьютере уже не появится. У задач по вдохновению нет просрочки: не сделано в свой день — задача снова без срока. «Сегодня» — ставит срок на сегодня, «Не сегодня» — предложу завтра, «Потом» — через 4 дня.'],
+  ['Размер и предложения на день', 'В окне задачи — «Размер»: ⚡ пятиминутка, ◐ средняя, ● на весь день, ✦ вдохновение. В ⚙ можно задать размер сразу всем задачам раздела (например, «Проекты» — вдохновение). Каждое утро после проверки (в личном режиме) открывается окно со всеми задачами <b>без срока</b>, которые можно взять сегодня: все пятиминутки; средние — если есть свободное окошко (обед, после работы или после ужина, время — в ⚙; у средней задачи можно указать «Когда»; окошко занимают средние задачи на сегодня и события в это время), в выходные — всегда; большие — в субботу и воскресенье, если на этот день ещё нет большой; вдохновение — если на сегодня ещё не взято ни вдохновение, ни большая задача. Если вечер так и остался свободным, с 16 до 19 вдохновение предлагается ещё раз. Оба окна — по одному разу в день на весь аккаунт: показалось на телефоне — на компьютере уже не появится. У задач по вдохновению нет просрочки: не сделано в свой день — задача снова без срока. «Сегодня» — ставит срок на сегодня, «Не сегодня» — предложу завтра, «Потом» — через 4 дня; то, что не выбрано, предложу завтра. Пятиминутку можно сделать в любой свободный момент, вдохновение — на вечер, если есть настроение.'],
   ['Быстрое меню', 'Долгое нажатие на задачу (на компьютере — правая кнопка): на сегодня, на завтра, в другой раздел.'],
   ['🏠 / 💼', 'Личное и работа отдельно, переключатель вверху. В работе есть «Шаблоны»: повторяющиеся проекты из шагов (например, квартальная отчётность), создаются сами.'],
+  ['Шаблоны (работа)', '«⟳ Шаблоны» в колонке разделов. Шаблон сам создаёт проект с задачами, когда заканчивается месяц, квартал или год, — в разделе шаблона. <b>Какие месяцы</b>: «Только некоторые» — задачи создадутся только за отмеченные месяцы (например, оценка урожая — июль–октябрь). <b>Создавать заранее</b> за N рабочих дней до конца периода; 0 — на следующий день после конца. <b>Шаги</b>: «с» и «до» — числа месяца, «мес.» — какой по счёту месяц после конца периода (1 — следующий), «часов» — оценка (если по факту уже записано время, новые задачи получат среднее по факту). У шага могут быть подзадачи — без своих сроков; «после шагов» — номера шагов, которые надо сделать раньше. <b>Создать задачи сейчас</b> — за выбранный период, не дожидаясь конца. <b>Копия</b> — например, сделать годовую отчётность из квартальной.'],
+  ['Изменить несколько', '☐ в «Разделах» → отметь задачи → ✎. Меняется только то, где выбрано не «— не менять —».'],
   ['Подпункты', 'В окне задачи «+ Подпункт»: письма, проверки и т.п. Отмечаются прямо под задачей. В шаблоне у шага — «+ подзадача».'],
   ['Потраченное время (работа)', 'В окне рабочей задачи — «Потрачено по факту»: напиши часы (1,5 или 1:30), выбери день и нажми «+ Записать». Можно записывать несколько раз — итог складывается. В строке задачи ⏱ факт / оценка (красным — если вышло больше оценки). На «Плане» у дня — «по факту». Вкладка <b>«Время»</b> (на компьютере): сколько ушло по дням, по дням недели, по задачам и сколько обычно занимают шаги шаблонов.'],
   ['Шаблон из задачи', 'В окне рабочей задачи — «⟳ Сделать шаблон из этой задачи». Выбери, за какой период эта задача (например, октябрь 2026), и какие подпункты взять. Сама задача станет первой (за этот период), следующие шаблон создаст сам — «… — ноябрь 2026». Оценка часов у новых задач — среднее фактическое время за прошлые периоды. В окне шаблона — таблица «Время по периодам».'],
   ['Окошки (личное, будни)', 'Обед, после работы и после ужина — ячейки по 30 минут (время — в ⚙). Задачи с «Когда» встают в своё окошко, средние без «Когда» — сами в свободное место, вдохновение — после ужина. На компьютере окошки справа на «Сегодня»: задачу можно перетащить в окошко, между окошками или обратно в список (только на сегодня, «Когда» не меняется). На телефоне — долгое нажатие → «В окошко». Если места не хватает, появится ⚠ и задачи «без окошка» подсвечены — сроки при этом не переносятся.'],
-  ['План (работа, компьютер)', '«Срок» — дедлайн, «План» — день, когда делаешь, и сколько часов займёт. Во вкладке «План» неделя: задачи перетаскиваются по дням, вверху сумма часов вместе со встречами. Больше 8 ч — жёлтым, больше 11 ч — ⚠ красным.'],
+  ['План (работа, компьютер)', '«Срок» — дедлайн, «План» — день, когда делаешь, и сколько часов займёт. Во вкладке «План» неделя: задачи перетаскиваются по дням (обратно в «Не распланировано» — снять план), вверху сумма часов вместе со встречами. Больше 8 ч — жёлтым, больше 11 ч — ⚠ красным.'],
   ['☀ Случаи и «Следом»', 'Бывает то, что нельзя спланировать заранее: пришла зарплата. Нажми ☀ вверху и выбери, что случилось. У случая (и у любой задачи) в окне есть «Следом» — задачи, которые спят и нигде не видны. Отметила случай или сделала задачу (например, «Оплатить коммуналку») — задачи «Следом» появятся на сегодня и будут висеть, пока их не сделаешь. Сделала — снова засыпают до следующего раза. Отменила отметку — снова прячутся. Сумму удобно писать прямо в названии: «Отложить 2000 ₴ в конверт». Новый случай — ☀ → «+ Новый случай».'],
   ['Порядок шагов', 'У задачи проекта — «Делать после» (в шаблоне — «после шагов: 1, 2»). Пока те шаги не сделаны, у задачи 🔒 «ждёт: …»; красный — если они запланированы позже. Ничего не запрещается.'],
   ['Питомцы', 'В окне задачи (в личном режиме) — «Питомец». На широком экране по бокам сидят кот и попугай: доволен, если всё сделано, грустит от пропусков. Наведи на питомца — увидишь, почему грустит. Нажми на имя, чтобы переименовать. Яша перелетает, только когда доволен; кот гуляет, если не очень грустит. Подвесные жёрдочки можно перетаскивать мышкой — Яша перелетит на свою. Кот сидит на подоконнике; щёлкни по нему — перейдёт на другую сторону (если не грустит).'],
@@ -1918,7 +1916,7 @@ const HELP = [
   ['Вид за окном', 'На фоне — окно, вид за ним каждый день свой: город, лес, море, горы, деревня, зима. Время суток настоящее. Погода — от того, как идут дела сегодня (привычки не считаются): чем больше сделано, тем меньше туч и ярче солнце; всё сделано — радуга (ночью — падающая звезда). Утром, пока ничего не сделано, просто пасмурно. Дождь и гроза — от самой просроченной задачи на сегодня: дождь — с того же числа дней, что «очень грустит», гроза — что «обморок» (по умолчанию 2 и 4 дня, меняется в ⚙). Сколько дней просрочено — значок ⏳ у задачи. Выключается в ⚙.'],
   ['Повтор по циклу', 'Для графиков вроде «2 дня делать, 1 пропустить»: в окне задачи Повтор → «Цикл». Укажи, сколько дней делать, сколько пропускать и первый день цикла — ниже видны ближайшие дни. В дни пропуска задачи нет, и пропуском это не считается. Сбился график — поменяй первый день цикла.'],
   ['Цветок на подоконнике', 'Растёт от привычек: смотрит, сколько из отметок за последние 7 дней — «сделано». Почти всё (от 85%) — цветёт, больше половины (от 60%) — бутоны, меньше — вянет, совсем мало (меньше 35%) — засыхает, листья падают. Сегодня все привычки сделаны — прилетает бабочка. Наведи на цветок — увидишь «X из Y». Цветок можно передвинуть мышкой вдоль подоконника. В ⚙ → «Цветок» можно выбрать, привычки из каких разделов он считает. Виден, когда включён вид за окном и есть хоть одна такая привычка.'],
-  ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных, вид за окном.'],
+  ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных, вид за окном. <b>Размер задач по разделам</b> — все задачи раздела получат этот размер, если у задачи не выбран свой (например, «Проекты» — ✦ вдохновение). <b>Цветок</b> — привычки каких разделов он считает (светится — считается). <b>Питомцы</b> — кого показывать (светится — видно). <b>Режим раздела</b> (✎ у раздела) — задачи раздела переезжают вместе с ним.'],
   ['Устройства', 'Всё хранится в облаке. Входи с той же почтой на телефоне и компьютере. На телефоне: Chrome → ⋮ → «Установить приложение».'],
 ];
 
@@ -1952,9 +1950,9 @@ function openSettings() {
       <button class="btn" data-act="logout">Выйти из аккаунта</button>
     </div>
     <h2>Питомцы и картинки</h2>
-    <div class="hint">Показывать питомцев (светится — видно)</div>
+    <div class="hint">Показывать питомцев</div>
     <div class="flower-secs">${Object.keys(PETS).map(p => `<button class="pill ${petOn(p) ? 'on' : ''}" data-act="pet-toggle" data-v="${p}">${PETS[p].icon} ${esc(petName(p))}</button>`).join('')}</div>
-    <div class="hint">Через сколько дней просрочки (подробнее — в справке «?»)</div>
+    <div class="hint">Через сколько дней просрочки</div>
     <div class="limits">${Object.entries(LIMITS).map(([k, l]) => `<label>${l.name}<span>с <input class="inp num" id="lim-${k}" type="number" min="1" value="${lim(k)}"> дн.</span></label>`).join('')}</div>
     <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn main" data-act="limits-save">Сохранить</button></div>
     ${flowerSecsHTML()}
@@ -2201,7 +2199,6 @@ const SLOT_ICON = { lunch: '🍽', after: '🌆', eve: '🌙' };
 // время окошка: своё из ⚙ (user_metadata.slots) или по умолчанию
 const slotOf = k => ({ ...SLOTS[k], ...((S.user?.user_metadata?.slots || {})[k] || {}) });
 const slotsHTML = () => `<h2>Свободные окошки будних дней</h2>
-  <div class="hint">Окошко делится на ячейки по 30 минут. Средние задачи без «Когда» встают в свободные ячейки сами; что не влезло — подсвечено «без окошка». Событие в это время занимает свои ячейки. Вдохновение без «Когда» — после ужина.</div>
   <div class="limits">${Object.keys(SLOTS).map(k => `<label>${SLOTS[k].name}<span>с <input class="inp" type="time" id="slot-${k}-from" value="${slotOf(k).from}"> до <input class="inp" type="time" id="slot-${k}-to" value="${slotOf(k).to}"></span></label>`).join('')}</div>
   <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn main" data-act="slots-save">Сохранить</button></div>`;
 async function saveSlots() {
@@ -2293,7 +2290,7 @@ const CELL = 30;
 function slotBox(k, fit) {
   const sl = fit.slots[k], s = slotOf(k), st = slotState(sl);
   const block = i => `<div class="scell item ${i.ev ? 'ev' : ''} ${i.auto ? 'auto' : ''} ${i.over ? 'over' : ''}" style="--n:${Math.max(1, Math.round(i.min / CELL))}"
-      ${i.ev ? '' : `data-sdrag="${i.t.id}" draggable="true"`} data-act="edit" data-id="${i.t.id}" title="${i.auto ? 'Встала сама — можно перетащить' : ''}">
+      ${i.ev ? '' : `data-sdrag="${i.t.id}" draggable="true"`} data-act="edit" data-id="${i.t.id}">
       <span>${i.ev ? `${hhmm(i.t.start_time)} ` : ''}${esc(i.t.title)}</span><b>${i.over ? 'не влезло · ' : ''}${i.min} мин</b></div>`;
   const free = Math.max(0, Math.floor((sl.cap - sl.used) / CELL));
   return `<div class="slot-box ${st.cls}" data-sdrop="${k}">
@@ -2449,9 +2446,9 @@ function renderOffer() {
   $modal.innerHTML = `<div class="overlay" data-act="of-hide-bg"><div class="sheet review offer">
     <h3>${eve ? 'Может, займёмся чем-то по вдохновению?' : `${userName() ? esc(userName()) + ', что' : 'Что'} можно сделать сегодня`}</h3>
     <div class="rv-list">${groups.map(g => `<h2>${SIZES[g.size].icon} ${SIZES[g.size].title}</h2>
-      <div class="hint">${g.note || SIZES[g.size].hint}${g.full ? '<br>Свободных окошек сегодня нет.' : ''}</div>
+      ${g.note || g.full ? `<div class="hint">${g.note || ''}${g.note && g.full ? '<br>' : ''}${g.full ? 'Свободных окошек сегодня нет' : ''}</div>` : ''}
       ${g.list.map(row).join('')}`).join('') || '<div class="empty">Всё разобрано</div>'}</div>
-    <div class="rv-foot"><span class="hint">Отмечено: ${n}. Не выбранные предложу завтра</span>
+    <div class="rv-foot"><span class="hint">Отмечено: ${n}</span>
       <button class="btn" data-act="of-hide" title="Посмотреть дела на сегодня, отметки сохранятся">Скрыть</button>
       <button class="btn main" data-act="of-close">Сохранить</button></div>
   </div></div>`;
@@ -2505,7 +2502,6 @@ function secSizesHTML() {
   const secs = secsOf('personal');
   if (!secs.length) return '';
   return `<h2>Размер задач по разделам</h2>
-    <div class="hint">Все задачи раздела получат этот размер, если у задачи не выбран свой. Например, «Проекты» — ✦ вдохновение.</div>
     <div class="limits">${secs.map(s => `<label><span><i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name)}</span>
       <select class="inp" data-sec-size="${s.id}"><option value="">—</option>${Object.entries(SIZES).map(([k, z]) => `<option value="${k}" ${s.default_size === k ? 'selected' : ''}>${z.icon} ${z.name}</option>`).join('')}</select></label>`).join('')}</div>`;
 }
@@ -2535,7 +2531,7 @@ function openEdit(t) {
   const parent = e.wake_after && byId(e.wake_after);
   const st = !isNew && e.kind === 'habit' ? habitStats(e) : null;
   $modal.dataset.kind = 'edit';
-  const kidsBox = parent ? '' : `<div class="field" id="f-kids-box"><label>Следом — появятся на сегодня, когда ${occ ? 'случай отмечен' : 'эта задача сделана'}</label>
+  const kidsBox = parent ? '' : `<div class="field" id="f-kids-box"><label>Следом</label>
       <div id="f-kids"></div><button class="link" data-act="kid-add">+ Задача следом</button></div>`;
   e.tab = 'main';
   // компактно: на компьютере две колонки (когда — слева, повтор и прочее — справа), кнопки внизу всегда видны
@@ -2599,7 +2595,7 @@ function openEdit(t) {
       <div class="row" style="margin-top:6px">первый день цикла <input class="inp" id="f-anchor" type="date" value="${e.repeat_anchor || ''}" style="max-width:160px"></div>
       <div class="hint" id="f-cycle-next"></div></div>
     </div><div>
-    <div class="field" id="f-wd-box"><label>Дни недели (можно не выбирать)</label>
+    <div class="field" id="f-wd-box"><label>Дни недели</label>
       <div class="wds">${WD.map((w, i) => `<button class="pill" data-act="wd" data-v="${i + 1}">${w}</button>`).join('')}</div></div>
     <div class="field" id="f-from-box"><label>Новый срок считать</label>
       <div class="seg">
@@ -2628,7 +2624,7 @@ function openEdit(t) {
       <div class="row"><button class="pill" data-act="size" data-v="" id="f-size-def">Нет</button>${Object.entries(SIZES).map(([k, z]) => `<button class="pill" data-act="size" data-v="${k}">${z.icon} ${z.name}</button>`).join('')}</div></div>
     <div class="field" id="f-slot-box"><label>Когда</label>
       <div class="row"><button class="pill" data-act="slot" data-v="">В любое окошко</button>${Object.entries(SLOTS).map(([k, s]) => `<button class="pill" data-act="slot" data-v="${k}">${s.name}</button>`).join('')}</div></div>` : ''}
-    ${e.project_id && projectTasks(e.project_id).some(x => x.id !== e.id) ? `<div class="field"><label>Делать после (шаги этого проекта)</label>
+    ${e.project_id && projectTasks(e.project_id).some(x => x.id !== e.id) ? `<div class="field"><label>Делать после</label>
       <div class="wds after">${projectTasks(e.project_id).filter(x => x.id !== e.id).map(x => `<button class="pill" data-act="after" data-v="${x.id}">${x.done_on ? '✓ ' : ''}${esc(x.title)}</button>`).join('')}</div></div>` : ''}
     </div><div>
     ${S.space === 'personal' || e.pet ? `<div class="field" id="f-pet-box"><label>Питомец</label>
@@ -2918,7 +2914,7 @@ function openSection(sec) {
     <h3>${sec ? 'Раздел' : 'Новый раздел'}</h3>
     <div class="field"><input class="inp" id="s-name" placeholder="Название" value="${esc(sec?.name || '')}"></div>
     <div class="field seg">${SECTION_COLORS.map(c => `<button class="pill ${c === color ? 'on' : ''}" data-act="s-color" data-v="${c}"><i class="dot" style="background:${c};margin:0"></i></button>`).join('')}</div>
-    ${sec ? `<div class="field"><label>Режим (задачи раздела переедут вместе с ним)</label>
+    ${sec ? `<div class="field"><label>Режим</label>
       <select class="inp" id="s-space">${Object.entries(SPACES).map(([k, n]) => `<option value="${k}" ${spaceOfSec(sec) === k ? 'selected' : ''}>${n}</option>`).join('')}</select></div>` : ''}
     <div class="actions">
       ${sec ? `<div class="row"><button class="btn danger" data-act="s-delete" data-id="${sec.id}">Удалить</button>
@@ -3139,7 +3135,6 @@ function openTemplates() {
       <b>${esc(t.title)}</b><span>${PERIODS[t.period]}${t.period === 'month' && t.months && t.months.length ? ': ' + t.months.map(m => MONTHS[m - 1].slice(0, 3)).join(', ') : ''} · шагов: ${(t.steps || []).length}</span></button>`).join('');
   $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet fixed">
     <h3>Шаблоны</h3>
-    <div class="msg" style="margin:-6px 0 12px">Шаблон сам создаёт проект с задачами, когда заканчивается месяц, квартал или год (можно заранее — за несколько рабочих дней). Проект появляется в «Разделах», в разделе шаблона. Сроки шагов — числа месяца после конца периода.</div>
     <h2>Мои шаблоны</h2>
     <div class="menu">${rows || '<div class="empty small">Шаблонов пока нет</div>'}</div>
     <h2>Новый шаблон</h2>
@@ -3193,32 +3188,29 @@ function openTemplate(tpl) {
       ${stats ? '<button class="pill" data-act="t-tab" data-v="time">Время</button>' : ''}
     </div>
     <div class="tpl-pane" data-pane="main"><div class="cols"><div>
-      ${t.from ? `<div class="field"><label>Эта задача — за какой период</label>
+      ${t.from ? `<div class="field"><label>Эта задача — за период</label>
         <select class="inp" id="t-from-p"></select>
-        <div class="hint">Следующие задачи шаблон создаст сам — за следующий период.</div></div>` : ''}
+</div>` : ''}
       <div class="field"><label>Как часто</label>
         <div class="seg">${Object.entries(PERIODS).map(([k, n]) => `<button class="pill" data-act="t-period" data-v="${k}">${n}</button>`).join('')}</div></div>
       <div class="field" id="t-months-box"><label>Какие месяцы</label>
         <div class="seg"><button class="pill" data-act="t-some" data-v="">Все месяцы</button><button class="pill" data-act="t-some" data-v="1">Только некоторые</button></div>
         <div id="t-months-list">
-          <div class="hint">Например, оценка урожая нужна только за июль–октябрь: задачи создадутся только за отмеченные месяцы.</div>
           <div class="wds months">${MONTHS.map((m, i) => `<button class="pill" data-act="t-month" data-v="${i + 1}">${m.slice(0, 3)}</button>`).join('')}</div></div></div>
       </div><div>
       <div class="field"><label>Создавать заранее</label>
-        <div class="row">за <input class="inp num" id="t-lead" type="number" min="0" max="20" value="${t.lead_days}" style="max-width:70px"> рабочих дн. до конца периода</div>
-        <div class="hint">0 — на следующий день после конца периода.</div></div>
+        <div class="row">за <input class="inp num" id="t-lead" type="number" min="0" max="20" value="${t.lead_days}" style="max-width:70px"> рабочих дн. до конца периода</div></div>
       <div class="field"><label>Раздел для задач</label>
         <select class="inp" id="t-section"><option value="">Без раздела</option>${work.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
-      ${t.id ? `<div class="field"><label>Создать задачи вручную (если не хочешь ждать конца периода)</label>
+      ${t.id ? `<div class="field"><label>Создать задачи сейчас</label>
         <div class="row"><select class="inp" id="t-run" style="flex:1">${periodChoices(t.period).map(p => `<option value="${p.key}">${p.label}</option>`).join('')}</select>
         <button class="btn" data-act="t-run">Создать задачи</button></div></div>
-        <div class="field"><button class="link" data-act="t-copy">Сделать копию шаблона (например, для годовой отчётности)</button></div>` : ''}
+        <div class="field"><button class="link" data-act="t-copy">Сделать копию шаблона</button></div>` : ''}
     </div></div></div>
     <div class="tpl-pane" data-pane="steps">
       ${t.from && t.from.subs.length ? `<div class="field"><label>Какие подпункты задачи взять в шаблон</label>
         <div class="fsubs" id="t-fsubs"></div></div>` : ''}
       <div class="field"><label>Шаги</label>
-        <div class="hint" style="margin:0 0 8px">«с» и «до» — числа месяца; «мес.» — какой по счёту месяц после конца периода (1 — следующий). У шага могут быть подзадачи — без своих сроков.</div>
         <div id="t-steps"></div>
         <button class="link" data-act="t-add">+ Шаг</button></div>
     </div>
@@ -3277,7 +3269,7 @@ function syncTemplate() {
     }
     const fs = document.getElementById('t-fsubs');
     if (fs) fs.innerHTML = t.from.subs.map((x, i) => `<button class="fsub" data-act="t-fsub" data-v="${i}"><span class="sub-box ${x.on ? 'on' : ''}">${x.on ? '✓' : ''}</span>${esc(x.t)}</button>`).join('')
-      + `<div class="hint">Взято ${t.from.subs.filter(x => x.on).length} из ${t.from.subs.length}. Щелчок — взять или не брать.</div>`;
+      + `<div class="hint">Взято ${t.from.subs.filter(x => x.on).length} из ${t.from.subs.length}</div>`;
   }
 }
 
