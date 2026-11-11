@@ -1138,7 +1138,7 @@ function updateBg() {
   $bg.dataset.sig = sig;
   $bg.innerHTML = bgSVG(st) + '<div class="frame"><i class="v"></i><i class="h"></i></div><div class="sill"></div>'
     + (fl ? `<div class="flower" title="${fl.tip}"${flowerX() !== null ? ` style="left:${flowerX() * 100}vw"` : ''}>${flowerSVG(fl)}</div>` : '')
-    + bk.map(([id, v], i) => `<div class="books" data-act="book" data-id="${id}" style="right:calc(14vw + ${i * 150}px)">${booksSVG(v)}</div>`).join('');
+    + bk.map(([id, v], i) => `<div class="books" data-act="book" data-id="${id}" style="right:${24 + i * 250}px">${booksSVG(v)}</div>`).join('');
 }
 
 // Книги: 5 вариантов, при каждом появлении (новый срок) — случайный, но постоянный в этот раз.
@@ -1165,10 +1165,24 @@ function booksSVG(v) {
 // На телефоне (и без «вида за окном») подоконника нет — книги значком в заголовке.
 const booksIcon = () => (S.bg && matchMedia('(min-width: 900px)').matches) ? ''
   : booksNow().map(t => `<button class="icon" data-act="book" data-id="${t.id}" aria-label="${esc(t.title)}">📚</button>`).join('');
-async function bookDone(t) {
-  if (!t || !confirm(`${t.title} — сделано?`)) return;
-  await complete(t);
+// Щелчок по книгам — пузырь рядом с ними: название и «✓ Готово» (вместо окна браузера).
+const $bubble = document.createElement('div');
+$bubble.className = 'book-bubble';
+$bubble.hidden = true;
+document.body.appendChild($bubble);
+function bookDone(t, el) {
+  if (!t || !el) return;
+  if (!$bubble.hidden && $bubble.dataset.id === t.id) { $bubble.hidden = true; return; }
+  $bubble.dataset.id = t.id;
+  $bubble.innerHTML = `<span>${esc(t.title)}</span><button class="btn main" data-act="book-ok" data-id="${t.id}">✓ Готово</button>`;
+  $bubble.hidden = false;
+  const r = el.getBoundingClientRect(), w = $bubble.offsetWidth, h = $bubble.offsetHeight;
+  $bubble.style.left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, innerWidth - w - 8)) + 'px';
+  const top = r.top - h - 12;
+  $bubble.style.top = (top > 8 ? top : r.bottom + 12) + 'px';
+  $bubble.classList.toggle('below', top <= 8);
 }
+document.addEventListener('pointerdown', ev => { if (!$bubble.hidden && !ev.target.closest('.book-bubble, [data-act=book]')) $bubble.hidden = true; });
 
 // Цветок можно передвинуть мышкой вдоль подоконника; место — tm.flower, доля ширины экрана.
 function flowerX() { const x = parseFloat(localGet('flower')); return isNaN(x) ? null : x; }
@@ -3559,7 +3573,8 @@ document.addEventListener('click', async ev => {
         break;
       case 'kid-del': S.edit.kids.splice(+v, 1); renderKids(); break;
       case 'kid-book': { const k = S.edit.kids[+v]; k.decor = k.decor === 'books' ? null : 'books'; renderKids(); break; }
-      case 'book': await bookDone(byId(id)); break;
+      case 'book': bookDone(byId(id), el); break;
+      case 'book-ok': $bubble.hidden = true; await complete(byId(id)); break;
       case 'show-done': S.showDone = !S.showDone; localSet('done', S.showDone ? '1' : ''); openSettings(); render(); break;
       case 'flower-sec': await flowerSec(el); break;
       case 'bg-toggle': S.bg = !S.bg; localSet('bg', S.bg ? '1' : '0'); openSettings(); render(); break;
