@@ -404,7 +404,12 @@ function renderToday() {
   const outIds = new Set(fit.out.map(t => t.id));
   const slotWarn = slotWarnHTML(fit);
   // на компьютере слева общий список всех дел (окошко — значком), справа окошки ячейками
-  const tasks = due.filter(t => t.kind !== 'habit' && (wide || !slotKey(t)));
+  // порядок (её просьба): пятиминутки → обед → после работы → после ужина → остальное
+  const ORDER = { lunch: 1, after: 2, eve: 3 };
+  const rank = t => (fit.inSlot[t.id] ? ORDER[fit.inSlot[t.id]] : sizeOf(t) === 'quick' ? 0 : 4);
+  const tasks = due.filter(t => t.kind !== 'habit' && (wide || !slotKey(t)))
+    .map((t, i) => [t, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([t]) => t);
+  const quick = wide ? [] : tasks.filter(t => rank(t) === 0);
   const rowOpts = t => {
     const k = fit.inSlot[t.id];
     if (outIds.has(t.id)) return { note: 'без окошка', noteCls: 'warn', sdrag: wide, noslot: true };
@@ -429,8 +434,10 @@ function renderToday() {
   let list = '';
   const slotNote = t => (wide && fit.inSlot[t.id] ? { note: `${SLOT_ICON[fit.inSlot[t.id]]} ${SLOTS[fit.inSlot[t.id]].name.toLowerCase()}`, sdrag: true } : { sdrag: wide });
   if (habits.length) list += '<h2>Привычки</h2>' + habits.map(t => taskRow(t, slotNote(t))).join('');
+  if (quick.length) list += '<h2>⚡ Пятиминутки</h2>' + quick.map(t => taskRow(t, rowOpts(t))).join('');
   if (slotHTML) list += '<h2>Окошки</h2>' + slotWarn + slotHTML;
-  if (tasks.length) list += '<h2>Задачи</h2>' + tasks.map(t => taskRow(t, rowOpts(t))).join('');
+  const rest = tasks.filter(t => !quick.includes(t));
+  if (rest.length) list += '<h2>Задачи</h2>' + rest.map(t => taskRow(t, rowOpts(t))).join('');
   if (inWork.length) list += '<h2>В работе</h2>' + inWork.map(t => taskRow(t, { date: true })).join('');
   if (doneToday.length) list += '<h2>Сделано сегодня</h2>' + doneToday.map(t => taskRow(t, { done: true })).join('');
   if (!wide) return html + list;
@@ -2571,7 +2578,7 @@ function openEdit(t) {
     <div class="field"><label>Раздел</label>
       <select class="inp" id="f-section"><option value="">Без раздела</option>
         ${mySecs().map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
-    </div><div>
+    </div><div class="notes-col">
     <div class="field" id="f-subs-box"><div id="f-subs"></div>
       <button class="link" data-act="sub-add">+ Подпункт</button></div>
     ${occ ? kidsBox : ''}
