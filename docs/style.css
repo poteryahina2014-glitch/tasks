@@ -806,3 +806,11 @@ textarea.t-howto { width: 100%; min-height: 110px; resize: vertical; font: inher
 .sheet.pay > * { flex-shrink: 0; }
 .sheet.pay .pay-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .sheet.pay > .actions { padding-top: 10px; }
+
+/* пустые ячейки окошка на «Сегодня» — той же высоты, что строка задачи */
+.period .scell { --h: 50px; margin: 0 0 8px; border-radius: 12px; padding: 4px 12px; }
+.period .scell.empty { min-height: 50px; }
+.t-subs .subrow { grid-template-columns: 32px minmax(0, 1fr) 32px 32px; }
+.t-move { gap: 6px; margin: 2px 0 6px; flex-wrap: wrap; }
+.t-move label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; flex: 1; }
+.t-move select { flex: 1; min-width: 0; padding: 6px 8px; }

@@ -307,11 +307,12 @@ function render() {
   if (S.view === 'nodate') { S.view = 'sections'; S.noDate = true; } // вкладки «Без срока» нет — это фильтр в «Разделах»
   if (!views[S.view]) S.view = 'sections'; // была вкладка «Проекты» — теперь проекты живут в «Разделах»
   if ((S.view === 'plan' || S.view === 'time') && !planOn()) S.view = 'today';
+  if (S.view === 'habits' && S.space === 'work') S.view = 'today'; // в работе привычек нет
   document.body.className = 'v-' + S.view + (S.space === 'work' ? ' work' : '') + (petsShown() ? ' pets' : '') + (S.bg ? ' bg' : '');
   $app.innerHTML = views[S.view]() + meterCard('side') + `
     ${S.pick ? pickBar() : '<button class="fab" data-act="new" aria-label="Новая задача">+</button>'}
     <nav class="bottom">
-      ${[['today', 'Сегодня'], ['calendar', 'Календарь'], ['sections', 'Разделы'], ['habits', 'Привычки']]
+      ${[['today', 'Сегодня'], ['calendar', 'Календарь'], ['sections', 'Разделы']].concat(S.space === 'work' ? [] : [['habits', 'Привычки']])
         .concat(planOn() ? [['plan', 'План'], ['time', 'Время']] : []).map(([k, n]) => `<button class="pill ${S.view === k ? 'on' : ''}" data-act="view" data-v="${k}">${n}</button>`).join('')}
     </nav>`;
 }
@@ -421,7 +422,7 @@ function renderToday() {
   }
   const started = t => t.start_date && t.start_date <= t0;
   // начатые, но со сроком позже — «в работе»
-  const inWork = active().filter(t => !isEvent(t) && !t.plan_date && started(t) && (!t.due_date || t.due_date > t0)).sort(byPos);
+  const inWork = S.space === 'work' ? [] : active().filter(t => !isEvent(t) && !t.plan_date && started(t) && (!t.due_date || t.due_date > t0)).sort(byPos);
   const events = [...new Map((occurrences(t0, t0)[t0] || []).filter(o => isEvent(o.t) && spaceOf(o.t) === S.space).map(o => [o.t.id, o.t])).values()]
     .sort((a, b) => (a.start_time || '') < (b.start_time || '') ? -1 : 1);
   // сделано сегодня: последние отметки «done» сегодняшним числом
@@ -1965,6 +1966,7 @@ async function loadPay() {
   Object.assign(S.pay, error ? { on: false, loaded: true } : { list: data, on: true, loaded: true });
   if ($modal.dataset.kind === 'pay') renderPay();
 }
+const payDate = d => (d ? `${d.slice(8, 10)}.${d.slice(5, 7)}.${d.slice(2, 4)}` : ''); // всегда числом: 11.11.26 (её просьба)
 const money = n => (n == null || n === '' ? '' : (+n).toLocaleString('ru-RU', { minimumFractionDigits: Number.isInteger(+n) ? 0 : 2, maximumFractionDigits: 2 }) + ' ₴');
 const parseMoney = s => { const x = parseFloat(String(s || '').replace(/\s/g, '').replace(',', '.')); return isFinite(x) ? Math.round(x * 100) / 100 : null; };
 // reset — очистить поля ввода (иначе введённое сохраняется при перерисовке)
@@ -1977,7 +1979,7 @@ function renderPay(reset = false) {
   const sum = open.reduce((s, x) => s + (+x.amount || 0), 0);
   const e = p.edit && p.list.find(x => String(x.id) === p.edit);
   const row = x => `<div class="pay-row${x.done_on ? ' done' : ''}${e && String(e.id) === String(x.id) ? ' picked' : ''}" data-act="pay-edit" data-id="${x.id}">
-      <span class="pay-d">${dateLabel(x.paid_on)}</span><b class="pay-a">${money(x.amount)}</b><span class="pay-w">${esc(x.what)}</span>
+      <span class="pay-d">${payDate(x.paid_on)}</span><b class="pay-a">${money(x.amount)}</b><span class="pay-w">${esc(x.what)}</span>
       ${x.done_on ? `<button class="icon small" data-act="pay-back" data-id="${x.id}" aria-label="Вернуть в невнесённые">↩</button>`
         : `<button class="btn yes" data-act="pay-done" data-id="${x.id}" aria-label="Внесла">✓</button>`}</div>`;
   const list = !p.loaded ? '<div class="empty small">Загружаю…</div>'
@@ -2061,6 +2063,7 @@ const HELP = [
   ['Шаблон из задачи', 'В окне рабочей задачи — «⟳ Сделать шаблон из этой задачи». Выбери, за какой период эта задача (например, октябрь 2026), и какие подпункты взять. Сама задача станет первой (за этот период), следующие шаблон создаст сам — «… — ноябрь 2026». Оценка часов у новых задач — среднее фактическое время за прошлые периоды. В окне шаблона — таблица «Время по периодам».'],
   ['«Сегодня» по частям дня', 'В будни (личный режим) дела на сегодня идут по частям дня: ☀ утро — пятиминутки; 🍽 обед, 🌆 после работы, 🌙 после ужина — окошки (время — в ⚙); остальное — то, что не попало в окошки. Окошки видны всегда, пустые ячейки по 30 минут — свободное место. В окошке сами стоят только задачи со своим «Когда» (в окне задачи, у средних и вдохновения) и вдохновение без «Когда» — после ужина; остальные задачи ты расставляешь сама: на компьютере перетаскиваешь в окошко, между окошками или обратно (в утро или остальное), на телефоне — долгое нажатие → «В окошко». Это только на сегодня, «Когда» не меняется. Место в окошке занимают средние и прочие задачи (30 минут или своё время ⏱) и события в это время; пятиминутки и вдохновение показываются в окошке, но места не занимают. Если задач больше, чем ячеек, ничего не переносится — свободных ячеек просто не остаётся. В выходные окошек нет.'],
   ['Платежи 💳', 'Кнопка 💳 в заголовке — записи о платежах, по которым потом не вспомнить, за что платила (маркетплейсы, наложенный платёж и т. п.). Запись — дата (по умолчанию сегодня), сумма и за что; Enter — записать. Когда разнесла платёж в таблицу расходов, нажми ✓ — запись уходит во «Внесённые» (там ↩ возвращает обратно). Щелчок по записи — исправить или удалить её. Вверху — сколько ещё не внесено и на какую сумму. Во «Внесённых» видно последние 3 месяца.'],
+  ['Шаги и подзадачи шаблона (работа)', 'В окне шаблона на вкладке «Шаги»: ⤴ у подзадачи — сделать её отдельным шагом (встанет сразу после своего шага, с теми же числами); «⤵ в подзадачи» у шага — сделать его подзадачей другого шага (выбираешь, какого, и ✓), его подзадачи и инструкция переходят туда же. Изменения сохраняются кнопкой «Сохранить»; задачи, уже созданные по шаблону, не меняются — только следующие.'],
   ['Инструкции к шаблонам 📖 (работа)', 'У каждого шага шаблона можно записать, как его делать: в окне шаблона на вкладке «Шаги» кнопка 📖 у шага. Общее для всего шаблона — вкладка «Памятка». Инструкции не копируются в задачи, а живут в шаблоне: поправила — в следующем периоде уже новая версия. У задачи из шаблона значок 📖 в строке (если инструкция есть) и «📖 Как делать» в окне задачи (вкладка «План и время») — открывают инструкцию шага и памятку, исправить можно прямо там. 📖 у названия проекта в «Разделах» — вся инструкция проекта по шагам. Строки, начинающиеся с «- » или «1. », становятся списком, ссылки нажимаются.'],
   ['План (работа, компьютер)', '«Срок» — дедлайн, «План» — день, когда делаешь, и сколько часов займёт. Во вкладке «План» неделя: задачи перетаскиваются по дням (обратно в «Не распланировано» — снять план), вверху сумма часов вместе со встречами. Больше 8 ч — жёлтым, больше 11 ч — ⚠ красным.'],
   ['☀ Случаи и «Следом»', 'Бывает то, что нельзя спланировать заранее: пришла зарплата. Нажми ☀ вверху и выбери, что случилось. У случая (и у любой задачи) в окне есть «Следом» — задачи, которые спят и нигде не видны. Отметила случай или сделала задачу (например, «Оплатить коммуналку») — задачи «Следом» появятся на сегодня и будут висеть, пока их не сделаешь. Сделала — снова засыпают до следующего раза. Отменила отметку — снова прячутся. Сумму удобно писать прямо в названии: «Отложить 2000 ₴ в конверт». Новый случай — ☀ → «+ Новый случай».'],
@@ -2243,6 +2246,7 @@ function authError(e) {
 // Запланированная задача живёт по плану: в проверку попадает, когда прошёл день плана (не дедлайн).
 const reviewDay = t => t.plan_date || t.due_date;
 function reviewList() {
+  if (S.space === 'work') return []; // в работе утренней проверки нет (её решение 12.11.2026): итоги дня разносит сама до 17:00
   const t0 = today();
   return active().filter(t => !isEvent(t) && reviewDay(t) && reviewDay(t) < t0).sort((a, b) => reviewDay(a) < reviewDay(b) ? -1 : 1);
 }
@@ -3377,10 +3381,38 @@ function renderSteps() {
     <div class="t-subs">${(S.tpl.howOpen || []).includes(i) ? `<textarea class="inp t-howto" data-step="${i}" data-k="howto" placeholder="Как делать">${esc(s.howto || '')}</textarea>` : ''}${(s.subs || []).map((x, j) => `<div class="subrow">
         <span class="sub-dash">└</span>
         <input class="inp" data-tstep="${i}" data-tsub="${j}" placeholder="Подзадача" value="${esc(x)}">
-        <button class="icon small" data-act="t-del-sub" data-v="${i}:${j}" title="Убрать">✕</button>
+        <button class="icon small" data-act="t-sub-up" data-v="${i}:${j}" aria-label="Сделать отдельным шагом">⤴</button>
+        <button class="icon small" data-act="t-del-sub" data-v="${i}:${j}" aria-label="Убрать">✕</button>
       </div>`).join('')}
-      <div class="row t-after"><button class="link small" data-act="t-add-sub" data-v="${i}">+ подзадача</button>
+      ${S.tpl.moveFrom === i ? `<div class="row t-move"><label>Подзадачей к шагу <select class="inp" id="t-move-to">${S.tpl.steps.map((x, k) => k === i ? '' : `<option value="${k}">${k + 1}. ${esc(x.title || '')}</option>`).join('')}</select></label>
+        <button class="icon small" data-act="t-move-go" data-v="${i}" aria-label="Перенести">✓</button><button class="icon small" data-act="t-move-off" aria-label="Не переносить">✕</button></div>` : ''}
+      <div class="row t-after"><span class="row"><button class="link small" data-act="t-add-sub" data-v="${i}">+ подзадача</button>${S.tpl.steps.length > 1 ? `<button class="link small" data-act="t-move" data-v="${i}">⤵ в подзадачи</button>` : ''}</span>
         <label>после шагов <input class="inp" data-step="${i}" data-k="after" placeholder="напр. 1, 2" value="${(s.after || []).join(', ')}"></label></div></div>`).join('');
+}
+
+// Подзадача → отдельный шаг сразу после своего (сроки и месяц — как у шага); номера в «после шагов» сдвигаются.
+function stepFromSub(i, j) {
+  const st = S.tpl.steps, s = st[i], title = (s.subs || [])[j];
+  if (title === undefined) return;
+  s.subs.splice(j, 1);
+  const at = i + 1; // новый шаг встаёт на место at (номер at + 1)
+  st.forEach(x => { if (x.after) x.after = x.after.map(n => (n > at ? n + 1 : n)); });
+  st.splice(at, 0, { title, start_day: s.start_day || null, due_day: s.due_day || null, month: s.month || 1, subs: [] });
+  S.tpl.howOpen = [];
+  renderSteps();
+}
+// Шаг → подзадача другого шага: его подзадачи тоже переходят туда; инструкция шага дописывается к инструкции того шага.
+function stepToSub(i, k) {
+  const st = S.tpl.steps, s = st[i], to = st[k];
+  if (!s || !to || i === k) return;
+  to.subs = [...(to.subs || []), ...(s.title ? [s.title] : []), ...(s.subs || [])];
+  if (s.howto) to.howto = [to.howto, `${s.title}:\n${s.howto}`].filter(Boolean).join('\n\n');
+  const n = i + 1, toN = (k > i ? k - 1 : k) + 1; // «после шагов»: ссылки на перенесённый шаг — теперь на тот, куда перенесли
+  st.splice(i, 1);
+  st.forEach((x, idx) => { if (x.after) x.after = [...new Set(x.after.map(y => (y === n ? toN : y > n ? y - 1 : y)))].filter(y => y !== idx + 1); });
+  S.tpl.moveFrom = null;
+  S.tpl.howOpen = [];
+  renderSteps();
 }
 
 function syncTemplate() {
@@ -3773,7 +3805,7 @@ document.addEventListener('click', async ev => {
       case 't-month': S.tpl.months = S.tpl.months.includes(+v) ? S.tpl.months.filter(m => m !== +v) : S.tpl.months.concat(+v); syncTemplate(); break;
       case 't-add': S.tpl.steps.push({ title: '', month: 1 }); renderSteps(); break;
       case 't-del-step': {
-        S.tpl.howOpen = [];
+        S.tpl.howOpen = []; S.tpl.moveFrom = null;
         // номера в «после шагов» сдвигаются вместе со шагами
         const n = +v + 1;
         S.tpl.steps.splice(+v, 1);
@@ -3831,6 +3863,10 @@ document.addEventListener('click', async ev => {
       case 'sub-del': S.edit.checklist.splice(+v, 1); renderSubs(); break;
       case 't-how': { const o = (S.tpl.howOpen ||= []), n = +v; o.includes(n) ? o.splice(o.indexOf(n), 1) : o.push(n); renderSteps(); break; }
       case 't-add-sub': (S.tpl.steps[+v].subs ||= []).push(''); renderSteps(); break;
+      case 't-sub-up': stepFromSub(...v.split(':').map(Number)); break;
+      case 't-move': S.tpl.moveFrom = +v; renderSteps(); break;
+      case 't-move-off': S.tpl.moveFrom = null; renderSteps(); break;
+      case 't-move-go': stepToSub(+v, +document.getElementById('t-move-to').value); break;
       case 't-del-sub': { const [i, j] = v.split(':').map(Number); S.tpl.steps[i].subs.splice(j, 1); renderSteps(); break; }
       case 'edit': openEdit(byId(id)); break;
       case 'new': {
