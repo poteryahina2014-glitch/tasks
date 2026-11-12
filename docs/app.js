@@ -2063,6 +2063,7 @@ const HELP = [
   ['Шаблон из задачи', 'В окне рабочей задачи — «⟳ Сделать шаблон из этой задачи». Выбери, за какой период эта задача (например, октябрь 2026), и какие подпункты взять. Сама задача станет первой (за этот период), следующие шаблон создаст сам — «… — ноябрь 2026». Оценка часов у новых задач — среднее фактическое время за прошлые периоды. В окне шаблона — таблица «Время по периодам».'],
   ['«Сегодня» по частям дня', 'В будни (личный режим) дела на сегодня идут по частям дня: ☀ утро — пятиминутки; 🍽 обед, 🌆 после работы, 🌙 после ужина — окошки (время — в ⚙); остальное — то, что не попало в окошки. Окошки видны всегда, пустые ячейки по 30 минут — свободное место. В окошке сами стоят только задачи со своим «Когда» (в окне задачи, у средних и вдохновения) и вдохновение без «Когда» — после ужина; остальные задачи ты расставляешь сама: на компьютере перетаскиваешь в окошко, между окошками или обратно (в утро или остальное), на телефоне — долгое нажатие → «В окошко». Это только на сегодня, «Когда» не меняется. Место в окошке занимают средние и прочие задачи (30 минут или своё время ⏱) и события в это время; пятиминутки и вдохновение показываются в окошке, но места не занимают. Если задач больше, чем ячеек, ничего не переносится — свободных ячеек просто не остаётся. В выходные окошек нет.'],
   ['Платежи 💳', 'Кнопка 💳 в заголовке — записи о платежах, по которым потом не вспомнить, за что платила (маркетплейсы, наложенный платёж и т. п.). Запись — дата (по умолчанию сегодня), сумма и за что; Enter — записать. Когда разнесла платёж в таблицу расходов, нажми ✓ — запись уходит во «Внесённые» (там ↩ возвращает обратно). Щелчок по записи — исправить или удалить её. Вверху — сколько ещё не внесено и на какую сумму. Во «Внесённых» видно последние 3 месяца.'],
+  ['Подпункт ↔ задача', 'В окне сохранённой задачи ⤴ у подпункта — сделать его отдельной задачей (сразу, с тем же разделом, проектом, сроком и планом). Наоборот: правая кнопка мыши (на телефоне — долгое нажатие) по задаче → «⤵ Подпунктом к задаче…» → выбираешь задачу (можно найти по названию). Название задачи и её подпункты станут подпунктами выбранной, заметка допишется к её заметке, а сама задача удалится. Если у задачи есть повтор или история отметок, сначала спрошу. Задачу, у которой есть «Следом», так перенести нельзя.'],
   ['Шаги и подзадачи шаблона (работа)', 'В окне шаблона на вкладке «Шаги»: ⤴ у подзадачи — сделать её отдельным шагом (встанет сразу после своего шага, с теми же числами); «⤵ в подзадачи» у шага — сделать его подзадачей другого шага (выбираешь, какого, и ✓), его подзадачи и инструкция переходят туда же. Изменения сохраняются кнопкой «Сохранить»; задачи, уже созданные по шаблону, не меняются — только следующие.'],
   ['Инструкции к шаблонам 📖 (работа)', 'У каждого шага шаблона можно записать, как его делать: в окне шаблона на вкладке «Шаги» кнопка 📖 у шага. Общее для всего шаблона — вкладка «Памятка». Инструкции не копируются в задачи, а живут в шаблоне: поправила — в следующем периоде уже новая версия. У задачи из шаблона значок 📖 в строке (если инструкция есть) и «📖 Как делать» в окне задачи (вкладка «План и время») — открывают инструкцию шага и памятку, исправить можно прямо там. 📖 у названия проекта в «Разделах» — вся инструкция проекта по шагам. Строки, начинающиеся с «- » или «1. », становятся списком, ссылки нажимаются.'],
   ['План (работа, компьютер)', '«Срок» — дедлайн, «План» — день, когда делаешь, и сколько часов займёт. Во вкладке «План» неделя: задачи перетаскиваются по дням (обратно в «Не распланировано» — снять план), вверху сумма часов вместе со встречами. Больше 8 ч — жёлтым, больше 11 ч — ⚠ красным.'],
@@ -2906,16 +2907,83 @@ function renderSubs() {
   document.getElementById('f-subs').innerHTML = S.edit.checklist.map((s, i) => `<div class="subrow">
       <button class="sub-box ${s.d ? 'on' : ''}" data-act="sub-m" data-v="${i}">${s.d ? '✓' : ''}</button>
       <input class="inp" data-sub="${i}" placeholder="Что сделать" value="${esc(s.t)}">
+      ${S.edit.id ? `<button class="icon small" data-act="sub-up" data-v="${i}" aria-label="Сделать отдельной задачей">⤴</button>` : '<span></span>'}
       <button class="icon small" data-act="sub-del" data-v="${i}" title="Убрать">✕</button>
     </div>`).join('');
 }
 
 document.addEventListener('input', ev => {
+  if (ev.target.id === 'merge-q' && S.merge) { S.merge.q = ev.target.value; renderMerge(); return; }
   const i = ev.target.dataset.sub;
   if (i !== undefined && S.edit) S.edit.checklist[i].t = ev.target.value;
   const k = ev.target.dataset.kid;
   if (k !== undefined && S.edit) S.edit.kids[k].t = ev.target.value;
 });
+
+// Подпункт → отдельная задача (сразу, у сохранённой задачи): тот же раздел, проект, срок и план, что у задачи.
+async function subToTask(i) {
+  const e = S.edit, t = byId(e.id), sub = e.checklist[i];
+  const title = sub && sub.t.trim();
+  if (!t || !title) return toast('Сначала напиши подпункт');
+  const row = { title, kind: 'task', section_id: t.section_id, space: spaceOf(t), position: (t.position || 0) + 1,
+    ...(t.project_id ? { project_id: t.project_id } : {}), due_date: t.due_date || null, ...(t.plan_date ? { plan_date: t.plan_date } : {}) };
+  const [nt] = (await call(sb.from('tasks').insert(row).select())) || [];
+  e.checklist.splice(i, 1);
+  // в базе у задачи убираем этот подпункт, остальные (в том числе ещё не сохранённые правки окна) не трогаем
+  const saved = subsOf(t).filter(x => x.t !== title);
+  t.checklist = saved;
+  await call(sb.from('tasks').update({ checklist: saved }).eq('id', t.id));
+  if (nt) S.tasks.push(nt);
+  renderSubs();
+  render();
+  toast(`«${title}» — отдельная задача`);
+}
+
+// Задача → подпункт другой задачи: её название и её подпункты дописываются к выбранной, заметка — к заметке,
+// «делать после» других задач переходит на выбранную; сама задача удаляется.
+function openMerge(t) {
+  $modal.dataset.kind = 'merge';
+  S.merge = { id: t.id, q: '' };
+  renderMerge();
+}
+function mergeCands(t) {
+  const q = S.merge.q.trim().toLowerCase();
+  const rank = x => (t.project_id && x.project_id === t.project_id ? 0 : x.section_id === t.section_id ? 1 : 2);
+  return activeAll().filter(x => x.id !== t.id && !x.done_on && !isEvent(x) && x.kind !== 'occasion' && spaceOf(x) === spaceOf(t)
+      && (!q || x.title.toLowerCase().includes(q)))
+    .sort((a, b) => rank(a) - rank(b) || a.title.localeCompare(b.title, 'ru'));
+}
+function renderMerge() {
+  const t = byId(S.merge.id);
+  if (!t) return closeModal();
+  const list = mergeCands(t).slice(0, 60);
+  const box = $modal.querySelector('.merge-list');
+  const rows = list.map(x => { const sec = sectionOf(x); return `<button class="btn tpl-row" data-act="merge-go" data-id="${x.id}"><b>${esc(x.title)}</b><span>${sec ? esc(sec.name) : 'Без раздела'}${subsOf(x).length ? ` · подпунктов: ${subsOf(x).length}` : ''}</span></button>`; }).join('')
+    || '<div class="empty small">Ничего не нашлось</div>';
+  if (box) { box.innerHTML = rows; return; } // поиск: перерисовать только список, чтобы поле не теряло курсор
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet merge">
+    <h3>⤵ «${esc(t.title)}» — подпунктом к задаче</h3>
+    <input class="inp" id="merge-q" placeholder="Найти задачу" autocomplete="off">
+    <div class="menu merge-list">${rows}</div>
+    <div class="actions"><span></span><button class="btn" data-act="close">Отмена</button></div>
+  </div></div>`;
+  document.getElementById('merge-q').focus();
+}
+async function mergeInto(t, to) {
+  if (S.tasks.some(x => x.wake_after === t.id)) return toast('У этой задачи есть задачи «Следом» — сначала убери их');
+  const warn = [t.repeat_unit && 'у неё есть повтор', t.kind === 'habit' && 'это привычка', S.logs.some(l => l.task_id === t.id) && 'её история отметок пропадёт'].filter(Boolean);
+  if (warn.length && !confirm(`«${t.title}» станет подпунктом «${to.title}», а сама задача удалится: ${warn.join(', ')}. Продолжить?`)) return;
+  const checklist = [...subsOf(to), { t: t.title, d: false }, ...subsOf(t).map(x => ({ t: x.t, d: !!x.d }))];
+  const upd = { checklist };
+  if (t.notes) upd.notes = [to.notes, `${t.title}: ${t.notes}`].filter(Boolean).join('\n\n');
+  await call(sb.from('tasks').update(upd).eq('id', to.id));
+  const deps = S.tasks.filter(x => (x.after_ids || []).includes(t.id));
+  await Promise.all(deps.map(x => call(sb.from('tasks').update({ after_ids: [...new Set(x.after_ids.map(y => (y === t.id ? to.id : y)))].filter(y => y !== x.id) }).eq('id', x.id))));
+  await call(sb.from('tasks').delete().eq('id', t.id));
+  closeModal();
+  await load();
+  toast(`«${t.title}» — подпункт задачи «${to.title}»`);
+}
 
 // Галочка в окне уже сохранённой задачи сохраняется сразу (даже если окно закроют без «Сохранить»).
 async function toggleSubModal(i) {
@@ -3694,7 +3762,8 @@ function openCtx(t, x, y) {
     + '<div class="ctx-sep">В раздел</div>'
     + secs.map(([id, name, color]) => item('s:' + id, `${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}${esc(name)}`, (t.section_id || '') === id)).join('')
     + '<hr>'
-    + `<button data-act="cm-edit" data-id="${t.id}">Изменить…</button>`;
+    + `<button data-act="cm-edit" data-id="${t.id}">Изменить…</button>`
+    + (isEvent(t) || t.kind === 'occasion' ? '' : `<button data-act="cm-merge" data-id="${t.id}">⤵ Подпунктом к задаче…</button>`);
   $ctx.classList.add('show');
   // не вылезать за край экрана
   const w = $ctx.offsetWidth, h = $ctx.offsetHeight;
@@ -3793,6 +3862,9 @@ document.addEventListener('click', async ev => {
       case 'daily-time': await savePrefs({ daily_time: v }); break;
       case 'cm': hideCtx(); await quick(byId(id), v); break;
       case 'cm-edit': hideCtx(); openEdit(byId(id)); break;
+      case 'cm-merge': hideCtx(); openMerge(byId(id)); break;
+      case 'merge-go': await mergeInto(byId(S.merge.id), byId(id)); break;
+      case 'sub-up': await subToTask(+v); break;
       case 'space': setSpace(S.space === 'work' ? 'personal' : 'work'); break;
       case 'templates': openTemplates(); break;
       case 'tpl-new': openTemplate({ period: 'quarter', months: [], steps: [] }); break;
