@@ -343,6 +343,8 @@ function taskRow(t, opts = {}) {
   if (rep) tags.push(`<span>↻ ${esc(rep)}</span>`);
   const subs = subsOf(t);
   if (t.remind_at || t.remind_days) tags.push(`<span>🔔 ${[hhmm(t.remind_at), t.remind_days ? 'за ' + t.remind_days + ' дн.' : ''].filter(Boolean).join(', ')}</span>`);
+  const how = t.project_id && spaceOf(t) === 'work' ? stepOf(t) : null;
+  if (how && (how.step?.howto || how.tpl.memo)) tags.push(`<span class="howto-tag" data-act="howto" data-id="${t.id}" aria-label="Как делать">📖</span>`);
   if (t.decor && DECOR[t.decor]) tags.push(`<span title="${DECOR[t.decor].name}">${DECOR[t.decor].icon}</span>`);
   if (shownPets(t).length) tags.push(`<span title="${shownPets(t).map(p => esc(petName(p))).join(' и ')}">${shownPets(t).map(p => PETS[p].icon).join('')}</span>`);
   if (opts.note) meta.push(`<span class="${opts.noteCls || ''}">${opts.note}</span>`);
@@ -389,38 +391,33 @@ function renderToday() {
   const t0 = today();
   const due = active().filter(t => !isEvent(t) && reviewDay(t) && reviewDay(t) <= t0)
     .sort((a, b) => (a.start_time || '99') < (b.start_time || '99') ? -1 : 1);
-  // «Окошки»: обед / после работы / после ужина (будни) с заполненностью
+  // День по частям (её решение 12.11.2026): ☀ утро (пятиминутки) → 🍽 обед → 🌆 после работы → 🌙 после ужина → остальное.
+  // Окошки в будни видны всегда, со свободными ячейками по 30 мин; задачи туда ставит она сама (перетаскиванием или меню).
   const personal = S.space === 'personal';
-  const fit = personal ? dayFit(t0) : { inSlot: {}, slots: {}, out: [], room: () => 0, weekend: true };
-  const wide = personal && !fit.weekend && matchMedia('(min-width: 900px)').matches;
-  const outIds = new Set(fit.out.map(t => t.id));
-  const overIds = new Set(Object.values(fit.slots).flatMap(sl => sl.items.filter(i => i.over).map(i => i.t.id)));
-  const slotWarn = slotWarnHTML(fit);
-  // один список — привычки и задачи вместе, порядок (её просьба): пятиминутки → обед → после работы → после ужина → остальное
+  const fit = personal ? dayFit(t0) : { inSlot: {}, slots: {}, room: () => 0, weekend: true };
+  const slotted = personal && !fit.weekend;
+  const drag = slotted && matchMedia('(min-width: 900px)').matches;
   const ORDER = { lunch: 1, after: 2, eve: 3 };
-  const ideaEve = t => personal && sizeOf(t) === 'idea' && reviewDay(t) === t0; // вдохновение в выходные — «вечером»
+  const ideaEve = t => personal && sizeOf(t) === 'idea'; // вдохновение в выходные — «вечером»
   const rank = t => (fit.inSlot[t.id] ? ORDER[fit.inSlot[t.id]] : sizeOf(t) === 'quick' ? 0 : ideaEve(t) ? 3 : 4);
   const sorted = due.map((t, i) => [t, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([t]) => t);
-  const rowOpts = t => {
-    const k = fit.inSlot[t.id];
-    if (overIds.has(t.id)) return { note: 'не влезло в окошко', noteCls: 'late', sdrag: wide };
-    if (outIds.has(t.id)) return { note: 'без окошка', noteCls: 'warn', sdrag: wide, noslot: true };
-    if (wide && k && k !== t.slot) return { note: `${SLOT_ICON[k]} ${SLOTS[k].name.toLowerCase()}`, sdrag: true }; // своё «Когда» и так видно справа в строке
-    return { sdrag: wide };
-  };
-  const GROUPS = [[0, '⚡ пятиминутки'], [1, 'lunch'], [2, 'after'], [3, 'eve'], [4, 'остальное']];
-  const used = GROUPS.filter(([r, k]) => sorted.some(t => rank(t) === r) || (!wide && fit.slots[k]));
+  const GROUPS = [[0, null, slotted ? '☀ Утро' : '⚡ пятиминутки'], [1, 'lunch'], [2, 'after'], [3, 'eve', '🌙 вечером'], [4, null, 'остальное']];
+  const used = GROUPS.filter(([r, k]) => sorted.some(t => rank(t) === r) || (slotted && fit.slots[k]));
   let groups = '';
-  for (const [r, k] of used) {
+  for (const [r, k, label] of used) {
     const items = sorted.filter(t => rank(t) === r);
-    const sl = fit.slots[k];
-    // разделитель: у окошек на телефоне — с заполненностью; одна группа — без разделителя
-    let head = '';
+    const sl = slotted && fit.slots[k];
+    const rows = items.map(t => taskRow(t, { sdrag: drag })).join('');
     if (sl) {
-      const st = slotState(sl), sv = slotOf(k);
-      head = `<div class="group-sep slot-head"><b>${SLOT_ICON[k]} ${SLOTS[k].name}, ${sv.from}–${sv.to}</b>${wide ? '' : `<span class="${st.cls}">${st.text}</span>`}</div>`;
-    } else if (used.length > 1) head = `<div class="group-sep"><span>${r === 3 ? '🌙 вечером' : k}</span></div>`;
-    groups += head + items.map(t => taskRow(t, rowOpts(t))).join('');
+      const s = slotOf(k);
+      const evs = sl.items.filter(i => i.ev).map(i => `<div class="scell item ev" data-act="edit" data-id="${i.t.id}"><span>${hhmm(i.t.start_time)} ${esc(i.t.title)}</span><b>${i.min} мин</b></div>`).join('');
+      const free = Math.max(0, Math.floor(fit.room(k) / CELL));
+      groups += `<div class="period" data-sdrop="${k}"><div class="group-sep"><span>${SLOT_ICON[k]} ${SLOTS[k].name}, ${s.from}–${s.to}</span></div>
+        ${rows}${evs}${'<div class="scell empty">свободно</div>'.repeat(free)}</div>`;
+    } else {
+      const head = used.length > 1 ? `<div class="group-sep"><span>${label}</span></div>` : '';
+      groups += slotted ? `<div class="period" data-sdrop="none">${head}${rows}</div>` : head + rows;
+    }
   }
   const started = t => t.start_date && t.start_date <= t0;
   // начатые, но со сроком позже — «в работе»
@@ -438,12 +435,10 @@ function renderToday() {
   }
   if (events.length) html += '<h2>События</h2>' + events.map(t => taskRow(t)).join('');
   let list = '';
-  if (groups) list += (wide ? '' : slotWarn) + groups;
+  if (groups) list += groups;
   if (inWork.length) list += '<h2>В работе</h2>' + inWork.map(t => taskRow(t, { date: true })).join('');
   if (doneToday.length) list += '<h2>Сделано сегодня</h2>' + doneToday.map(t => taskRow(t, { done: true })).join('');
-  if (!wide) return html + list;
-  return html + `<div class="today-grid"><div class="today-list" data-sdrop="none">${list}</div>
-    <aside class="slots-col"><h2>Окошки</h2>${slotWarn}${Object.keys(fit.slots).map(k => slotBox(k, fit)).join('')}</aside></div>`;
+  return html + list;
 }
 
 function occurrences(from, to) {
@@ -1849,7 +1844,7 @@ function openBulk() {
     ${personal ? `<div class="field"><label>Размер</label>
       <select class="inp" id="b-size">${opt(KEEP, '— не менять —')}${opt('', 'Нет (или как у раздела)')}${Object.entries(SIZES).map(([k, z]) => opt(k, z.icon + ' ' + z.name)).join('')}</select></div>
     <div class="field" id="b-slot-box"><label>Когда</label>
-      <select class="inp" id="b-slot">${opt('', 'В любое окошко')}${Object.entries(SLOTS).map(([k, s]) => opt(k, s.name)).join('')}</select></div>
+      <select class="inp" id="b-slot">${opt('', 'Без окошка')}${Object.entries(SLOTS).map(([k, s]) => opt(k, s.name)).join('')}</select></div>
     <div class="field"><label>Питомец</label>
       <select class="inp" id="b-pet">${opt(KEEP, '— не менять —')}${opt('', 'Нет')}${Object.keys(PETS).filter(petOn).map(p => opt(p, PETS[p].icon + ' ' + esc(petName(p)))).join('')}${Object.keys(PETS).filter(petOn).length === 2 ? opt('both', 'Оба') : ''}</select></div>
     <div class="field"><label>Картинка</label>
@@ -1928,7 +1923,7 @@ async function deleteBulk() {
 }
 
 // ---------- настройки (шестерёнка) ----------
-const GEAR0 = '<button class="icon" data-act="occ" aria-label="Что случилось сегодня">☀</button><button class="icon" data-act="help" aria-label="Справка">?</button><button class="icon" data-act="settings" aria-label="Настройки">⚙</button>';
+const GEAR0 = '<button class="icon" data-act="pay" aria-label="Платежи">💳</button><button class="icon" data-act="occ" aria-label="Что случилось сегодня">☀</button><button class="icon" data-act="help" aria-label="Справка">?</button><button class="icon" data-act="settings" aria-label="Настройки">⚙</button>';
 const GEARS = { get v() { return booksIcon() + GEAR0; } };
 
 // ---------- случаи (☀): то, что нельзя запланировать заранее ----------
@@ -1955,6 +1950,97 @@ function openOcc() {
   </div></div>`;
 }
 
+// ---------- платежи (💳): «дата, сумма, за что» — потом разнести в Excel, отметить «внесла» ----------
+// Грузятся только при открытии окна. Внесённые хранятся в архиве (показываются за последние 3 месяца).
+async function openPay() {
+  $modal.dataset.kind = 'pay';
+  S.pay = S.pay || { list: [], arch: false, edit: null, loaded: false, on: true };
+  S.pay.edit = null;
+  renderPay(true);
+  await loadPay();
+}
+async function loadPay() {
+  const { data, error } = await sb.from('payments').select('*')
+    .or(`done_on.is.null,done_on.gte.${addDays(today(), -92)}`).order('paid_on').order('id');
+  Object.assign(S.pay, error ? { on: false, loaded: true } : { list: data, on: true, loaded: true });
+  if ($modal.dataset.kind === 'pay') renderPay();
+}
+const money = n => (n == null || n === '' ? '' : (+n).toLocaleString('ru-RU', { minimumFractionDigits: Number.isInteger(+n) ? 0 : 2, maximumFractionDigits: 2 }) + ' ₴');
+const parseMoney = s => { const x = parseFloat(String(s || '').replace(/\s/g, '').replace(',', '.')); return isFinite(x) ? Math.round(x * 100) / 100 : null; };
+// reset — очистить поля ввода (иначе введённое сохраняется при перерисовке)
+function renderPay(reset = false) {
+  const p = S.pay;
+  const val = id => (reset ? null : document.getElementById(id)?.value);
+  const kept = { d: val('pay-d'), a: val('pay-a'), w: val('pay-w') };
+  const open = p.list.filter(x => !x.done_on);
+  const arch = p.list.filter(x => x.done_on).sort((a, b) => b.done_on.localeCompare(a.done_on) || b.paid_on.localeCompare(a.paid_on));
+  const sum = open.reduce((s, x) => s + (+x.amount || 0), 0);
+  const e = p.edit && p.list.find(x => String(x.id) === p.edit);
+  const row = x => `<div class="pay-row${x.done_on ? ' done' : ''}${e && String(e.id) === String(x.id) ? ' picked' : ''}" data-act="pay-edit" data-id="${x.id}">
+      <span class="pay-d">${dateLabel(x.paid_on)}</span><b class="pay-a">${money(x.amount)}</b><span class="pay-w">${esc(x.what)}</span>
+      ${x.done_on ? `<button class="icon small" data-act="pay-back" data-id="${x.id}" aria-label="Вернуть в невнесённые">↩</button>`
+        : `<button class="btn yes" data-act="pay-done" data-id="${x.id}" aria-label="Внесла">✓</button>`}</div>`;
+  const list = !p.loaded ? '<div class="empty small">Загружаю…</div>'
+    : !p.on ? '<div class="empty small">⚠ Нет таблицы платежей: запусти в Supabase файл 020_payments_howto.sql</div>'
+    : p.arch ? (arch.map(row).join('') || '<div class="empty small">Внесённых пока нет</div>')
+    : (open.map(row).join('') || '<div class="empty small">Всё внесено</div>');
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet pay">
+    <h3>Платежи</h3>
+    <div class="pay-form">
+      <input class="inp" id="pay-d" type="date" aria-label="Дата" value="${esc(kept.d ?? (e ? e.paid_on : today()))}">
+      <input class="inp" id="pay-a" inputmode="decimal" placeholder="Сумма" value="${esc(kept.a ?? (e && e.amount != null ? String(+e.amount).replace('.', ',') : ''))}">
+      <input class="inp" id="pay-w" placeholder="За что" value="${esc(kept.w ?? (e ? e.what : ''))}">
+      <button class="btn main" data-act="pay-save" aria-label="${e ? 'Сохранить' : 'Записать'}">${e ? '✓' : '+'}</button>
+      ${e ? `<button class="icon" data-act="pay-cancel" aria-label="Не менять">✕</button><button class="icon" data-act="pay-del" aria-label="Удалить">🗑</button>` : ''}
+    </div>
+    <div class="seg pay-tabs"><button class="pill ${p.arch ? '' : 'on'}" data-act="pay-arch" data-v="">Не внесено: ${open.length}${sum ? ' · ' + money(sum) : ''}</button>
+      <button class="pill ${p.arch ? 'on' : ''}" data-act="pay-arch" data-v="1">Внесённые</button></div>
+    <div class="pay-list">${list}</div>
+    <div class="actions"><span></span><button class="btn" data-act="close">Закрыть</button></div>
+  </div></div>`;
+}
+async function savePay() {
+  const p = S.pay;
+  if (!p.on) return toast('Сначала запусти в Supabase файл 020_payments_howto.sql');
+  const row = { paid_on: document.getElementById('pay-d').value || today(), amount: parseMoney(document.getElementById('pay-a').value),
+    what: document.getElementById('pay-w').value.trim() };
+  if (!row.what && row.amount == null) return toast('Напиши сумму или за что');
+  const e0 = p.edit && p.list.find(y => String(y.id) === p.edit);
+  if (e0) {
+    await call(sb.from('payments').update(row).eq('id', e0.id));
+    Object.assign(e0, row);
+    p.edit = null;
+  } else {
+    const [x] = await call(sb.from('payments').insert(row).select());
+    p.list.push(x);
+    p.arch = false;
+  }
+  p.list.sort((a, b) => a.paid_on.localeCompare(b.paid_on) || String(a.created_at).localeCompare(String(b.created_at)));
+  renderPay(true);
+  document.getElementById('pay-a')?.focus();
+}
+async function payMark(id, done) {
+  const x = S.pay.list.find(y => String(y.id) === id);
+  if (!x) return;
+  const old = x.done_on;
+  x.done_on = done ? today() : null;
+  if (S.pay.edit === id) S.pay.edit = null;
+  renderPay();
+  await call(sb.from('payments').update({ done_on: x.done_on }).eq('id', x.id));
+  toast(done ? 'Внесено — в архиве' : 'Вернула в невнесённые', async () => {
+    x.done_on = old; if ($modal.dataset.kind === 'pay') renderPay();
+    await call(sb.from('payments').update({ done_on: old }).eq('id', x.id));
+  });
+}
+async function payDelete() {
+  const p = S.pay, x = p.list.find(y => String(y.id) === p.edit);
+  if (!x || !confirm(`Удалить запись «${x.what || money(x.amount)}»? Вернуть её не получится.`)) return;
+  await call(sb.from('payments').delete().eq('id', x.id));
+  p.list = p.list.filter(y => y.id !== x.id);
+  p.edit = null;
+  renderPay(true);
+}
+
 // ---------- справка ----------
 const HELP = [
   ['Сегодня', 'Всё, что нужно сделать сегодня: привычки, задачи (и просроченные), события. Кружок — отметить. Нажать на отметку ещё раз — отменить.'],
@@ -1965,7 +2051,7 @@ const HELP = [
   ['Календарь', 'Месяц или неделя, фильтры по разделам. Нажми на день: там расписание и свободное время между делами.'],
   ['Разделы', 'Папки для задач. ✎ у раздела: название, цвет, «выключить» на время (задачи прячутся, но не удаляются). «Без срока» вверху — показать только задачи без даты. ☐ («Выбрать») — изменить или удалить сразу несколько задач (☑ — выбрать все). На компьютере задачи можно перетаскивать мышкой.'],
   ['А→Я', 'Кнопка у заголовка раздела в «Разделах»: расставляет его задачи по алфавиту. Потом их можно двигать мышкой, а нажать А→Я снова — когда захочется. Новая задача встаёт в конец.'],
-  ['Размер и предложения на день', 'В окне задачи — «Размер»: ⚡ пятиминутка, ◐ средняя, ● на весь день, ✦ вдохновение. В ⚙ можно задать размер сразу всем задачам раздела (например, «Проекты» — вдохновение). Каждое утро после проверки (в личном режиме) открывается окно со всеми задачами <b>без срока</b>, которые можно взять сегодня: все пятиминутки; средние — если есть свободное окошко (обед, после работы или после ужина, время — в ⚙; у средней задачи можно указать «Когда»; окошко занимают средние задачи на сегодня и события в это время), в выходные — всегда; большие — в субботу и воскресенье, если на этот день ещё нет большой; вдохновение — если на сегодня ещё не взято ни вдохновение, ни большая задача. Если вечер так и остался свободным, с 16 до 19 вдохновение предлагается ещё раз. Оба окна — по одному разу в день на весь аккаунт: показалось на телефоне — на компьютере уже не появится. У задач по вдохновению нет просрочки: не сделано в свой день — задача снова без срока. «Сегодня» — ставит срок на сегодня, «Не сегодня» — предложу завтра, «Потом» — через 4 дня; то, что не выбрано, предложу завтра. Пятиминутку можно сделать в любой свободный момент, вдохновение — на вечер, если есть настроение.'],
+  ['Размер и предложения на день', 'В окне задачи — «Размер»: ⚡ пятиминутка, ◐ средняя, ● на весь день, ✦ вдохновение. В ⚙ можно задать размер сразу всем задачам раздела (например, «Проекты» — вдохновение). Каждое утро после проверки (в личном режиме) открывается окно со всеми задачами <b>без срока</b>, которые можно взять сегодня: все пятиминутки; средние — если есть свободное окошко (обед, после работы или после ужина, время — в ⚙; окошко занимают задачи, стоящие в нём на сегодня, и события в это время), в выходные — всегда; большие — в субботу и воскресенье, если на этот день ещё нет большой; вдохновение — если на сегодня ещё не взято ни вдохновение, ни большая задача. Если вечер так и остался свободным, с 16 до 19 вдохновение предлагается ещё раз. Оба окна — по одному разу в день на весь аккаунт: показалось на телефоне — на компьютере уже не появится. У задач по вдохновению нет просрочки: не сделано в свой день — задача снова без срока. «Сегодня» — ставит срок на сегодня, «Не сегодня» — предложу завтра, «Потом» — через 4 дня; то, что не выбрано, предложу завтра. Пятиминутку можно сделать в любой свободный момент, вдохновение — на вечер, если есть настроение.'],
   ['Быстрое меню', 'Долгое нажатие на задачу (на компьютере — правая кнопка): на сегодня, на завтра, в другой раздел.'],
   ['🏠 / 💼', 'Личное и работа отдельно, переключатель вверху. В работе есть «Шаблоны»: повторяющиеся проекты из шагов (например, квартальная отчётность), создаются сами.'],
   ['Шаблоны (работа)', '«⟳ Шаблоны» в колонке разделов. Шаблон сам создаёт проект с задачами, когда заканчивается месяц, квартал или год, — в разделе шаблона. <b>Какие месяцы</b>: «Только некоторые» — задачи создадутся только за отмеченные месяцы (например, оценка урожая — июль–октябрь). <b>Создавать заранее</b> за N рабочих дней до конца периода; 0 — на следующий день после конца. <b>Шаги</b>: «с» и «до» — числа месяца, «мес.» — какой по счёту месяц после конца периода (1 — следующий), «часов» — оценка (если по факту уже записано время, новые задачи получат среднее по факту). У шага могут быть подзадачи — без своих сроков; «после шагов» — номера шагов, которые надо сделать раньше. <b>Создать задачи сейчас</b> — за выбранный период, не дожидаясь конца. <b>Копия</b> — например, сделать годовую отчётность из квартальной.'],
@@ -1973,7 +2059,9 @@ const HELP = [
   ['Подпункты', 'В окне задачи «+ Подпункт»: письма, проверки и т.п. Отмечаются прямо под задачей. В шаблоне у шага — «+ подзадача».'],
   ['Потраченное время (работа)', 'В окне рабочей задачи — «Потрачено по факту»: напиши часы (1,5 или 1:30), выбери день и нажми «+ Записать». Можно записывать несколько раз — итог складывается. В строке задачи ⏱ факт / оценка (красным — если вышло больше оценки). На «Плане» у дня — «по факту». Вкладка <b>«Время»</b> (на компьютере): сколько ушло по дням, по дням недели, по задачам и сколько обычно занимают шаги шаблонов.'],
   ['Шаблон из задачи', 'В окне рабочей задачи — «⟳ Сделать шаблон из этой задачи». Выбери, за какой период эта задача (например, октябрь 2026), и какие подпункты взять. Сама задача станет первой (за этот период), следующие шаблон создаст сам — «… — ноябрь 2026». Оценка часов у новых задач — среднее фактическое время за прошлые периоды. В окне шаблона — таблица «Время по периодам».'],
-  ['Окошки (личное, будни)', 'Обед, после работы и после ужина — ячейки по 30 минут (время — в ⚙). Задачи с «Когда» встают в своё окошко, средние без «Когда» — сами в свободное место, вдохновение — после ужина. На компьютере окошки справа на «Сегодня»: задачу можно перетащить в окошко, между окошками или обратно в список (только на сегодня, «Когда» не меняется). На телефоне — долгое нажатие → «В окошко». Если места не хватает, появится ⚠ и задачи «без окошка» подсвечены — сроки при этом не переносятся.'],
+  ['«Сегодня» по частям дня', 'В будни (личный режим) дела на сегодня идут по частям дня: ☀ утро — пятиминутки; 🍽 обед, 🌆 после работы, 🌙 после ужина — окошки (время — в ⚙); остальное — то, что не попало в окошки. Окошки видны всегда, пустые ячейки по 30 минут — свободное место. В окошке сами стоят только задачи со своим «Когда» (в окне задачи, у средних и вдохновения) и вдохновение без «Когда» — после ужина; остальные задачи ты расставляешь сама: на компьютере перетаскиваешь в окошко, между окошками или обратно (в утро или остальное), на телефоне — долгое нажатие → «В окошко». Это только на сегодня, «Когда» не меняется. Место в окошке занимают средние и прочие задачи (30 минут или своё время ⏱) и события в это время; пятиминутки и вдохновение показываются в окошке, но места не занимают. Если задач больше, чем ячеек, ничего не переносится — свободных ячеек просто не остаётся. В выходные окошек нет.'],
+  ['Платежи 💳', 'Кнопка 💳 в заголовке — записи о платежах, по которым потом не вспомнить, за что платила (маркетплейсы, наложенный платёж и т. п.). Запись — дата (по умолчанию сегодня), сумма и за что; Enter — записать. Когда разнесла платёж в таблицу расходов, нажми ✓ — запись уходит во «Внесённые» (там ↩ возвращает обратно). Щелчок по записи — исправить или удалить её. Вверху — сколько ещё не внесено и на какую сумму. Во «Внесённых» видно последние 3 месяца.'],
+  ['Инструкции к шаблонам 📖 (работа)', 'У каждого шага шаблона можно записать, как его делать: в окне шаблона на вкладке «Шаги» кнопка 📖 у шага. Общее для всего шаблона — вкладка «Памятка». Инструкции не копируются в задачи, а живут в шаблоне: поправила — в следующем периоде уже новая версия. У задачи из шаблона значок 📖 в строке (если инструкция есть) и «📖 Как делать» в окне задачи (вкладка «План и время») — открывают инструкцию шага и памятку, исправить можно прямо там. 📖 у названия проекта в «Разделах» — вся инструкция проекта по шагам. Строки, начинающиеся с «- » или «1. », становятся списком, ссылки нажимаются.'],
   ['План (работа, компьютер)', '«Срок» — дедлайн, «План» — день, когда делаешь, и сколько часов займёт. Во вкладке «План» неделя: задачи перетаскиваются по дням (обратно в «Не распланировано» — снять план), вверху сумма часов вместе со встречами. Больше 8 ч — жёлтым, больше 11 ч — ⚠ красным.'],
   ['☀ Случаи и «Следом»', 'Бывает то, что нельзя спланировать заранее: пришла зарплата. Нажми ☀ вверху и выбери, что случилось. У случая (и у любой задачи) в окне есть «Следом» — задачи, которые спят и нигде не видны. Отметила случай или сделала задачу (например, «Оплатить коммуналку») — задачи «Следом» появятся на сегодня и будут висеть, пока их не сделаешь. Сделала — снова засыпают до следующего раза. Отменила отметку — снова прячутся. Сумму удобно писать прямо в названии: «Отложить 2000 ₴ в конверт». Новый случай — ☀ → «+ Новый случай».'],
   ['📚 Книги на подоконнике', 'Тихое дело — без списков и напоминаний, просто намёк. Пример: ☀ → «+ Новый случай» «Купила книги» → в «Следом» задача «Каталогизировать книги» и нажми 📚 рядом с ней. Купила книги — ☀ → «Купила книги»: на подоконнике появится стопка книг (каждый раз другая, из пяти вариантов). Щелчок по книгам — «сделано?», и они исчезнут до следующего раза. На телефоне вместо подоконника — значок 📚 вверху. Любой задаче можно выбрать картинку «📚 Книги» во вкладке «Ещё» — тогда её не видно в списках, утренней проверке и календаре.'],
@@ -2286,14 +2374,16 @@ const secSize = id => (S.sections.find(s => s.id === id) || {}).default_size || 
 // свой размер у задачи, иначе — размер раздела по умолчанию
 const sizeOf = t => (isEvent(t) ? null : t.size || secSize(t.section_id));
 
-// Что уже стоит на день d и сколько места в окошках (в минутах).
-// Средняя задача и вдохновение в окошке — 30 мин или своё время ⏱. Событие — по своему времени (без конца — всё окошко).
+// Что стоит на день d в окошках и сколько там места (в минутах). Сами задачи по окошкам не расставляются (её решение 12.11.2026):
+// в окошке только задачи со своим «Когда» и те, что она перетащила на сегодня. Место занимают средние и прочие задачи
+// (30 мин или своё время ⏱) и события; пятиминутки и вдохновение показываются в окошке, но места не занимают.
 const MID_MIN = 30;
 const toMin = s => { const [h, m] = hhmm(s).split(':'); return +h * 60 + +m; };
 const taskMin = t => (t.estimate ? Math.round(t.estimate * 60) : MID_MIN);
+const slotMin = t => (sizeOf(t) === 'quick' || sizeOf(t) === 'idea' ? 0 : taskMin(t)); // сколько места занимает в окошке
 const slotsFor = t => sizeOf(t) === 'mid' || sizeOf(t) === 'idea'; // у кого есть «Когда»
 // Окошко задачи на день d: своё «на сегодня» (перетащила — slot_now, 'none' — убрала), иначе постоянное «Когда»;
-// вдохновение без «Когда» — после ужина. null — окошко не задано (средняя встанет сама, если есть место).
+// вдохновение без «Когда» — после ужина. null — окошка нет.
 function fixedSlot(t, d) {
   if (t.slot_day === d && t.slot_now) return t.slot_now;
   if (SLOTS[t.slot] && slotsFor(t)) return t.slot;
@@ -2303,8 +2393,8 @@ function dayFit(d) {
   const items = active().filter(t => !isEvent(t) && reviewDay(t) === d);
   const of = s => items.filter(t => sizeOf(t) === s);
   const weekend = isodow(d) >= 6;
-  // slots[k] = { cap, used, titles, items: [{ t, min, ev, auto, over }] }; inSlot: id → окошко; out — средние без окошка
-  const slots = {}, inSlot = {}, out = [];
+  // slots[k] = { cap, used, titles, items: [{ t, min, ev }] }; inSlot: id → окошко
+  const slots = {}, inSlot = {};
   if (!weekend) {
     const evs = (occurrences(d, d)[d] || []).map(o => o.t).filter(t => isEvent(t) && t.start_time);
     for (const k of Object.keys(SLOTS)) {
@@ -2316,57 +2406,25 @@ function dayFit(d) {
         if (part) { sl.used += part; sl.titles.push(t.title); sl.items.push({ t, min: part, ev: true }); }
       }
     }
-    const put = (t, k, auto) => {
-      const sl = slots[k], m = taskMin(t);
-      const over = sl.used + m > sl.cap;
-      sl.used += m; sl.titles.push(t.title); sl.items.push({ t, min: m, auto, over }); inSlot[t.id] = k;
-    };
-    // сначала те, у кого окошко задано (может не влезть — тогда «не влезло»), потом средние сами — где больше места
-    for (const t of items) { const k = fixedSlot(t, d); if (SLOTS[k]) put(t, k, false); }
-    const room = k => slots[k].cap - slots[k].used;
-    for (const t of of('mid').filter(t => !fixedSlot(t, d))) {
-      const k = ['after', 'eve', 'lunch'].reduce((b, k) => (room(k) > room(b) ? k : b));
-      if (room(k) >= taskMin(t)) put(t, k, true); else out.push(t);
+    for (const t of items) {
+      const k = fixedSlot(t, d);
+      if (!SLOTS[k]) continue;
+      const sl = slots[k], m = slotMin(t);
+      sl.used += m; sl.titles.push(t.title); sl.items.push({ t, min: m }); inSlot[t.id] = k;
     }
-    for (const t of of('mid').filter(t => fixedSlot(t, d) === 'none')) out.push(t);
   }
   const room = k => (slots[k] ? slots[k].cap - slots[k].used : 0);
-  return { weekend, slots, inSlot, out, room, freeSlots: Object.keys(slots).filter(k => room(k) >= MID_MIN),
+  return { weekend, slots, inSlot, room, freeSlots: Object.keys(slots).filter(k => room(k) >= MID_MIN),
     big: of('big').length, idea: of('idea').filter(t => !SLOTS[t.slot]).length };
 }
-// Подпись окошка: «30 из 60 мин · есть место ещё на одну»; cls — цвет (good / warn / bad)
+// Подпись окошка для окна предложений: «свободно» / «занято 30 из 60 мин» / «заполнено»
 function slotState(sl) {
-  const free = sl.cap - sl.used, n = Math.floor(free / MID_MIN);
-  if (sl.used > sl.cap) return { cls: 'bad', text: `${sl.used} из ${sl.cap} мин · многовато, лишние ${sl.used - sl.cap} мин` };
-  if (!sl.used) return { cls: 'good', text: `свободно · можно взять ${n === 1 ? 'одну среднюю' : n + ' средних'}` };
-  if (n) return { cls: 'good', text: `${sl.used} из ${sl.cap} мин · есть место ещё на ${n === 1 ? 'одну' : n}` };
-  return { cls: 'warn', text: `${sl.used} из ${sl.cap} мин · заполнено` };
-}
-
-// Предупреждение: средние, которым не хватило места, и то, что не влезло в своё окошко (сроки не трогаем).
-function slotWarnHTML(fit) {
-  const over = Object.values(fit.slots).flatMap(sl => sl.items.filter(i => i.over));
-  if (!fit.out.length && !over.length) return '';
-  const need = fit.out.reduce((s, t) => s + taskMin(t), 0) + over.reduce((s, i) => s + i.min, 0);
-  const free = Object.keys(fit.slots).reduce((s, k) => s + Math.max(0, fit.room(k)), 0);
-  return `<div class="slot-warn">⚠ ${fit.out.length ? `Без окошка: ${fit.out.length}` : ''}${fit.out.length && over.length ? ' · ' : ''}${over.length ? `не влезло: ${over.length}` : ''}
-    — нужно ещё ${fmtMin(need)}${free ? `, свободно ${fmtMin(free)}` : ', свободных окошек нет'}</div>`;
+  if (!sl.used) return { cls: 'good', text: 'свободно' };
+  if (sl.used < sl.cap) return { cls: 'good', text: `занято ${sl.used} из ${sl.cap} мин` };
+  return { cls: 'warn', text: 'заполнено' };
 }
 const fmtMin = m => (m >= 60 ? `${fmtH(m / 60)} ч` : `${m} мин`);
-
-// Окошко на «Сегодня» (компьютер): ячейки по 30 мин, задача на час — две ячейки, пустые — куда перетащить.
 const CELL = 30;
-function slotBox(k, fit) {
-  const sl = fit.slots[k], s = slotOf(k), st = slotState(sl);
-  const block = i => `<div class="scell item ${i.ev ? 'ev' : ''} ${i.auto ? 'auto' : ''} ${i.over ? 'over' : ''}" style="--n:${Math.max(1, Math.round(i.min / CELL))}"
-      ${i.ev ? '' : `data-sdrag="${i.t.id}" draggable="true"`} data-act="edit" data-id="${i.t.id}">
-      <span>${i.ev ? `${hhmm(i.t.start_time)} ` : ''}${esc(i.t.title)}</span><b>${i.over ? 'не влезло · ' : ''}${i.min} мин</b></div>`;
-  const free = Math.max(0, Math.floor((sl.cap - sl.used) / CELL));
-  return `<div class="slot-box ${st.cls}" data-sdrop="${k}">
-    <div class="slot-head"><b>${SLOT_ICON[k]} ${SLOTS[k].name}, ${s.from}–${s.to}</b><span class="${st.cls}">${st.text}</span></div>
-    ${sl.items.map(block).join('')}${'<div class="scell empty">свободно</div>'.repeat(free)}
-  </div>`;
-}
 
 // Окошко на сегодня: перетащила или выбрала в меню. Постоянное «Когда» не меняется; 'none' — убрать из окошка.
 async function setDaySlot(t, k) {
@@ -2375,7 +2433,6 @@ async function setDaySlot(t, k) {
   const fit = dayFit(d);
   if ((fit.inSlot[t.id] || (fixedSlot(t, d) === 'none' ? 'none' : null)) === k) return;
   if (k === 'none' && !fit.inSlot[t.id]) return;
-  if (k !== 'none' && fit.room(k) < taskMin(t)) return toast(`Не помещается: в «${SLOTS[k].name}» свободно ${Math.max(0, fit.room(k))} мин, а задача на ${taskMin(t)} мин`);
   const old = { slot_day: t.slot_day ?? null, slot_now: t.slot_now ?? null };
   Object.assign(t, { slot_day: d, slot_now: k });
   render();
@@ -2383,6 +2440,12 @@ async function setDaySlot(t, k) {
   toast(k === 'none' ? 'Убрано из окошка на сегодня' : `${SLOT_ICON[k]} ${SLOTS[k].name} — на сегодня`,
     async () => { Object.assign(t, old); render(); await call(sb.from('tasks').update(old).eq('id', t.id)); });
 }
+
+// Браузер не подсказывает ранее введённое в полях (её просьба 12.11.2026: отвлекает); поля входа — со своим autocomplete.
+document.addEventListener('focusin', e => {
+  const f = e.target;
+  if (f.matches && f.matches('input:not([autocomplete]), textarea:not([autocomplete])')) f.setAttribute('autocomplete', 'off');
+});
 
 // Перетаскивание в окошки (только «Сегодня» на компьютере)
 let slotDragId = null;
@@ -2495,11 +2558,9 @@ function renderOffer() {
   const scroll = $modal.querySelector('.rv-list')?.scrollTop || 0;
   const daysLying = t => Math.max(0, Math.round((parse(today()) - parse((t.created_at || '').slice(0, 10) || today())) / 864e5));
   const btn = (t, act, label, off) => `<button class="btn ${o.pick[t.id] === act ? 'on' : ''}" data-act="${act}" data-id="${t.id}"${off ? ' disabled title="В обед уже нет места"' : ''}>${label}</button>`;
-  // «В обед» у вдохновения — в будни; место: сохранённое + уже отмеченное «В обед» в этом окне
-  const fit = dayFit(today());
-  const lunchLeft = fit.slots.lunch ? fit.room('lunch') - Object.keys(o.pick).filter(id => o.pick[id] === 'of-lunch').reduce((a, id) => a + taskMin(byId(id) || {}), 0) : null;
-  const lunchBtn = t => lunchLeft === null || sizeOf(t) !== 'idea' ? ''
-    : btn(t, 'of-lunch', 'В обед', o.pick[t.id] !== 'of-lunch' && lunchLeft < taskMin(t));
+  // «В обед» у вдохновения — в будни; места в окошке вдохновение не занимает
+  const lunchLeft = dayFit(today()).slots.lunch ? 1 : null;
+  const lunchBtn = t => lunchLeft === null || sizeOf(t) !== 'idea' ? '' : btn(t, 'of-lunch', 'В обед');
   const row = t => {
     const sec = sectionOf(t), n = daysLying(t);
     return `<div class="task${sec ? ' tinted' : ''}${o.pick[t.id] ? ' picked' : ''}"${sec ? ` style="--sec:${esc(sec.color)}"` : ''}>
@@ -2607,7 +2668,7 @@ function openEdit(t) {
   $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet edit fixed">
     <h3>${occ ? (isNew ? 'Новый случай' : 'Случай') : isNew ? 'Новая запись' : isEvent(e) ? 'Событие' : 'Задача'}</h3>
     ${parent ? `<div class="hint wake-of">↳ Следом за «${esc(parent.title)}»${e.due_date ? '' : ' — спит, пока та не отмечена'}</div>` : ''}
-    <div class="field row title-row"><input class="inp" id="f-title" placeholder="Название" value="${esc(e.title || '')}">
+    <div class="field row title-row"><input class="inp" id="f-title" autocomplete="off" placeholder="Название" value="${esc(e.title || '')}">
       <div class="seg" id="f-kind">
         <button class="pill" data-act="kind" data-v="task">Обычная</button>
         <button class="pill" data-act="kind" data-v="habit">Привычка</button>
@@ -2692,7 +2753,7 @@ function openEdit(t) {
     ${S.space === 'personal' || e.size ? `<div class="field" id="f-size-box"><label>Размер</label>
       <div class="row"><button class="pill" data-act="size" data-v="" id="f-size-def">Нет</button>${Object.entries(SIZES).map(([k, z]) => `<button class="pill" data-act="size" data-v="${k}">${z.icon} ${z.name}</button>`).join('')}</div></div>
     <div class="field" id="f-slot-box"><label>Когда</label>
-      <div class="row"><button class="pill" data-act="slot" data-v="">В любое окошко</button>${Object.entries(SLOTS).map(([k, s]) => `<button class="pill" data-act="slot" data-v="${k}">${s.name}</button>`).join('')}</div></div>` : ''}
+      <div class="row"><button class="pill" data-act="slot" data-v="">Без окошка</button>${Object.entries(SLOTS).map(([k, s]) => `<button class="pill" data-act="slot" data-v="${k}">${s.name}</button>`).join('')}</div></div>` : ''}
     ${e.project_id && projectTasks(e.project_id).some(x => x.id !== e.id) ? `<div class="field"><label>Делать после</label>
       <div class="wds after">${projectTasks(e.project_id).filter(x => x.id !== e.id).map(x => `<button class="pill" data-act="after" data-v="${x.id}">${x.done_on ? '✓ ' : ''}${esc(x.title)}</button>`).join('')}</div></div>` : ''}
     </div><div>
@@ -2758,7 +2819,7 @@ function syncEdit() {
     const sz = isEvent(e) ? null : e.size || defSize;
     document.getElementById('f-slot-box').style.display = sz === 'mid' || sz === 'idea' ? '' : 'none';
     const anyBtn = document.querySelector('[data-act=slot][data-v=""]');
-    if (anyBtn) anyBtn.textContent = sz === 'idea' ? 'Вечером' : 'В любое окошко';
+    if (anyBtn) anyBtn.textContent = sz === 'idea' ? 'Вечером' : 'Без окошка';
   }
   q('[data-act=after]').forEach(b => b.classList.toggle('on', (e.after_ids || []).includes(b.dataset.v)));
   const rem = hhmm(e.remind_at);
@@ -3192,7 +3253,7 @@ function projectBlock(p, inSection) {
   const open = inSection.filter(t => t.project_id === p.id);
   return `<div class="project">
     <div class="p-head">
-      <b>${esc(p.title)}</b>
+      <b>${esc(p.title)}</b>${S.templates.some(x => x.id === p.template_id) ? `<button class="icon small" data-act="guide" data-id="${p.id}" aria-label="Инструкция">📖</button>` : ''}
       <span class="p-meta">${done} из ${steps.length}${left ? ` · ближайший срок ${dateLabel(left)}${days < 0 ? ' <span class="late">просрочено</span>' : days <= 2 ? ` <span class="warn">через ${days} дн.</span>` : ''}` : ''}</span>
     </div>
     <div class="bar"><i style="width:${pct}%"></i></div>
@@ -3258,6 +3319,7 @@ function openTemplate(tpl) {
     <div class="seg tpl-tabs">
       <button class="pill" data-act="t-tab" data-v="main">Основное</button>
       <button class="pill" data-act="t-tab" data-v="steps">Шаги</button>
+      <button class="pill" data-act="t-tab" data-v="memo">Памятка</button>
       ${stats ? '<button class="pill" data-act="t-tab" data-v="time">Время</button>' : ''}
     </div>
     <div class="tpl-pane" data-pane="main"><div class="cols"><div>
@@ -3287,6 +3349,7 @@ function openTemplate(tpl) {
         <div id="t-steps"></div>
         <button class="link" data-act="t-add">+ Шаг</button></div>
     </div>
+    <div class="tpl-pane" data-pane="memo"><textarea class="inp hw-text" id="t-memo" rows="14" placeholder="Памятка шаблона">${esc(t.memo || '')}</textarea></div>
     ${stats ? `<div class="tpl-pane" data-pane="time">${stats}</div>` : ''}
     <div class="actions">
       ${t.id ? '<button class="btn danger" data-act="t-delete">Удалить</button>' : '<span></span>'}
@@ -3301,16 +3364,17 @@ function openTemplate(tpl) {
 
 function renderSteps() {
   const num = (i, k, ph) => `<input class="inp num" type="number" min="1" max="31" data-step="${i}" data-k="${k}" placeholder="${ph}" value="${S.tpl.steps[i][k] || ''}">`;
-  document.getElementById('t-steps').innerHTML = '<div class="step head"><span>№</span><span>Шаг</span><span>с</span><span>до</span><span>мес.</span><span>часов</span><span></span></div>'
+  document.getElementById('t-steps').innerHTML = '<div class="step head"><span>№</span><span>Шаг</span><span>с</span><span>до</span><span>мес.</span><span>часов</span><span></span><span></span></div>'
     + S.tpl.steps.map((s, i) => `<div class="step">
       <span class="step-n">${i + 1}</span>
       <input class="inp" data-step="${i}" data-k="title" placeholder="Что сделать" value="${esc(s.title || '')}">
       ${num(i, 'start_day', 'с')}${num(i, 'due_day', 'до')}
       <input class="inp num" type="number" min="1" max="12" data-step="${i}" data-k="month" title="Месяц после конца периода" value="${s.month || 1}">
       <input class="inp num" type="number" min="0" step="0.5" data-step="${i}" data-k="hours" title="Сколько примерно часов займёт" placeholder="ч" value="${s.hours || ''}">
+      <button class="icon small step-how ${s.howto ? 'on' : ''}" data-act="t-how" data-v="${i}" aria-label="Как делать">📖</button>
       <button class="icon small" data-act="t-del-step" data-v="${i}" title="Убрать шаг">✕</button>
     </div>
-    <div class="t-subs">${(s.subs || []).map((x, j) => `<div class="subrow">
+    <div class="t-subs">${(S.tpl.howOpen || []).includes(i) ? `<textarea class="inp t-howto" data-step="${i}" data-k="howto" placeholder="Как делать">${esc(s.howto || '')}</textarea>` : ''}${(s.subs || []).map((x, j) => `<div class="subrow">
         <span class="sub-dash">└</span>
         <input class="inp" data-tstep="${i}" data-tsub="${j}" placeholder="Подзадача" value="${esc(x)}">
         <button class="icon small" data-act="t-del-sub" data-v="${i}:${j}" title="Убрать">✕</button>
@@ -3375,16 +3439,109 @@ function fromDays(tpl) {
   s.start_day = f.start ? parse(f.start).getDate() : null;
 }
 
+// ---------- инструкции (работа): «как делать» у шага шаблона + памятка шаблона ----------
+// Живут в шаблоне (steps[].howto, templates.memo), а не копируются в задачи: поправила — в следующем периоде уже новая версия.
+// Шаг задачи ищется по названию, иначе по месту в проекте.
+function stepOf(t) {
+  const p = t && t.project_id && (S.allProjects || []).find(x => x.id === t.project_id);
+  const tpl = p && S.templates.find(x => x.id === p.template_id);
+  if (!tpl) return null;
+  const steps = tpl.steps || [];
+  let i = steps.findIndex(s => s.title === t.title);
+  if (i < 0 && steps[t.position]) i = t.position;
+  return { tpl, p, i, step: steps[i] || null };
+}
+// Текст инструкции: строки «- …» / «1. …» — списки, ссылки нажимаются, пустая строка — абзац.
+function richText(s) {
+  const link = x => x.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  const out = [];
+  let list = null;
+  for (const raw of String(s || '').split('\n')) {
+    const line = raw.trimEnd();
+    const m = line.match(/^\s*(?:[-•*]|(\d+)[.)])\s+(.*)$/);
+    if (m) {
+      const tag = m[1] ? 'ol' : 'ul';
+      if (list !== tag) { if (list) out.push(`</${list}>`); out.push(`<${tag}>`); list = tag; }
+      out.push(`<li>${link(esc(m[2]))}</li>`);
+      continue;
+    }
+    if (list) { out.push(`</${list}>`); list = null; }
+    if (line) out.push(`<p>${link(esc(line))}</p>`);
+  }
+  if (list) out.push(`</${list}>`);
+  return out.join('');
+}
+// Окно поверх всего (и поверх окна задачи): step — один шаг (i), иначе вся инструкция проекта.
+function openHowto(taskId) {
+  const h = stepOf(byId(taskId));
+  if (!h) return toast('Шаблон этой задачи не найден');
+  S.howto = { tplId: h.tpl.id, i: h.i >= 0 ? h.i : null, title: byId(taskId).title, edit: null, guide: false };
+  renderHowto();
+}
+function openGuide(projectId) {
+  const p = (S.allProjects || []).find(x => x.id === projectId);
+  const tpl = p && S.templates.find(x => x.id === p.template_id);
+  if (!tpl) return;
+  S.howto = { tplId: tpl.id, i: null, title: tpl.title, edit: null, guide: true };
+  renderHowto();
+}
+function closeHowto() { S.howto = null; document.getElementById('howto')?.remove(); }
+function renderHowto() {
+  const h = S.howto, tpl = h && S.templates.find(x => x.id === h.tplId);
+  if (!tpl) return closeHowto();
+  let el = document.getElementById('howto');
+  if (!el) { el = document.createElement('div'); el.id = 'howto'; document.body.appendChild(el); }
+  const steps = tpl.steps || [];
+  // блок текста: просмотр или правка (key — 'memo' или номер шага)
+  const block = (key, text, empty) => h.edit === key
+    ? `<textarea class="inp hw-text" id="hw-text" rows="10" placeholder="Как делать">${esc(text || '')}</textarea>
+       <div class="row hw-btns"><button class="btn" data-act="hw-cancel">Отмена</button><button class="btn main" data-act="hw-save">Сохранить</button></div>`
+    : `<div class="hw-body">${text ? richText(text) : `<div class="empty small">${empty}</div>`}</div>
+       <button class="link" data-act="hw-edit" data-v="${key}">✎ ${text ? 'Изменить' : 'Написать'}</button>`;
+  const memo = `<details class="hw-memo" ${h.guide || h.edit === 'memo' || !(steps[h.i] || {}).howto ? 'open' : ''}><summary>Памятка шаблона</summary>${block('memo', tpl.memo, 'Памятки нет')}</details>`;
+  let body;
+  if (h.guide) {
+    body = memo + steps.map((s, i) => `<details class="hw-step" ${h.edit === i ? 'open' : ''}><summary>${i + 1}. ${esc(s.title)}${s.howto ? ' 📖' : ''}</summary>${block(i, s.howto, 'Инструкции нет')}</details>`).join('');
+  } else if (h.i === null) {
+    body = `<div class="empty small">Такого шага в шаблоне нет</div>` + memo;
+  } else {
+    body = `<h2>Как делать</h2>${block(h.i, steps[h.i].howto, 'Инструкции пока нет')}` + memo;
+  }
+  el.innerHTML = `<div class="overlay" data-act="hw-close-bg"><div class="sheet fixed hw">
+    <h3>📖 ${esc(h.title)}</h3>${h.guide ? '' : `<div class="hint">${esc(tpl.title)}</div>`}
+    <div class="hw-scroll">${body}</div>
+    <div class="actions"><span></span><button class="btn" data-act="hw-close">Закрыть</button></div>
+  </div></div>`;
+  if (h.edit !== null) document.getElementById('hw-text')?.focus();
+}
+async function saveHowto() {
+  const h = S.howto, tpl = S.templates.find(x => x.id === h.tplId);
+  const text = document.getElementById('hw-text').value.trim() || null;
+  if (h.edit === 'memo') {
+    if (!('memo' in tpl)) return toast('Сначала запусти в Supabase файл 020_payments_howto.sql');
+    await call(sb.from('templates').update({ memo: text }).eq('id', tpl.id));
+    tpl.memo = text;
+  } else {
+    const steps = (tpl.steps || []).map((s, i) => (i === +h.edit ? { ...s, howto: text } : s));
+    await call(sb.from('templates').update({ steps }).eq('id', tpl.id));
+    tpl.steps = steps;
+  }
+  h.edit = null;
+  renderHowto();
+  toast('Сохранено в шаблоне');
+}
+
 // В окне рабочей задачи: из какого она проекта (шаблона) — или кнопка «сделать шаблон».
 function projHint(e) {
   if (!e.id || isEvent(e) || e.kind === 'habit' || e.kind === 'occasion' || spaceOf(e) !== 'work') return '';
   const p = e.project_id && (S.allProjects || []).find(x => x.id === e.project_id);
-  if (p) return `<div class="hint proj-of">📁 ${esc(p.title)}</div>`;
+  if (p) return `<div class="hint proj-of">📁 ${esc(p.title)}${stepOf(e) ? ` <button class="link" data-act="howto" data-id="${e.id}">📖 Как делать</button>` : ''}</div>`;
   return `<div class="hint proj-of"><button class="link" data-act="tpl-from">⟳ Сделать шаблон из этой задачи</button></div>`;
 }
 
 // Поля шагов сохраняются в S.tpl при вводе.
 document.addEventListener('input', ev => {
+  if (ev.target.id === 't-memo' && S.tpl) { S.tpl.memo = ev.target.value; return; }
   if (ev.target.dataset.tsub !== undefined && S.tpl) {
     S.tpl.steps[ev.target.dataset.tstep].subs[ev.target.dataset.tsub] = ev.target.value;
     return;
@@ -3396,7 +3553,7 @@ document.addEventListener('input', ev => {
     S.tpl.steps[i].after = [...new Set(ev.target.value.split(/[^0-9]+/).map(Number).filter(n => n >= 1 && n !== +i + 1))];
     return;
   }
-  S.tpl.steps[i][k] = k === 'title' ? ev.target.value : k === 'hours' ? parseFloat(ev.target.value) || null : parseInt(ev.target.value) || null;
+  S.tpl.steps[i][k] = k === 'title' || k === 'howto' ? ev.target.value : k === 'hours' ? parseFloat(ev.target.value) || null : parseInt(ev.target.value) || null;
 });
 
 // silent — только сохранить и вернуть шаблон (для «Создать задачи»), без вопросов и закрытия окна
@@ -3416,9 +3573,14 @@ async function saveTemplate(silent = false) {
       subs: (s.subs || []).map(x => x.trim()).filter(Boolean),
       hours: s.hours || null,
       after: (s.after || []).filter(n => n <= all.length),
+      ...(s.howto && s.howto.trim() ? { howto: s.howto.trim() } : {}),
     })),
     lead_days: Math.max(0, parseInt(document.getElementById('t-lead').value) || 0),
   };
+  // памятка — только если в базе есть колонка (020); иначе сохраняем без неё
+  const memo = (document.getElementById('t-memo').value || '').trim() || null;
+  if ('memo' in t || S.templates.some(x => 'memo' in x)) row.memo = memo;
+  else if (memo) toast('Памятка не сохранится: запусти в Supabase файл 020_payments_howto.sql');
   let tpl;
   if (t.id) [tpl] = await call(sb.from('templates').update(row).eq('id', t.id).select());
   else [tpl] = await call(sb.from('templates').insert(row).select());
@@ -3554,7 +3716,7 @@ document.addEventListener('click', async ev => {
   const id = el.dataset.id;
   const v = el.dataset.v;
   // щелчок внутри окна, а не по фону; и не выделение текста, отпущенное за краем окна
-  if ((act === 'close-bg' || act === 'of-hide-bg') && (ev.target !== el || downAt !== el)) return;
+  if ((act === 'close-bg' || act === 'of-hide-bg' || act === 'hw-close-bg') && (ev.target !== el || downAt !== el)) return;
   if (BUSY.has(act)) el.disabled = true; // от двойного нажатия, пока ждём базу
   try {
     switch (act) {
@@ -3564,6 +3726,20 @@ document.addEventListener('click', async ev => {
       case 'settings': openSettings(); break;
       case 'help': openHelp(); break;
       case 'occ': openOcc(); break;
+      case 'pay': await openPay(); break;
+      case 'howto': ev.stopPropagation(); openHowto(id); break;
+      case 'guide': openGuide(id); break;
+      case 'hw-close': case 'hw-close-bg': closeHowto(); break;
+      case 'hw-edit': S.howto.edit = v === 'memo' ? 'memo' : +v; renderHowto(); break;
+      case 'hw-cancel': S.howto.edit = null; renderHowto(); break;
+      case 'hw-save': await saveHowto(); break;
+      case 'pay-save': await savePay(); break;
+      case 'pay-done': ev.stopPropagation(); await payMark(id, true); break;
+      case 'pay-back': ev.stopPropagation(); await payMark(id, false); break;
+      case 'pay-edit': S.pay.edit = S.pay.edit === id ? null : id; renderPay(true); break;
+      case 'pay-cancel': S.pay.edit = null; renderPay(true); break;
+      case 'pay-del': await payDelete(); break;
+      case 'pay-arch': S.pay.arch = !!v; renderPay(); break;
       case 'occ-new': openEdit({ kind: 'occasion', repeat_from: 'due' }); break;
       case 'occ-go': closeModal(); await complete(byId(id)); break;
       case 'kid-add':
@@ -3597,6 +3773,7 @@ document.addEventListener('click', async ev => {
       case 't-month': S.tpl.months = S.tpl.months.includes(+v) ? S.tpl.months.filter(m => m !== +v) : S.tpl.months.concat(+v); syncTemplate(); break;
       case 't-add': S.tpl.steps.push({ title: '', month: 1 }); renderSteps(); break;
       case 't-del-step': {
+        S.tpl.howOpen = [];
         // номера в «после шагов» сдвигаются вместе со шагами
         const n = +v + 1;
         S.tpl.steps.splice(+v, 1);
@@ -3652,6 +3829,7 @@ document.addEventListener('click', async ev => {
         $modal.querySelector(`[data-sub="${S.edit.checklist.length - 1}"]`).focus();
         break;
       case 'sub-del': S.edit.checklist.splice(+v, 1); renderSubs(); break;
+      case 't-how': { const o = (S.tpl.howOpen ||= []), n = +v; o.includes(n) ? o.splice(o.indexOf(n), 1) : o.push(n); renderSteps(); break; }
       case 't-add-sub': (S.tpl.steps[+v].subs ||= []).push(''); renderSteps(); break;
       case 't-del-sub': { const [i, j] = v.split(':').map(Number); S.tpl.steps[i].subs.splice(j, 1); renderSteps(); break; }
       case 'edit': openEdit(byId(id)); break;
@@ -3748,8 +3926,10 @@ document.addEventListener('click', async ev => {
 document.addEventListener('keydown', ev => {
   if (ev.key === 'Enter' && ev.target.id === 'pass') auth('login');
   if (ev.key === 'Enter' && ev.target.id === 'f-title') saveEdit();
+  if (ev.key === 'Enter' && (ev.target.id === 'pay-w' || ev.target.id === 'pay-a')) savePay();
   if (ev.key === 'Enter' && ev.target.id === 's-name') saveSection($modal.querySelector('[data-act=s-save]').dataset.id);
   if (ev.key === 'Escape') hideCtx();
+  if (ev.key === 'Escape' && S.howto) return closeHowto();
   if (ev.key === 'Escape' && $modal.dataset.kind === 'offer') offerHide(true);
   else if (ev.key === 'Escape' && $modal.dataset.kind && $modal.dataset.kind !== 'review') closeModal();
 });
