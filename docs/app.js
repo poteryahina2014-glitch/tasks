@@ -249,7 +249,10 @@ const waitsFor = t => (t.after_ids || []).map(byId).filter(x => x && !x.done_on)
 
 // Подпункты задачи: [{t: текст, d: сделано}]
 const subsOf = t => Array.isArray(t.checklist) ? t.checklist : [];
-const cleanSubs = list => list.map(s => ({ t: (s.t || '').trim(), d: !!s.d })).filter(s => s.t);
+const cleanSubs = list => list.map(s => ({ t: (s.t || '').trim(), d: !!s.d, ...(s.d && s.on ? { on: s.on } : {}) })).filter(s => s.t);
+// У вдохновения сделанные подпункты прячутся в архив (её просьба 12.11.2026): on — день, когда отмечен.
+const subArch = t => sizeOf(t) === 'idea';
+const markSub = (s, d) => { const x = { ...s, d }; if (d) x.on = today(); else delete x.on; return x; };
 
 // У повторяющейся задачи следующий раз подпункты снова не отмечены и план не назначен.
 async function resetRepeat(t) {
@@ -261,9 +264,13 @@ async function resetRepeat(t) {
 }
 
 async function toggleSub(t, i) {
-  t.checklist = subsOf(t).map((s, k) => k === i ? { ...s, d: !s.d } : s);
+  const old = subsOf(t);
+  t.checklist = old.map((s, k) => k === i ? markSub(s, !s.d) : s);
   render();
   await call(sb.from('tasks').update({ checklist: t.checklist }).eq('id', t.id));
+  if (subArch(t) && t.checklist[i].d) toast(`«${t.checklist[i].t}» — в архив`, async () => {
+    t.checklist = old; render(); await call(sb.from('tasks').update({ checklist: old }).eq('id', t.id));
+  });
 }
 
 // Задачи «Следом» просыпаются: срок — сегодня (даже если главную отметили за вчера), висят, пока не сделаны.
@@ -356,8 +363,9 @@ function taskRow(t, opts = {}) {
     meta.unshift(`<span class="lock ${later ? 'late' : ''}" title="${later ? 'Эти шаги ещё не запланированы раньше' : ''}">🔒 ждёт: ${waits.map(w => esc(w.title)).join(', ')}</span>`);
   }
   // подпункты видны под задачей и отмечаются прямо там (не в календарных отметках и не у сделанных)
-  const subList = subs.length && !opts.mark && !opts.done
-    ? `<div class="subs">${subs.map((s, i) => `<button class="sub ${s.d ? 'on' : ''}" data-act="sub" data-id="${t.id}" data-v="${i}"><i>${s.d ? '✓' : ''}</i><span>${esc(s.t)}</span></button>`).join('')}</div>`
+  const shownSubs = subs.map((s, i) => [s, i]).filter(([s]) => !(s.d && subArch(t)));
+  const subList = shownSubs.length && !opts.mark && !opts.done
+    ? `<div class="subs">${shownSubs.map(([s, i]) => `<button class="sub ${s.d ? 'on' : ''}" data-act="sub" data-id="${t.id}" data-v="${i}"><i>${s.d ? '✓' : ''}</i><span>${esc(s.t)}</span></button>`).join('')}</div>`
     : '';
   const picked = S.pick && S.pick.has(t.id);
   const dusty = !opts.done && t.decor === 'dust' && petLate(t) >= lim('dust');
@@ -2063,6 +2071,7 @@ const HELP = [
   ['Шаблон из задачи', 'В окне рабочей задачи — «⟳ Сделать шаблон из этой задачи». Выбери, за какой период эта задача (например, октябрь 2026), и какие подпункты взять. Сама задача станет первой (за этот период), следующие шаблон создаст сам — «… — ноябрь 2026». Оценка часов у новых задач — среднее фактическое время за прошлые периоды. В окне шаблона — таблица «Время по периодам».'],
   ['«Сегодня» по частям дня', 'В будни (личный режим) дела на сегодня идут по частям дня: ☀ утро — пятиминутки; 🍽 обед, 🌆 после работы, 🌙 после ужина — окошки (время — в ⚙); остальное — то, что не попало в окошки. Окошки видны всегда, пустые ячейки по 30 минут — свободное место. В окошке сами стоят только задачи со своим «Когда» (в окне задачи, у средних и вдохновения) и вдохновение без «Когда» — после ужина; остальные задачи ты расставляешь сама: на компьютере перетаскиваешь в окошко, между окошками или обратно (в утро или остальное), на телефоне — долгое нажатие → «В окошко». Это только на сегодня, «Когда» не меняется. Место в окошке занимают средние и прочие задачи (30 минут или своё время ⏱) и события в это время; пятиминутки и вдохновение показываются в окошке, но места не занимают. Если задач больше, чем ячеек, ничего не переносится — свободных ячеек просто не остаётся. В выходные окошек нет.'],
   ['Платежи 💳', 'Кнопка 💳 в заголовке — записи о платежах, по которым потом не вспомнить, за что платила (маркетплейсы, наложенный платёж и т. п.). Запись — дата (по умолчанию сегодня), сумма и за что; Enter — записать. Когда разнесла платёж в таблицу расходов, нажми ✓ — запись уходит во «Внесённые» (там ↩ возвращает обратно). Щелчок по записи — исправить или удалить её. Вверху — сколько ещё не внесено и на какую сумму. Во «Внесённых» видно последние 3 месяца.'],
+  ['Подпункты у вдохновения', 'У задачи с размером ✦ вдохновение отмеченный подпункт не зачёркивается, а уходит в архив — можно отмечать прямо в «Разделах», даже если задача не на сегодня. Посмотреть сделанное — в окне задачи «▸ Архив · N» под подпунктами (там же можно снять галочку — подпункт вернётся). Сразу после отметки во всплывающей подсказке есть «Отменить».'],
   ['Подпункт ↔ задача', 'В окне сохранённой задачи ⤴ у подпункта — сделать его отдельной задачей (сразу, с тем же разделом, проектом, сроком и планом). Наоборот: правая кнопка мыши (на телефоне — долгое нажатие) по задаче → «⤵ Подпунктом к задаче…» → выбираешь задачу (можно найти по названию). Название задачи и её подпункты станут подпунктами выбранной, заметка допишется к её заметке, а сама задача удалится. Если у задачи есть повтор или история отметок, сначала спрошу. Задачу, у которой есть «Следом», так перенести нельзя.'],
   ['Шаги и подзадачи шаблона (работа)', 'В окне шаблона на вкладке «Шаги»: ⤴ у подзадачи — сделать её отдельным шагом (встанет сразу после своего шага, с теми же числами); «⤵ в подзадачи» у шага — сделать его подзадачей другого шага (выбираешь, какого, и ✓), его подзадачи и инструкция переходят туда же. Изменения сохраняются кнопкой «Сохранить»; задачи, уже созданные по шаблону, не меняются — только следующие.'],
   ['Инструкции к шаблонам 📖 (работа)', 'У каждого шага шаблона можно записать, как его делать: в окне шаблона на вкладке «Шаги» кнопка 📖 у шага. Общее для всего шаблона — вкладка «Памятка». Инструкции не копируются в задачи, а живут в шаблоне: поправила — в следующем периоде уже новая версия. У задачи из шаблона значок 📖 в строке (если инструкция есть) и «📖 Как делать» в окне задачи (вкладка «План и время») — открывают инструкцию шага и памятку, исправить можно прямо там. 📖 у названия проекта в «Разделах» — вся инструкция проекта по шагам. Строки, начинающиеся с «- » или «1. », становятся списком, ссылки нажимаются.'],
@@ -2708,7 +2717,7 @@ function openEdit(t) {
         ${mySecs().map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
     </div><div class="notes-col">
     <div class="field" id="f-subs-box"><div id="f-subs"></div>
-      <button class="link" data-act="sub-add">+ Подпункт</button></div>
+      <div class="row sub-links"><button class="link" data-act="sub-add">+ Подпункт</button><button class="link" id="f-subs-arch" data-act="sub-arch" hidden></button></div></div>
     ${occ ? kidsBox : ''}
     <div class="field"><textarea class="inp" id="f-notes" placeholder="Заметка">${esc(e.notes || '')}</textarea></div>
     </div></div>
@@ -2904,9 +2913,13 @@ const planFields = e => !isEvent(e) && e.kind !== 'habit' && (S.space === 'work'
 
 // Подпункты в окне задачи: галочка, текст, ✕.
 function renderSubs() {
-  document.getElementById('f-subs').innerHTML = S.edit.checklist.map((s, i) => `<div class="subrow">
+  const e = S.edit, arch = (e.size || secSize(e.section_id)) === 'idea' && !isEvent(e);
+  const nArch = arch ? e.checklist.filter(s => s.d).length : 0;
+  const box = document.getElementById('f-subs-arch');
+  if (box) { box.hidden = !nArch; box.textContent = `${e.showArch ? '▾' : '▸'} Архив · ${nArch}`; }
+  document.getElementById('f-subs').innerHTML = S.edit.checklist.map((s, i) => arch && s.d && !e.showArch ? '' : `<div class="subrow${arch && s.d ? ' arch' : ''}">
       <button class="sub-box ${s.d ? 'on' : ''}" data-act="sub-m" data-v="${i}">${s.d ? '✓' : ''}</button>
-      <input class="inp" data-sub="${i}" placeholder="Что сделать" value="${esc(s.t)}">
+      <input class="inp" data-sub="${i}" placeholder="Что сделать" value="${esc(s.t)}"${arch && s.d && s.on ? ` aria-label="Сделано ${payDate(s.on)}"` : ''}>
       ${S.edit.id ? `<button class="icon small" data-act="sub-up" data-v="${i}" aria-label="Сделать отдельной задачей">⤴</button>` : '<span></span>'}
       <button class="icon small" data-act="sub-del" data-v="${i}" title="Убрать">✕</button>
     </div>`).join('');
@@ -2988,13 +3001,13 @@ async function mergeInto(t, to) {
 // Галочка в окне уже сохранённой задачи сохраняется сразу (даже если окно закроют без «Сохранить»).
 async function toggleSubModal(i) {
   const e = S.edit;
-  e.checklist[i].d = !e.checklist[i].d;
+  e.checklist[i] = markSub(e.checklist[i], !e.checklist[i].d);
   renderSubs();
   if (!e.id) return;
   const t = byId(e.id);
   const saved = subsOf(t).map(s => ({ ...s }));
   if (saved[i] && saved[i].t === e.checklist[i].t.trim()) {
-    saved[i].d = e.checklist[i].d;
+    saved[i] = markSub(saved[i], e.checklist[i].d);
     t.checklist = saved;
     await call(sb.from('tasks').update({ checklist: saved }).eq('id', e.id));
   }
@@ -3927,6 +3940,7 @@ document.addEventListener('click', async ev => {
       case 'sub': await toggleSub(byId(id), +v); break;
       case 'pweek': S.planWeek = +el.dataset.n ? addDays(S.planWeek || weekStart(today()), 7 * el.dataset.n) : null; render(); break;
       case 'sub-m': await toggleSubModal(+v); break;
+      case 'sub-arch': S.edit.showArch = !S.edit.showArch; renderSubs(); break;
       case 'sub-add':
         S.edit.checklist.push({ t: '', d: false });
         renderSubs();

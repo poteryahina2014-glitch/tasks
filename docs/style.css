@@ -822,3 +822,7 @@ textarea.t-howto { width: 100%; min-height: 110px; resize: vertical; font: inher
 .sheet.merge #merge-q { margin-bottom: 10px; }
 .sheet.merge .merge-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .sheet.merge > .actions { padding-top: 10px; }
+
+/* архив подпунктов у вдохновения */
+.sub-links { gap: 16px; }
+#f-subs .subrow.arch .inp { color: var(--muted); }
