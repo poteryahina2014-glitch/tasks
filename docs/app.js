@@ -333,9 +333,12 @@ function taskRow(t, opts = {}) {
   // на сколько дней просрочено (так же, как считают питомцы и погода)
   const lateN = !opts.done && !isEvent(t) && t.kind !== 'habit' ? petLate(t) : 0;
   if (lateN) tags.push(`<span class="late" title="Просрочено на ${lateN} дн. (с первоначального срока)">⏳${lateN} д</span>`);
+  // идёт окно: срок наступил, но до последнего дня окна это не просрочка
+  if (!opts.done && winDays(t) && t.due_date <= today() && winEnd(t) >= today())
+    tags.push(`<span class="win" aria-label="Окно до ${dateLabel(winEnd(t))}">⌛ до ${dateLabel(winEnd(t))}</span>`);
   if (t.start_time) tags.push(`<span class="time">${timeLabel(t)}</span>`);
   if (t.start_date && !isEvent(t) && t.start_date > today()) tags.push(`<span>с ${dateLabel(t.start_date)}</span>`);
-  if (opts.date && due) tags.push(`<span class="${due < today() && !isEvent(t) ? 'late' : ''}">${t.start_date && !isEvent(t) ? 'до ' : ''}${dateLabel(due)}${t.end_date ? ' — ' + dateLabel(t.end_date) : ''}</span>`);
+  if (opts.date && due) tags.push(`<span class="${due < today() && !isEvent(t) && winEnd(t) < today() ? 'late' : ''}">${t.start_date && !isEvent(t) ? 'до ' : ''}${dateLabel(due)}${t.end_date ? ' — ' + dateLabel(t.end_date) : ''}</span>`);
   // у запланированной задачи дедлайн виден всегда; красный — прошёл или план позже него
   if (t.plan_date && t.due_date && !opts.date && !opts.done)
     tags.push(`<span class="${t.due_date < today() || t.plan_date > t.due_date ? 'late' : ''}">до ${dateLabel(t.due_date)}</span>`);
@@ -1108,7 +1111,8 @@ function bgState() {
   const now = h * 60 + new Date().getMinutes();
   const fit = S.space === 'personal' ? dayFit(t0) : { inSlot: {} };
   const passed = t => {
-    if (reviewDay(t) < t0) return true;
+    if (winEnd(t) < t0) return true;
+    if (winEnd(t) > t0) return false; // окно ещё не кончилось
     const k = fit.inSlot[t.id];
     if (k) return now >= toMin(slotOf(k).to);
     if (t.start_time) return now >= toMin(t.end_time || t.start_time);
@@ -1527,15 +1531,14 @@ async function saveLimits() {
 // Срок убран или перенесён в будущее — старые переносы из истории уже не считаются.
 function petLate(t) {
   if (!t.due_date) return 0;
-  const logs = S.logs.filter(l => l.task_id === t.id);
-  let i = logs.length;
-  while (i > 0 && logs[i - 1].status !== 'done') i--;
-  const tail = logs.slice(i);
+  const tail = logTail(t);
   // привычка: сделано хотя бы наполовину — питомцы не считают это пропуском
-  if (t.kind === 'habit') return tail.filter(l => l.status === 'missed' && !(+l.part >= .5)).length + (t.due_date < today() ? 1 : 0);
+  if (t.kind === 'habit') return tail.filter(l => l.status === 'missed' && !(+l.part >= .5)).length + (winEnd(t) < today() ? 1 : 0);
   if (t.due_date > today()) return 0;
+  // с окном просрочка начинается после его последнего дня
   const moved = tail.find(l => l.status === 'moved');
-  const since = moved ? moved.day : t.due_date;
+  const w = Math.max(1, winRaw(t));
+  const since = moved ? addDays(moved.day, w - 1) : winEnd(t);
   return since && since < today() ? daysBetween(since, today()) : 0;
 }
 
@@ -2081,7 +2084,8 @@ const HELP = [
   ['Порядок на «Сегодня»', 'Привычки и задачи одним списком: ⚡ пятиминутки, 🍽 обед, 🌆 после работы, 🌙 после ужина, потом остальное. На телефоне у окошек видно, сколько в них места.'],
   ['Порядок шагов', 'У задачи проекта — «Делать после» (в шаблоне — «после шагов: 1, 2»). Пока те шаги не сделаны, у задачи 🔒 «ждёт: …»; красный — если они запланированы позже. Ничего не запрещается.'],
   ['Питомцы', 'В окне задачи (в личном режиме) — «Питомец». На широком экране по бокам сидят кот и попугай: доволен, если всё сделано, грустит от пропусков. Наведи на питомца — увидишь, почему грустит. Нажми на имя, чтобы переименовать. Яша перелетает, только когда доволен; кот гуляет, если не очень грустит. Подвесные жёрдочки можно перетаскивать мышкой — Яша перелетит на свою. Кот сидит на подоконнике; щёлкни по нему — перейдёт на другую сторону (если не грустит).'],
-  ['Как считаются дни', 'Сколько дней до грусти, обморока и пыли — в ⚙. У обычной задачи считаются дни просрочки (с первоначального срока, даже если утренняя проверка перенесла её на сегодня), у привычки — пропуски подряд. Питомец смотрит на свою самую запущенную задачу.'],
+  ['Окно ⌛', 'Окно — сколько дней задачу можно делать без просрочки. Например, «Пропылесосить» раз в неделю, окно 3 дня: срок в понедельник — задача висит на «Сегодня» пн, вт и ср с пометкой «⌛ до ср», не краснеет, утренняя проверка о ней не спрашивает, а питомцы, пыль и погода её не считают. Сделала в любой из этих дней — следующий срок считается от этого дня (если повтор «от выполнения»). Не сделала до конца окна — в четверг утренняя проверка спросит; «Сделано» засчитывается последним днём окна, «Не сделано» — задача переносится на сегодня и дальше просрочена, дни просрочки считаются от конца окна. У привычки: сделала в любой день окна — засчитано, нет — один пропуск.<br><br>Окно задаётся в окне задачи (вкладка «Повтор», поле «Окно») или сразу для всего раздела: ⚙ → «Окно по разделам». Пустое поле у задачи — берётся окно раздела, 0 — без окна, даже если у раздела оно есть. 1 день — то же, что без окна.'],
+  ['Как считаются дни','Сколько дней до грусти, обморока и пыли — в ⚙. У обычной задачи считаются дни просрочки (с первоначального срока, даже если утренняя проверка перенесла её на сегодня), у привычки — пропуски подряд. Питомец смотрит на свою самую запущенную задачу.'],
   ['Картинки', 'В окне задачи — «Картинка». 🕸 Пыль и паутина: уборка просрочена — появляется паутина, летает пыль, и с каждым днём на экране всё больше пыльных пятен. Уберёшь — всё исчезнет. 🔢 Счётчики: в день срока (или с даты «Начать с») появляется счётчик — газ, вода или свет, по названию задачи. Пропадает, когда задача отмечена. На компьютере его можно перетащить мышкой.'],
   ['Вид за окном', 'На фоне — окно, вид за ним каждый день свой: город, лес, море, горы, деревня, зима. Время суток настоящее. Погода — от того, как идут дела сегодня (привычки не считаются). Дело портит погоду, только когда его время прошло: окошко закончилось, прошло время задачи или срок был раньше сегодня; дело без окошка и времени — не раньше конца дня. Утром ясно; чем больше сделано, тем ярче солнце; всё сделано — радуга (ночью — падающая звезда). Тучи — от дел, время которых прошло, а они не сделаны. Дождь и гроза — от самой просроченной задачи: дождь — с того же числа дней, что «очень грустит», гроза — что «обморок» (по умолчанию 2 и 4 дня, меняется в ⚙). Сколько дней просрочено — значок ⏳ у задачи. Выключается в ⚙.'],
   ['Повтор по циклу', 'Для графиков вроде «2 дня делать, 1 пропустить»: в окне задачи Повтор → «Цикл». Укажи, сколько дней делать, сколько пропускать и первый день цикла — ниже видны ближайшие дни. В дни пропуска задачи нет, и пропуском это не считается. Сбился график — поменяй первый день цикла.'],
@@ -2255,10 +2259,18 @@ function authError(e) {
 // ---------- утренняя проверка ----------
 // Запланированная задача живёт по плану: в проверку попадает, когда прошёл день плана (не дедлайн).
 const reviewDay = t => t.plan_date || t.due_date;
+// Окно (её решение 13.11.2026): задачу можно сделать за N дней от срока — всё это время она на «Сегодня», но не просрочена.
+// Своё у задачи (window_days; 0 — без окна), иначе — раздела (sections.default_window). Только у срока, не у плана.
+const secWin = id => +(S.sections.find(s => s.id === id) || {}).default_window || 0;
+const winRaw = t => (isEvent(t) || t.kind === 'occasion' || t.plan_date || !t.due_date ? 0 : (t.window_days ?? secWin(t.section_id)) || 0);
+const logTail = t => { const l = S.logs.filter(x => x.task_id === t.id); let i = l.length; while (i > 0 && l[i - 1].status !== 'done') i--; return l.slice(i); };
+// окно прошло и утренняя проверка перенесла задачу — дальше это обычная просрочка, нового окна нет
+const winDays = t => { const n = winRaw(t); return n > 1 && !(t.kind !== 'habit' && logTail(t).some(l => l.status === 'moved')) ? n : 0; };
+const winEnd = t => (winDays(t) ? addDays(reviewDay(t), winDays(t) - 1) : reviewDay(t));
 function reviewList() {
   if (S.space === 'work') return []; // в работе утренней проверки нет (её решение 12.11.2026): итоги дня разносит сама до 17:00
   const t0 = today();
-  return active().filter(t => !isEvent(t) && reviewDay(t) && reviewDay(t) < t0).sort((a, b) => reviewDay(a) < reviewDay(b) ? -1 : 1);
+  return active().filter(t => !isEvent(t) && reviewDay(t) && winEnd(t) < t0).sort((a, b) => reviewDay(a) < reviewDay(b) ? -1 : 1);
 }
 
 function renderReview() {
@@ -2267,7 +2279,7 @@ function renderReview() {
     if ($modal.dataset.kind === 'review') { $modal.innerHTML = ''; $modal.dataset.kind = ''; }
     return;
   }
-  const onlyYesterday = list.every(t => reviewDay(t) === addDays(today(), -1));
+  const onlyYesterday = list.every(t => winEnd(t) === addDays(today(), -1));
   const ch = rvKeep(list);
   const scroll = $modal.querySelector('.rv-list')?.scrollTop || 0;
   $modal.dataset.kind = 'review';
@@ -2275,7 +2287,7 @@ function renderReview() {
     <h3>Привет${userName() ? ', ' + esc(userName()) : ''}! ${onlyYesterday ? 'Что из вчерашнего получилось сделать?' : 'Что из этого получилось сделать?'}</h3>
     <div class="rv-list">${list.map(t => {
       const head = `<div class="body"><div class="title">${esc(t.title)}</div>
-        <div class="meta"><span>${t.plan_date ? 'план: ' : ''}${dateLabel(reviewDay(t))}</span><span>${t.kind === 'habit' ? 'привычка' : 'задача'}</span>${t.plan_date && t.due_date ? `<span>дедлайн ${dateLabel(t.due_date)}</span>` : ''}</div></div>`;
+        <div class="meta"><span>${t.plan_date ? 'план: ' : ''}${dateLabel(reviewDay(t))}${winDays(t) ? ' — ' + dateLabel(winEnd(t)) : ''}</span><span>${t.kind === 'habit' ? 'привычка' : 'задача'}</span>${t.plan_date && t.due_date ? `<span>дедлайн ${dateLabel(t.due_date)}</span>` : ''}</div></div>`;
       // привычка с подпунктами: каждый подпункт отмечается сам, доля считается по ним
       if (rvSubs(t)) return `<div class="task habit rv-group">${head}</div>` + subsOf(t).map((s, i) => `<div class="task habit rv-sub">
         <div class="body"><div class="title">${esc(s.t)}</div></div>
@@ -2336,7 +2348,8 @@ async function rvSave() {
       else { v = 'no'; if (yes) part = Math.round(yes / n * 1000) / 1000; }
     }
     if (v === 'yes') {
-      await call(sb.rpc('complete_task', { p_task: t.id, p_done_on: reviewDay(t) }));
+      // с окном сделано считается последним днём окна (новый срок «от выполнения» — от него)
+      await call(sb.rpc('complete_task', { p_task: t.id, p_done_on: winEnd(t) }));
       await resetRepeat(t);
       await wakeKids(t);
     } else if (v === 'no') {
@@ -2647,7 +2660,19 @@ function secSizesHTML() {
   if (!secs.length) return '';
   return `<h2>Размер задач по разделам</h2>
     <div class="limits">${secs.map(s => `<label><span><i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name)}</span>
-      <select class="inp" data-sec-size="${s.id}"><option value="">—</option>${Object.entries(SIZES).map(([k, z]) => `<option value="${k}" ${s.default_size === k ? 'selected' : ''}>${z.icon} ${z.name}</option>`).join('')}</select></label>`).join('')}</div>`;
+      <select class="inp" data-sec-size="${s.id}"><option value="">—</option>${Object.entries(SIZES).map(([k, z]) => `<option value="${k}" ${s.default_size === k ? 'selected' : ''}>${z.icon} ${z.name}</option>`).join('')}</select></label>`).join('')}</div>
+    <h2>Окно по разделам</h2>
+    <div class="limits">${secs.map(s => `<label><span><i class="dot" style="background:${esc(s.color)}"></i>${esc(s.name)}</span>
+      <span><input class="inp num" type="number" min="0" max="30" placeholder="—" data-sec-win="${s.id}" value="${s.default_window || ''}" style="max-width:64px"> дн.</span></label>`).join('')}</div>`;
+}
+
+async function setSecWin(id, v) {
+  const s = S.sections.find(x => x.id === id);
+  const old = s.default_window;
+  s.default_window = Math.min(30, Math.max(0, Math.round(+v || 0))) || null;
+  render();
+  try { await call(sb.from('sections').update({ default_window: s.default_window }).eq('id', id)); toast('Сохранено'); }
+  catch (e) { s.default_window = old; render(); }
 }
 
 async function setSecSize(id, v) {
@@ -2662,6 +2687,7 @@ async function setSecSize(id, v) {
 document.addEventListener('change', ev => {
   const id = ev.target.dataset.secSize;
   if (id) setSecSize(id, ev.target.value);
+  if (ev.target.dataset.secWin) setSecWin(ev.target.dataset.secWin, ev.target.value);
   if (ev.target.id === 'f-section' && S.edit) syncEdit();
 });
 
@@ -2746,6 +2772,8 @@ function openEdit(t) {
         <button class="pill" data-act="from" data-v="due">от старого срока</button>
         <button class="pill" data-act="from" data-v="done">от выполнения</button>
       </div></div>
+    <div class="field" id="f-win-box"><label>Окно</label>
+      <div class="row"><input class="inp num" id="f-win" type="number" min="0" max="30" placeholder="${secWin(e.section_id) || '—'}" value="${e.window_days ?? ''}" style="max-width:64px"> дн.</div></div>
     </div></div>
     </div>
     <div class="e-pane" data-pane="plan">
@@ -2851,6 +2879,9 @@ function syncEdit() {
   // у события нет выполнения: «от дня выполнения» не нужно, зато есть «по какое число»
   document.getElementById('f-from-box').style.display = e.repeat_unit && !isEvent(e) && !cycle ? '' : 'none';
   document.getElementById('f-end-box').style.display = isEvent(e) ? '' : 'none';
+  document.getElementById('f-win-box').style.display = isEvent(e) ? 'none' : '';
+  const fw = document.getElementById('f-win');
+  if (fw && !fw.value) fw.placeholder = secWin(document.getElementById('f-section')?.value || e.section_id) || '—';
   document.getElementById('f-startdate-box').style.display = isEvent(e) ? 'none' : '';
   document.getElementById('f-nodate').style.display = isEvent(e) ? 'none' : '';
   document.getElementById('f-date-label').textContent = isEvent(e) ? 'Дата' : 'Срок';
@@ -2866,7 +2897,7 @@ function syncEdit() {
   if (!tabOk[e.tab]) e.tab = 'main';
   const sizeSet = !isEvent(e) && (e.size || e.slot);
   const dots = {
-    repeat: !!e.repeat_unit,
+    repeat: !!(e.repeat_unit || e.window_days),
     plan: !!(e.plan_date || e.estimate || (e.id && spentOf(e.id))),
     more: !!(e.remind_at || e.remind_days || e.pet || e.decor || sizeSet || (e.after_ids || []).length || (!isEvent(e) && (e.kids || []).some(k => k.t.trim()))),
   };
@@ -3073,6 +3104,10 @@ async function saveEdit() {
   // напомнить заранее (016_early.sql); пока база не обновлена, у задач без него поле не отправляем
   const early = Math.min(60, Math.max(0, Math.round(+document.getElementById('f-early').value || 0))) || null;
   if (early || e.remind_days) { row.remind_days = early; if (early !== e.remind_days) row.early_on = null; }
+  // окно (021_window.sql); пусто — как у раздела; пока база не обновлена, у задач без него поле не отправляем
+  const wv = document.getElementById('f-win').value.trim();
+  const win = wv === '' ? null : Math.min(30, Math.max(0, Math.round(+wv || 0)));
+  if (win !== null || e.window_days != null) row.window_days = isEvent(e) ? null : win;
   if (planFields(e)) {
     row.plan_date = document.getElementById('f-plan').value || null;
     row.estimate = parseFloat(document.getElementById('f-est').value.replace(',', '.')) || null;
