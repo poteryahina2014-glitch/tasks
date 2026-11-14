@@ -838,6 +838,8 @@ textarea.t-howto { width: 100%; min-height: 110px; resize: vertical; font: inher
 .rd-t:hover { text-decoration: underline; }
 .rd-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 3px; color: var(--muted); font-size: 12px; }
 .rd-meta .rd-f { color: var(--accent); }
+@keyframes rdflash { 0%, 60% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.rd-row.flash { animation: rdflash 3.5s ease-out; }
 [data-rdrop].drop-in { outline: 2px dashed var(--accent); outline-offset: 2px; }
 .side-sep { display: none; }
 @media (min-width: 900px) { .side-sep { display: block; border-top: 1px solid var(--border); margin: 8px 0 2px; } }

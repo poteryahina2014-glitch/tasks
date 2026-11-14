@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "В чтение (Задачи)",
+  "version": "1.0",
+  "description": "Кнопка: статья с открытой страницы — в список «Чтение» приложения «Задачи».",
+  "permissions": ["activeTab", "contextMenus"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "В чтение", "default_icon": "icon.png" },
+  "icons": { "48": "icon.png", "128": "icon.png" },
+  "commands": {
+    "_execute_action": { "suggested_key": { "default": "Alt+Shift+R" }, "description": "Положить статью в «Чтение»" }
+  }
+}

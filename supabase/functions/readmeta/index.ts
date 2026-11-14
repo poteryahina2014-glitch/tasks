@@ -1,6 +1,7 @@
 // readmeta — по ссылке на статью достаёт название, сайт и дату публикации (для «Чтения» в Задачах).
 // Ставится так же, как notify: Dashboard → Edge Functions → Deploy a new function → Via Editor, имя `readmeta`,
-// вставить этот файл → Deploy. Проверку JWT (Verify JWT) НЕ выключать: функцию может вызвать только вошедший пользователь.
+// вставить этот файл → Deploy. Функция сама проверяет, что её вызвал вошедший пользователь (Verify JWT в настройках
+// с новыми ключами sb_publishable не спасает — пускает и без входа).
 // Браузер сам скачать чужую страницу не может (защита сайтов), поэтому это делает функция.
 
 const CORS = {
@@ -77,6 +78,12 @@ async function readPage(url: string) {
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   try {
+    // только для вошедших: спрашиваем Supabase, чей это токен
+    const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+    const who = await fetch(Deno.env.get('SUPABASE_URL') + '/auth/v1/user', {
+      headers: { apikey: Deno.env.get('SUPABASE_ANON_KEY') || '', authorization: 'Bearer ' + token },
+    });
+    if (!token || !who.ok) return json({ error: 'Нужно войти' });
     const { url } = await req.json();
     if (!/^https?:\/\//i.test(url || '')) return json({ error: 'Это не ссылка' });
     const host = new URL(url).hostname;

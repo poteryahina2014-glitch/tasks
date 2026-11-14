@@ -2074,6 +2074,20 @@ const shortUrl = u => { try { const x = new URL(u); const p = decodeURI(x.pathna
 const readTitle = r => r.title || shortUrl(r.url);
 const cleanTitle = s => String(s || '').replace(/\s*[\/|—–-]\s*Хабр\s*$/i, '').replace(/\s+/g, ' ').trim();
 const readById = id => (S.reads || []).find(r => String(r.id) === String(id));
+// Ключ ссылки для поиска дублей: без www/m., «/» в конце, якоря и меток (utm_…, fbclid…); у Хабра — номер статьи
+// (одна статья бывает по /ru/articles/N/, /ru/companies/…/articles/N/, /ru/post/N/, /en/articles/N/).
+function urlKey(u) {
+  try {
+    const x = new URL(String(u).trim());
+    const host = x.hostname.toLowerCase().replace(/^(www|m)\./, '');
+    if (/(^|\.)habr\.com$/.test(host)) { const m = x.pathname.match(/\/(?:articles|post|news)\/(\d+)/); if (m) return 'habr:' + m[1]; }
+    const q = [...x.searchParams].filter(([k]) => !/^(utm_|fbclid$|gclid$|yclid$|ysclid$|_openstat$|ref$|from$)/i.test(k)).sort().map(([k, v]) => k + '=' + v).join('&');
+    return host + x.pathname.replace(/\/+$/, '') + (q ? '?' + q : '');
+  } catch { return String(u).trim(); }
+}
+const readDup = (url, except) => (S.reads || []).find(r => r !== except && urlKey(r.url) === urlKey(url));
+// по дате статьи, от старой к новой; без даты — в конце, по дате добавления
+const byPub = (a, b) => (a.published_on ? 0 : 1) - (b.published_on ? 0 : 1) || String(a.published_on || '').localeCompare(String(b.published_on || '')) || byAdded(a, b);
 const rfolder = id => (S.rfolders || []).find(f => String(f.id) === String(id));
 const fid = v => (v === '' || v == null ? null : rfolder(v)?.id ?? null); // id папки из строки (data-атрибут, select)
 const byAdded = (a, b) => String(a.created_at).localeCompare(String(b.created_at));
@@ -2123,8 +2137,13 @@ async function addRead(url, title, folder = null) {
   if (!S.readOn) return 'Сначала запусти в Supabase файл 022_reads.sql';
   url = String(url || '').trim().replace(/[)\]>.,;]+$/, '');
   if (!okUrl(url)) return 'Это не похоже на ссылку';
-  const was = S.reads.find(r => r.url === url);
-  if (was) return was.done_on ? `Уже прочитана ${payDate(was.done_on)}` : 'Уже есть в списке';
+  const was = readDup(url);
+  if (was) {
+    S.rflash = was.id; // во вкладке «Чтение» — показать, где она лежит
+    S.rsel = was.done_on ? 'done' : '';
+    render();
+    return `⚠ Уже есть${was.done_on ? `, прочитана ${payDate(was.done_on)}` : rfolder(was.folder_id) ? ` в папке «${rfolder(was.folder_id).name}»` : ''}: ${readTitle(was)}`;
+  }
   const [x] = await call(sb.from('reads').insert({ url, title: cleanTitle(title), site: siteOf(url), folder_id: folder }).select());
   S.reads.push(x);
   readsRedraw();
@@ -2148,7 +2167,7 @@ async function takeShare() {
   const msg = url ? await addRead(url, title).catch(e => 'Ошибка: ' + e.message) : 'Не нашла ссылку';
   if (pop) {
     $app.innerHTML = `<div class="empty rd-pop">${esc(msg)}</div>`;
-    setTimeout(() => window.close(), 1500);
+    setTimeout(() => window.close(), msg.startsWith('⚠') ? 4000 : 1500);
     return true;
   }
   toast(msg);
@@ -2229,7 +2248,9 @@ function renderRead() {
   const head = `<header class="top"><h1>Чтение</h1><div class="tools">${MODE()}${GEARS.v}</div></header>`;
   if (!S.readOn) return head + '<div class="empty">⚠ Нет таблиц для чтения: запусти в Supabase файл 022_reads.sql</div>';
   const sel = S.rsel ?? '';
-  const open = S.reads.filter(r => !r.done_on).sort((a, b) => byAdded(b, a));
+  const open = S.reads.filter(r => !r.done_on).sort(byPub);
+  const keys = {};
+  S.reads.forEach(r => { const k = urlKey(r.url); keys[k] = (keys[k] || 0) + 1; });
   const done = S.reads.filter(r => r.done_on).sort((a, b) => b.done_on.localeCompare(a.done_on) || byAdded(b, a));
   const inF = id => r => (r.folder_id ?? null) === id;
   const item = (key, label, n, drop) => `<button class="pill side-item ${String(sel) === String(key) ? 'on' : ''}" data-act="rsel" data-v="${key}"${drop !== undefined ? ` data-rdrop="${drop}"` : ''}>
@@ -2240,9 +2261,9 @@ function renderRead() {
     + '<button class="pill side-item add" data-act="rfolder-new">+ Папка</button>'
     + `<span class="side-sep"></span>${item('done', '✓ Прочитанные', done.length)}`;
   const d8 = s => payDate(String(s || '').slice(0, 10));
-  const row = (r, opts = {}) => `<div class="rd-row${r.done_on ? ' done' : ''}" data-rdrag="${r.id}" draggable="true">
+  const row = (r, opts = {}) => `<div class="rd-row${r.done_on ? ' done' : ''}${S.rflash === r.id ? ' flash' : ''}" data-rdrag="${r.id}" draggable="true">
       <div class="rd-body"><a class="rd-t" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(readTitle(r))}</a>
-        <div class="rd-meta"><span>${esc(r.site || siteOf(r.url))}</span>${r.published_on ? `<span>от ${d8(r.published_on)}</span>` : ''}<span>добавлена ${d8(r.created_at)}</span>${r.done_on ? `<span>прочитана ${d8(r.done_on)}</span>` : ''}${opts.folder && rfolder(r.folder_id) ? `<span class="rd-f">${esc(rfolder(r.folder_id).name)}</span>` : ''}</div></div>
+        <div class="rd-meta"><span>${esc(r.site || siteOf(r.url))}</span>${r.published_on ? `<span>от ${d8(r.published_on)}</span>` : ''}${keys[urlKey(r.url)] > 1 ? '<span class="late">⚠ дубль</span>' : ''}${r.done_on ? `<span>прочитана ${d8(r.done_on)}</span>` : ''}${opts.folder && rfolder(r.folder_id) ? `<span class="rd-f">${esc(rfolder(r.folder_id).name)}</span>` : ''}</div></div>
       <button class="icon small" data-act="${r.done_on ? 'read-back' : 'read-ok'}" data-id="${r.id}" aria-label="${r.done_on ? 'Вернуть в список' : 'Прочитала'}">${r.done_on ? '↩' : '✓'}</button>
       <button class="icon small" data-act="read-edit" data-id="${r.id}" aria-label="Изменить">✎</button></div>`;
   const fhead = f => `<h2 class="group" data-rdrop="${f ? f.id : ''}">${f ? esc(f.name) : 'Без папки'}${f ? `<button class="edit-sec" data-act="rfolder-edit" data-id="${f.id}" aria-label="Изменить папку">✎</button>` : ''}</h2>`;
@@ -2257,7 +2278,7 @@ function renderRead() {
     }
     body = body || '<div class="empty small">Список пуст</div>';
   }
-  const tr = todayReads();
+  const tr = todayReads().sort(byPub);
   const todayBox = tr.length || open.length ? `<h2 class="group">Сегодня<button class="edit-sec" data-act="read-reroll" aria-label="Другие статьи">🎲</button></h2>
     ${tr.map(r => row(r, { folder: true })).join('') || '<div class="empty small">На сегодня статей нет</div>'}` : '';
   return head + `<div class="split rd-split">
@@ -2276,7 +2297,12 @@ async function readAdd() {
   const sel = S.rsel;
   const msg = await addRead(u, '', fid(sel));
   toast(msg);
-  if (!msg.startsWith('📰')) { const i = document.getElementById('rd-u'); if (i) i.value = u; }
+  if (!msg.startsWith('📰') && !msg.startsWith('⚠')) { const i = document.getElementById('rd-u'); if (i) i.value = u; }
+  if (S.rflash) { // дубль: подсветить ту, что уже есть
+    document.querySelector('.rd-row.flash')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const f = S.rflash;
+    setTimeout(() => { if (S.rflash === f) { S.rflash = null; if (S.view === 'read') render(); } }, 4000);
+  }
   document.getElementById('rd-u')?.focus();
 }
 // окно статьи: название, сайт, дата статьи, папка, ссылка
@@ -2303,6 +2329,8 @@ async function readSave(id) {
   const v = k => document.getElementById(k).value.trim();
   const url = v('re-u');
   if (!okUrl(url)) return toast('Это не похоже на ссылку');
+  const dup = readDup(url, r);
+  if (dup && !confirm(`Такая ссылка уже есть: «${readTitle(dup)}». Всё равно сохранить?`)) return;
   await rdUpd(r, { title: v('re-t'), site: v('re-s'), published_on: v('re-p') || null, folder_id: fid(v('re-f')), url });
   closeModal();
   render();
@@ -2435,7 +2463,7 @@ const HELP = [
   ['Повтор по циклу', 'Для графиков вроде «2 дня делать, 1 пропустить»: в окне задачи Повтор → «Цикл». Укажи, сколько дней делать, сколько пропускать и первый день цикла — ниже видны ближайшие дни. В дни пропуска задачи нет, и пропуском это не считается. Сбился график — поменяй первый день цикла.'],
   ['Цветок на подоконнике', 'Растёт от привычек: смотрит, сколько из отметок за последние 7 дней — «сделано». Почти всё (от 85%) — цветёт, больше половины (от 60%) — бутоны, меньше — вянет, совсем мало (меньше 35%) — засыхает, листья падают. Сегодня все привычки сделаны — прилетает бабочка. Наведи на цветок — увидишь «X из Y». Цветок можно передвинуть мышкой вдоль подоконника. В ⚙ → «Цветок» можно выбрать, привычки из каких разделов он считает. Виден, когда включён вид за окном и есть хоть одна такая привычка.'],
   ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных, вид за окном. <b>Размер задач по разделам</b> — все задачи раздела получат этот размер, если у задачи не выбран свой (например, «Проекты» — ✦ вдохновение). <b>Цветок</b> — привычки каких разделов он считает (светится — считается). <b>Питомцы</b> — кого показывать (светится — видно). <b>Режим раздела</b> (✎ у раздела) — задачи раздела переезжают вместе с ним.'],
-  ['Чтение 📰', 'Статьи «прочитать потом» — чтобы не держать их открытыми вкладками. Вкладка «Чтение» (в личном режиме).<br><br><b>Каждый день</b> программа выбирает несколько статей (сколько и какие — ⚙ → «Чтение»: самые старые или случайные, из каких папок). Пока на сегодня есть непрочитанные, на подоконнике лежит газета (на телефоне или без вида за окном — значок 📰 в заголовке). Нажми на неё — список статей на сегодня: название открывает статью, ✓ — прочитала, 🎲 «Другие» — выбрать другие статьи вместо непрочитанных. Всё прочитано — газета исчезает до завтра. Во вкладке «Чтение» те же статьи — вверху, в «Сегодня».<br><br><b>Добавить статью</b> — вставить ссылку в поле вверху вкладки и нажать «+» (или Enter). Название, сайт и дату статьи программа берёт со страницы сама; если не вышло — ✎ и вписать, или ↻ в окне статьи — попробовать ещё раз. Статья попадает в открытую папку. Ещё способы:<br>• на телефоне — в браузере «Поделиться» → «Задачи». Если «Задач» в списке нет — удали приложение с телефона и установи заново (Chrome → ⋮ → «Установить приложение»);<br>• на компьютере — перетащи эту кнопку мышкой на панель закладок браузера: ' + `<a class="bm" href="javascript:void(window.open('${location.origin + location.pathname}?pop=1&url='+encodeURIComponent(location.href)+'&title='+encodeURIComponent(document.title),'tmread','width=420,height=300'))">📰 В чтение</a>` + '. Потом на странице статьи нажми её: появится окошко «Добавлено» и само закроется — вкладку со статьёй можно закрывать.<br><br><b>Папки</b> — слева (на телефоне — строкой сверху): «+ Папка», ✎ у названия — переименовать или удалить (статьи останутся, без папки). Переложить статью — перетащить мышкой на папку или ✎ у статьи → «Папка».<br><br>У статьи видно: сайт, «от» — дата самой статьи, «добавлена» — когда положила в список. ✓ — прочитала (уходит в «✓ Прочитанные», там видно, когда прочитана; ↩ — вернуть в список). ✎ — название, сайт, дата, папка, ссылка, удалить.'],
+  ['Чтение 📰', 'Статьи «прочитать потом» — чтобы не держать их открытыми вкладками. Вкладка «Чтение» (в личном режиме).<br><br><b>Каждый день</b> программа выбирает несколько статей (сколько и какие — ⚙ → «Чтение»: самые старые или случайные, из каких папок). Пока на сегодня есть непрочитанные, на подоконнике лежит газета (на телефоне или без вида за окном — значок 📰 в заголовке). Нажми на неё — список статей на сегодня: название открывает статью, ✓ — прочитала, 🎲 «Другие» — выбрать другие статьи вместо непрочитанных. Всё прочитано — газета исчезает до завтра. Во вкладке «Чтение» те же статьи — вверху, в «Сегодня».<br><br><b>Добавить статью</b> — вставить ссылку в поле вверху вкладки и нажать «+» (или Enter). Название, сайт и дату статьи программа берёт со страницы сама; если не вышло — ✎ и вписать, или ↻ в окне статьи — попробовать ещё раз. Статья попадает в открытую папку. Сортировка — по дате статьи, от старых к новым (статьи без даты — в конце).<br><br><b>Дубли.</b> Если такая ссылка уже есть (в том числе прочитанная), статья не добавится: появится «⚠ Уже есть …», а во вкладке та статья подсветится. Одной ссылкой считаются адреса с www и без, с «/» в конце и без, с метками вроде utm_…; у Хабра — одна и та же статья по разным адресам. Если дубли уже лежат в списке, у них пометка «⚠ дубль». Ещё способы добавить:<br>• на телефоне — в браузере «Поделиться» → «Задачи». Если «Задач» в списке нет — удали приложение с телефона и установи заново (Chrome → ⋮ → «Установить приложение»);<br>• на компьютере — кнопка расширения «В чтение» на панели браузера (или Alt+Shift+R); правый щелчок по ссылке → «В «Чтение»» — добавить статью, не открывая её. Появится маленькое окошко «Добавлено» и само закроется;<br>• или кнопка-закладка: перетащи её мышкой на панель закладок браузера: ' + `<a class="bm" href="javascript:void(window.open('${location.origin + location.pathname}?pop=1&url='+encodeURIComponent(location.href)+'&title='+encodeURIComponent(document.title),'tmread','width=420,height=300'))">📰 В чтение</a>` + '. Потом на странице статьи нажми её: появится окошко «Добавлено» и само закроется — вкладку со статьёй можно закрывать.<br><br><b>Папки</b> — слева (на телефоне — строкой сверху): «+ Папка», ✎ у названия — переименовать или удалить (статьи останутся, без папки). Переложить статью — перетащить мышкой на папку или ✎ у статьи → «Папка».<br><br>У статьи видно: сайт и «от» — дата самой статьи. Когда положила её в список — в окне статьи (✎). ✓ — прочитала (уходит в «✓ Прочитанные», там видно, когда прочитана; ↩ — вернуть в список). ✎ — название, сайт, дата, папка, ссылка, удалить.'],
   ['Устройства', 'Всё хранится в облаке. Входи с той же почтой на телефоне и компьютере. На телефоне: Chrome → ⋮ → «Установить приложение».'],
 ];
 
