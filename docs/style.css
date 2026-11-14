@@ -827,19 +827,35 @@ textarea.t-howto { width: 100%; min-height: 110px; resize: vertical; font: inher
 .sub-links { gap: 16px; }
 #f-subs .subrow.arch .inp { color: var(--muted); }
 
-/* ---------- очередь чтения 📰 ---------- */
-.read-day { display: flex; align-items: center; gap: 6px; padding: 8px 10px; margin: 0 0 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
-.read-day .rd-ico { font-size: 18px; }
-.read-day .rd-t, .rd-row .rd-t { flex: 1 1 auto; min-width: 0; color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
-.read-day .rd-t:hover, .rd-row .rd-t:hover { text-decoration: underline; }
-.rd-form { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto; gap: 6px; align-items: center; margin-bottom: 10px; }
-.rd-form .btn.main { min-width: 44px; font-size: 18px; padding: 8px 0; }
-.rd-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 32px 32px; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--border); }
-.rd-row.today { background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 8px; }
+/* ---------- «Чтение» 📰 ---------- */
+.rd-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; margin: 4px 0 6px; }
+.rd-add .btn.main { min-width: 44px; font-size: 18px; padding: 8px 0; }
+.rd-row { display: grid; grid-template-columns: minmax(0, 1fr) 32px 32px; gap: 6px; align-items: center; padding: 8px 10px; margin-bottom: 6px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px; }
+.rd-row.dragging { opacity: .4; }
 .rd-row.done .rd-t { color: var(--muted); }
-.rd-d { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.rd-t { color: var(--text); text-decoration: none; overflow-wrap: anywhere; font-weight: 500; }
+.rd-t:hover { text-decoration: underline; }
+.rd-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 3px; color: var(--muted); font-size: 12px; }
+.rd-meta .rd-f { color: var(--accent); }
+[data-rdrop].drop-in { outline: 2px dashed var(--accent); outline-offset: 2px; }
+.side-sep { display: none; }
+@media (min-width: 900px) { .side-sep { display: block; border-top: 1px solid var(--border); margin: 8px 0 2px; } }
 .rd-pop { font-size: 18px; color: var(--text); padding-top: 60px; }
 .help-item a.bm { display: inline-block; padding: 2px 10px; border-radius: 10px; background: var(--button); color: var(--text); text-decoration: none; cursor: grab; }
-@media (max-width: 520px) { .rd-form { grid-template-columns: minmax(0, 1fr) auto; } .rd-form #rd-t { grid-column: 1; grid-row: 2; } }
+/* газета на подоконнике */
+#bg .paper { position: absolute; bottom: 64px; width: 150px; pointer-events: auto; cursor: pointer; filter: drop-shadow(0 4px 4px #0006); transition: transform .15s; }
+#bg .paper:hover { transform: translateY(-3px) rotate(-2deg); }
+#bg .paper svg { display: block; width: 100%; }
+@media (max-width: 899px) { #bg .paper { display: none; } }
+/* пузырь со статьями на сегодня */
+.book-bubble.rb { flex-direction: column; align-items: stretch; width: min(380px, calc(100vw - 16px)); max-width: none; }
+.rb-list { display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow-y: auto; }
+.rb-row { display: grid; grid-template-columns: minmax(0, 1fr) 32px; gap: 6px; align-items: center; }
+.rb-row a { display: flex; flex-direction: column; color: var(--text); text-decoration: none; padding: 6px 8px; border-radius: 8px; }
+.rb-row a:hover { background: var(--button); }
+.rb-row small { color: var(--muted); font-size: 12px; }
+.rb-foot { display: flex; gap: 8px; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 8px; }
+
 /* на телефоне в заголовке 7 значков (📰 добавился 14.11.2026) — плотнее, чтобы «Сегодня» помещалось */
 @media (max-width: 520px) { header .tools { gap: 0; } header .tools .icon { width: 34px; height: 36px; font-size: 18px; } }

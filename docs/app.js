@@ -216,7 +216,7 @@ function habitStats(t) {
 async function load() {
   const since = addDays(today(), -62);
   const monthFrom = S.month && S.month < since ? S.month : since;
-  const [tasks, sections, logs, templates, projects, times, reads] = await Promise.all([
+  const [tasks, sections, logs, templates, projects, times, reads, rfolders] = await Promise.all([
     call(sb.from('tasks').select('*').or(`done_on.is.null,done_on.gte.${monthFrom},project_id.not.is.null`).order('position').order('created_at')),
     call(sb.from('sections').select('*').order('position').order('created_at')),
     call(sb.from('task_log').select('*').gte('day', monthFrom).order('id')),
@@ -225,10 +225,12 @@ async function load() {
     // фактическое время (017_time.sql); пока таблицы нет — просто пусто, без ошибки
     sb.from('time_log').select('*').gte('day', addDays(today(), -400)).order('day').then(r => (r.error ? null : r.data)),
     // очередь чтения (022_reads.sql): в очереди + прочитанные сегодня
-    sb.from('reads').select('*').or(`done_on.is.null,done_on.eq.${today()}`).order('queued_at').then(r => (r.error ? null : r.data)),
+    sb.from('reads').select('*').order('created_at').then(r => (r.error ? null : r.data)),
+    sb.from('read_folders').select('*').order('position').order('created_at').then(r => (r.error ? null : r.data)),
   ]);
   S.reads = reads || [];
-  S.readOn = !!reads;
+  S.rfolders = rfolders || [];
+  S.readOn = !!reads && !!rfolders;
   S.tasks = tasks;
   S.sections = sections;
   S.logs = logs;
@@ -240,7 +242,7 @@ async function load() {
   S.loaded = true;
   S.hLogs = null;
   if (await takeShare()) return; // окошко кнопки-закладки: только положить статью в очередь
-  await pickRead().catch(() => { });
+  await pickReads().catch(() => { });
   if (await autoGenerate()) return load(); // закончился период — шаблоны создали задачи
   await ideaExpire().catch(() => { });
   render();
@@ -316,16 +318,17 @@ function render() {
   updateDust();
   if (!S.user) return renderLogin();
   if (!S.loaded) { $app.innerHTML = '<div class="empty">Загружаю…</div>'; return; }
-  const views = { today: renderToday, calendar: renderCalendar, sections: renderSections, habits: renderHabits, plan: renderPlan, time: renderTime };
+  const views = { today: renderToday, calendar: renderCalendar, sections: renderSections, habits: renderHabits, plan: renderPlan, time: renderTime, read: renderRead };
   if (S.view === 'nodate') { S.view = 'sections'; S.noDate = true; } // вкладки «Без срока» нет — это фильтр в «Разделах»
   if (!views[S.view]) S.view = 'sections'; // была вкладка «Проекты» — теперь проекты живут в «Разделах»
   if ((S.view === 'plan' || S.view === 'time') && !planOn()) S.view = 'today';
   if (S.view === 'habits' && S.space === 'work') S.view = 'today'; // в работе привычек нет
+  if (S.view === 'read' && S.space === 'work') S.view = 'today'; // чтение — только в личном
   document.body.className = 'v-' + S.view + (S.space === 'work' ? ' work' : '') + (petsShown() ? ' pets' : '') + (S.bg ? ' bg' : '');
   $app.innerHTML = views[S.view]() + meterCard('side') + `
     ${S.pick ? pickBar() : '<button class="fab" data-act="new" aria-label="Новая задача">+</button>'}
     <nav class="bottom">
-      ${[['today', 'Сегодня'], ['calendar', 'Календарь'], ['sections', 'Разделы']].concat(S.space === 'work' ? [] : [['habits', 'Привычки']])
+      ${[['today', 'Сегодня'], ['calendar', 'Календарь'], ['sections', 'Разделы']].concat(S.space === 'work' ? [] : [['habits', 'Привычки'], ['read', 'Чтение']])
         .concat(planOn() ? [['plan', 'План'], ['time', 'Время']] : []).map(([k, n]) => `<button class="pill ${S.view === k ? 'on' : ''}" data-act="view" data-v="${k}">${n}</button>`).join('')}
     </nav>`;
 }
@@ -447,7 +450,7 @@ function renderToday() {
   const doneToday = S.showDone ? doneIds.map(id => S.tasks.find(t => t.id === id)).filter(Boolean) : [];
 
   let html = `<header class="top"><h1>Сегодня <span class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</span></h1><div class="tools">${MODE()}${GEARS.v}</div></header>`;
-  html += meterCard('top') + readCard();
+  html += meterCard('top');
   if (!due.length && !doneToday.length && !events.length && !inWork.length) {
     html += '<div class="empty">Задач на сегодня нет.<br>Нажми «+», чтобы добавить.</div>';
   }
@@ -1146,13 +1149,14 @@ function updateBg() {
   if (document.body.firstChild !== $bg) document.body.prepend($bg); // всегда позади питомцев
   $bg.hidden = !on;
   if (!on) return;
-  const st = bgState(), fl = flowerState(), bk = booksNow().map(t => [t.id, bookVar(t)]);
-  const sig = JSON.stringify([st, fl, bk]);
+  const st = bgState(), fl = flowerState(), bk = booksNow().map(t => [t.id, bookVar(t)]), rd = readsNow().length;
+  const sig = JSON.stringify([st, fl, bk, rd]);
   if ($bg.dataset.sig === sig) return;
   $bg.dataset.sig = sig;
   $bg.innerHTML = bgSVG(st) + '<div class="frame"><i class="v"></i><i class="h"></i></div><div class="sill"></div>'
     + (fl ? `<div class="flower" title="${fl.tip}"${flowerX() !== null ? ` style="left:${flowerX() * 100}vw"` : ''}>${flowerSVG(fl)}</div>` : '')
-    + bk.map(([id, v], i) => `<div class="books" data-act="book" data-id="${id}" style="right:${24 + i * 250}px">${booksSVG(v)}</div>`).join('');
+    + bk.map(([id, v], i) => `<div class="books" data-act="book" data-id="${id}" style="right:${24 + i * 250}px">${booksSVG(v)}</div>`).join('')
+    + (rd ? `<div class="paper" data-act="read-pile" aria-label="Почитать сегодня: ${rd}" style="right:${24 + bk.length * 250}px">${paperSVG()}</div>` : '');
 }
 
 // Книги: 5 вариантов, при каждом появлении (новый срок) — случайный, но постоянный в этот раз.
@@ -1188,6 +1192,7 @@ function bookDone(t, el) {
   if (!t || !el) return;
   if (!$bubble.hidden && $bubble.dataset.id === t.id) { $bubble.hidden = true; return; }
   $bubble.dataset.id = t.id;
+  $bubble.classList.remove('rb');
   $bubble.innerHTML = `<span>${esc(t.title)}</span><button class="btn main" data-act="book-ok" data-id="${t.id}">✓ Готово</button>`;
   $bubble.hidden = false;
   const r = el.getBoundingClientRect(), w = $bubble.offsetWidth, h = $bubble.offsetHeight;
@@ -1196,7 +1201,7 @@ function bookDone(t, el) {
   $bubble.style.top = (top > 8 ? top : r.bottom + 12) + 'px';
   $bubble.classList.toggle('below', top <= 8);
 }
-document.addEventListener('pointerdown', ev => { if (!$bubble.hidden && !ev.target.closest('.book-bubble, [data-act=book]')) $bubble.hidden = true; });
+document.addEventListener('pointerdown', ev => { if (!$bubble.hidden && !ev.target.closest('.book-bubble, [data-act=book], [data-act=read-pile]')) $bubble.hidden = true; });
 
 // Цветок можно передвинуть мышкой вдоль подоконника; место — tm.flower, доля ширины экрана.
 function flowerX() { const x = parseFloat(localGet('flower')); return isNaN(x) ? null : x; }
@@ -1941,8 +1946,8 @@ async function deleteBulk() {
 }
 
 // ---------- настройки (шестерёнка) ----------
-const GEAR0 = '<button class="icon" data-act="reads" aria-label="Очередь чтения">📰</button><button class="icon" data-act="pay" aria-label="Платежи">💳</button><button class="icon" data-act="occ" aria-label="Что случилось сегодня">☀</button><button class="icon" data-act="help" aria-label="Справка">?</button><button class="icon" data-act="settings" aria-label="Настройки">⚙</button>';
-const GEARS = { get v() { return booksIcon() + GEAR0; } };
+const GEAR0 = '<button class="icon" data-act="pay" aria-label="Платежи">💳</button><button class="icon" data-act="occ" aria-label="Что случилось сегодня">☀</button><button class="icon" data-act="help" aria-label="Справка">?</button><button class="icon" data-act="settings" aria-label="Настройки">⚙</button>';
+const GEARS = { get v() { return booksIcon() + readIcon() + GEAR0; } };
 
 // ---------- случаи (☀): то, что нельзя запланировать заранее ----------
 const occasions = () => S.tasks.filter(t => t.kind === 'occasion').sort(byPos);
@@ -2060,32 +2065,73 @@ async function payDelete() {
   renderPay(true);
 }
 
-// ---------- очередь чтения (📰): одна статья в день из «прочитать потом» (022_reads.sql) ----------
-// S.reads — в очереди + прочитанные сегодня (грузятся в load); прочитанные целиком — только в окне (S.rd.arch).
+// ---------- «Чтение» (📰): статьи «прочитать потом», папки по темам, каждый день N статей на подоконнике (022_reads.sql) ----------
+// S.reads — все статьи (в очереди и прочитанные), S.rfolders — папки; грузятся в load. Нет таблиц — S.readOn = false.
+// Название, сайт и дату статьи достаёт функция readmeta в Supabase (браузер чужую страницу сам не скачает).
 const okUrl = u => /^https?:\/\//i.test(u || '');
+const siteOf = u => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
 const shortUrl = u => { try { const x = new URL(u); const p = decodeURI(x.pathname).replace(/\/$/, ''); return x.hostname.replace(/^www\./, '') + (p.length > 40 ? p.slice(0, 40) + '…' : p); } catch { return u; } };
 const readTitle = r => r.title || shortUrl(r.url);
 const cleanTitle = s => String(s || '').replace(/\s*[\/|—–-]\s*Хабр\s*$/i, '').replace(/\s+/g, ' ').trim();
-const readOfDay = () => (S.reads || []).find(r => !r.done_on && r.shown_on === today());
-const sortReads = () => S.reads.sort((a, b) => String(a.queued_at).localeCompare(String(b.queued_at)));
-// Статья дня: уже выбрана на сегодня — она; сегодня уже прочитана — больше не выдаём; иначе самая давняя в очереди.
-async function pickRead() {
-  if (!S.readOn || readOfDay() || S.reads.some(r => r.done_on === today())) return;
-  const next = S.reads.find(r => !r.done_on);
-  if (!next) return;
-  next.shown_on = today();
-  await sb.from('reads').update({ shown_on: next.shown_on }).eq('id', next.id);
+const readById = id => (S.reads || []).find(r => String(r.id) === String(id));
+const rfolder = id => (S.rfolders || []).find(f => String(f.id) === String(id));
+const fid = v => (v === '' || v == null ? null : rfolder(v)?.id ?? null); // id папки из строки (data-атрибут, select)
+const byAdded = (a, b) => String(a.created_at).localeCompare(String(b.created_at));
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+// ⚙ → «Чтение»: сколько статей в день, какие (самые старые / случайные), из каких папок (off — выключенные, 'none' — без папки)
+const readCfg = () => ({ n: 3, mode: 'old', off: [], ...(S.user?.user_metadata?.reads || {}) });
+const folderKey = r => (r.folder_id == null ? 'none' : String(r.folder_id));
+// выбранные на сегодня (вместе с уже прочитанными из них) и ещё не прочитанные — для подоконника
+const todayReads = () => (S.reads || []).filter(r => r.shown_on === today());
+const readsNow = () => (S.readOn && S.space === 'personal' ? todayReads().filter(r => !r.done_on) : []);
+const rdUpd = (r, upd) => { Object.assign(r, upd); return call(sb.from('reads').update(upd).eq('id', r.id)); };
+
+// Добираем статьи на сегодня до N. skip — только что отложенные «Другими»: их берём в последнюю очередь.
+async function pickReads(skip = []) {
+  if (!S.readOn) return;
+  const t0 = today(), cfg = readCfg();
+  const need = Math.max(0, (+cfg.n || 0) - todayReads().length);
+  if (!need) return;
+  const pool = S.reads.filter(r => !r.done_on && r.shown_on !== t0 && !cfg.off.includes(folderKey(r)));
+  const order = list => (cfg.mode === 'rand' ? shuffle(list) : list.sort(byAdded));
+  const take = order(pool.filter(r => !skip.includes(r))).concat(order(pool.filter(r => skip.includes(r)))).slice(0, need);
+  if (!take.length) return;
+  take.forEach(r => { r.shown_on = t0; });
+  await sb.from('reads').update({ shown_on: t0 }).in('id', take.map(r => r.id));
 }
-async function addRead(url, title) {
+// «Другие»: непрочитанные сегодняшние возвращаются в очередь, вместо них — другие
+async function rerollReads() {
+  const old = todayReads().filter(r => !r.done_on);
+  old.forEach(r => { r.shown_on = null; });
+  if (old.length) await call(sb.from('reads').update({ shown_on: null }).in('id', old.map(r => r.id)));
+  await pickReads(old);
+  readsRedraw();
+  if (!readsNow().length) toast('В очереди больше нет статей');
+}
+// Название, сайт и дата статьи — со страницы (функция readmeta). Не вышло — остаётся адрес, можно вписать самой (✎).
+async function fetchMeta(r) {
+  const { data, error } = await sb.functions.invoke('readmeta', { body: { url: r.url } });
+  if (error || !data || data.error) return false;
+  const upd = {};
+  if (data.title) upd.title = cleanTitle(data.title);
+  if (data.site) upd.site = data.site;
+  if (data.published) upd.published_on = data.published;
+  if (Object.keys(upd).length) await rdUpd(r, upd);
+  return true;
+}
+async function addRead(url, title, folder = null) {
   if (!S.readOn) return 'Сначала запусти в Supabase файл 022_reads.sql';
   url = String(url || '').trim().replace(/[)\]>.,;]+$/, '');
   if (!okUrl(url)) return 'Это не похоже на ссылку';
-  if (S.reads.some(r => !r.done_on && r.url === url)) return 'Уже в очереди';
-  const [x] = await call(sb.from('reads').insert({ url, title: cleanTitle(title) }).select());
+  const was = S.reads.find(r => r.url === url);
+  if (was) return was.done_on ? `Уже прочитана ${payDate(was.done_on)}` : 'Уже есть в списке';
+  const [x] = await call(sb.from('reads').insert({ url, title: cleanTitle(title), site: siteOf(url), folder_id: folder }).select());
   S.reads.push(x);
-  sortReads();
-  await pickRead();
-  return '📰 В очереди: ' + readTitle(x);
+  readsRedraw();
+  await fetchMeta(x).catch(() => { });
+  await pickReads();
+  readsRedraw();
+  return '📰 Добавлено: ' + readTitle(x);
 }
 // Пришла ссылка: «Поделиться» на телефоне (share_target в manifest) или кнопка-закладка на компьютере (?pop=1 — окошко само закроется).
 async function takeShare() {
@@ -2098,6 +2144,7 @@ async function takeShare() {
   const text = p.get('text') || '';
   const url = ((p.get('url') || '') + ' ' + text).match(/https?:\/\/\S+/)?.[0];
   const title = p.get('title') || (url ? text.replace(url, '') : text).trim();
+  if (pop) $app.innerHTML = '<div class="empty rd-pop">📰 …</div>';
   const msg = url ? await addRead(url, title).catch(e => 'Ошибка: ' + e.message) : 'Не нашла ссылку';
   if (pop) {
     $app.innerHTML = `<div class="empty rd-pop">${esc(msg)}</div>`;
@@ -2107,120 +2154,249 @@ async function takeShare() {
   toast(msg);
   return false;
 }
-// Статья дня на «Сегодня»
-function readCard() {
-  const r = S.space === 'personal' && readOfDay();
-  if (!r) return '';
-  return `<div class="read-day"><span class="rd-ico">📰</span>
-    <a class="rd-t" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(readTitle(r))}</a>
-    <button class="icon small" data-act="read-ok" data-id="${r.id}" aria-label="Прочитала">✓</button>
-    <button class="icon small" data-act="read-later" data-id="${r.id}" aria-label="Потом">↷</button>
-    <button class="icon small" data-act="read-drop" data-id="${r.id}" aria-label="Не интересно">🗑</button></div>`;
+function readsRedraw() {
+  render();
+  if ($bubble.dataset.id === 'reads' && !$bubble.hidden) {
+    const el = document.querySelector('[data-act=read-pile]');
+    if (el && readsNow().length) readBubble(el, true); else $bubble.hidden = true;
+  }
 }
-const readById = id => (S.reads || []).concat(S.rd?.arch || []).find(r => String(r.id) === String(id));
-const rdUpd = (r, upd) => { Object.assign(r, upd); return call(sb.from('reads').update(upd).eq('id', r.id)); };
-function readsRedraw() { if ($modal.dataset.kind === 'reads') renderReads(); render(); }
 async function readOk(id) {
   const r = readById(id);
   if (!r) return;
-  const old = { done_on: r.done_on, shown_on: r.shown_on };
-  await rdUpd(r, { done_on: today(), shown_on: r.shown_on || today() });
-  if (S.rd?.arch && !S.rd.arch.includes(r)) S.rd.arch.unshift(r);
+  await rdUpd(r, { done_on: today() });
   readsRedraw();
-  toast('Прочитано', async () => { await rdUpd(r, old); if (S.rd?.arch) S.rd.arch = S.rd.arch.filter(x => x !== r); readsRedraw(); });
+  toast('Прочитано', async () => { await rdUpd(r, { done_on: null }); readsRedraw(); });
 }
-async function readLater(id) {
+async function readBack(id) {
   const r = readById(id);
-  if (!r) return;
-  const old = { queued_at: r.queued_at, shown_on: r.shown_on };
-  await rdUpd(r, { queued_at: new Date().toISOString(), shown_on: null });
-  sortReads();
-  await pickRead();
-  readsRedraw();
-  toast('В конец очереди', async () => {
-    const now = readOfDay();
-    if (now && now !== r) await rdUpd(now, { shown_on: null });
-    await rdUpd(r, old); sortReads(); readsRedraw();
-  });
+  if (r) { await rdUpd(r, { done_on: null }); readsRedraw(); }
 }
 async function readDel(id) {
   const r = readById(id);
   if (!r) return;
   await call(sb.from('reads').delete().eq('id', r.id));
   S.reads = S.reads.filter(x => x !== r);
-  if (S.rd?.arch) S.rd.arch = S.rd.arch.filter(x => x !== r);
+  closeModal();
   readsRedraw();
   toast('Удалено', async () => {
-    const [x] = await call(sb.from('reads').insert({ url: r.url, title: r.title, queued_at: r.queued_at, shown_on: r.shown_on, done_on: r.done_on }).select());
-    if (!x.done_on || x.done_on === today()) { S.reads.push(x); sortReads(); }
-    if (x.done_on && S.rd?.arch) S.rd.arch.unshift(x);
+    const { url, title, site, published_on, folder_id, shown_on, done_on, created_at } = r;
+    const [x] = await call(sb.from('reads').insert({ url, title, site, published_on, folder_id: rfolder(folder_id) ? folder_id : null, shown_on, done_on, created_at }).select());
+    S.reads.push(x);
     readsRedraw();
   });
 }
-async function readNow(id) {
-  const r = readById(id), cur = readOfDay();
-  if (!r) return;
-  if (cur && cur !== r) await rdUpd(cur, { shown_on: null });
-  await rdUpd(r, { shown_on: today() });
-  readsRedraw();
-}
-async function readBack(id) {
+async function readMove(id, folder) {
   const r = readById(id);
-  if (!r) return;
-  await rdUpd(r, { done_on: null, shown_on: null, queued_at: new Date().toISOString() });
-  S.rd.arch = S.rd.arch.filter(x => x !== r);
-  if (!S.reads.includes(r)) S.reads.push(r);
-  sortReads();
-  readsRedraw();
+  if (r && String(r.folder_id ?? '') !== String(folder ?? '')) { await rdUpd(r, { folder_id: folder }); render(); }
 }
-async function openReads() {
-  $modal.dataset.kind = 'reads';
-  S.rd = { tab: 'q', arch: null };
-  renderReads(true);
+
+// Пузырь у газеты на подоконнике (или у значка 📰 в заголовке): статьи на сегодня, 🎲 — другие
+function readBubble(el, keep = false) {
+  if (!el) return;
+  if (!keep && !$bubble.hidden && $bubble.dataset.id === 'reads') { $bubble.hidden = true; return; }
+  const list = readsNow();
+  $bubble.dataset.id = 'reads';
+  $bubble.classList.add('rb');
+  $bubble.innerHTML = `<div class="rb-list">${list.map(r => `<div class="rb-row">
+      <a href="${esc(r.url)}" target="_blank" rel="noopener"><b>${esc(readTitle(r))}</b><small>${esc(r.site || siteOf(r.url))}</small></a>
+      <button class="icon small" data-act="read-ok" data-id="${r.id}" aria-label="Прочитала">✓</button></div>`).join('')}</div>
+    <div class="rb-foot"><button class="btn" data-act="read-reroll" aria-label="Другие статьи">🎲 Другие</button><button class="btn" data-act="view" data-v="read">Все статьи</button></div>`;
+  $bubble.hidden = false;
+  const r = el.getBoundingClientRect(), w = $bubble.offsetWidth, h = $bubble.offsetHeight;
+  $bubble.style.left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, innerWidth - w - 8)) + 'px';
+  const top = r.top - h - 12;
+  $bubble.style.top = (top > 8 ? top : r.bottom + 12) + 'px';
+  $bubble.classList.toggle('below', top <= 8);
 }
-async function readsTab(tab) {
-  S.rd.tab = tab;
-  renderReads();
-  if (tab === 'a' && !S.rd.arch && S.readOn) {
-    const { data } = await sb.from('reads').select('*').not('done_on', 'is', null).order('done_on', { ascending: false }).limit(300);
-    S.rd.arch = data || [];
-    if ($modal.dataset.kind === 'reads') renderReads();
+// Газета на подоконнике: видна, пока есть непрочитанные статьи на сегодня
+function paperSVG() {
+  return `<svg viewBox="0 0 150 90" aria-hidden="true">
+    <path d="M14 80 L30 30 L136 26 L124 78 Z" fill="#cfc6b2"/>
+    <path d="M8 84 L22 34 L128 30 L118 82 Z" fill="#f1ebdc" stroke="#b9ad92"/>
+    <rect x="30" y="40" width="44" height="7" rx="2" fill="#3a3f55" transform="skewX(-15)"/>
+    <path d="M30 54h38M28 60h38M26 66h38M24 72h38" stroke="#9a917c" stroke-width="2.5" transform="skewX(-15)"/>
+    <rect x="80" y="40" width="30" height="20" rx="2" fill="#8fb0c9" transform="skewX(-15)"/>
+    <path d="M78 66h32M76 72h32" stroke="#9a917c" stroke-width="2.5" transform="skewX(-15)"/>
+  </svg>`;
+}
+// Без подоконника (телефон или вид за окном выключен) — значок 📰 в заголовке
+const readIcon = () => (!readsNow().length || (S.bg && matchMedia('(min-width: 900px)').matches)) ? ''
+  : `<button class="icon" data-act="read-pile" aria-label="Почитать сегодня: ${readsNow().length}">📰</button>`;
+
+// Вкладка «Чтение»: слева папки (на телефоне — строкой), справа «Сегодня», добавление ссылки и список
+function renderRead() {
+  const head = `<header class="top"><h1>Чтение</h1><div class="tools">${MODE()}${GEARS.v}</div></header>`;
+  if (!S.readOn) return head + '<div class="empty">⚠ Нет таблиц для чтения: запусти в Supabase файл 022_reads.sql</div>';
+  const sel = S.rsel ?? '';
+  const open = S.reads.filter(r => !r.done_on).sort((a, b) => byAdded(b, a));
+  const done = S.reads.filter(r => r.done_on).sort((a, b) => b.done_on.localeCompare(a.done_on) || byAdded(b, a));
+  const inF = id => r => (r.folder_id ?? null) === id;
+  const item = (key, label, n, drop) => `<button class="pill side-item ${String(sel) === String(key) ? 'on' : ''}" data-act="rsel" data-v="${key}"${drop !== undefined ? ` data-rdrop="${drop}"` : ''}>
+      <span class="name">${label}</span>${n ? `<span class="n">${n}</span>` : ''}</button>`;
+  const side = item('', 'Все', open.length)
+    + S.rfolders.map(f => item(f.id, esc(f.name), open.filter(inF(f.id)).length, f.id)).join('')
+    + item('none', 'Без папки', open.filter(inF(null)).length, '')
+    + '<button class="pill side-item add" data-act="rfolder-new">+ Папка</button>'
+    + `<span class="side-sep"></span>${item('done', '✓ Прочитанные', done.length)}`;
+  const d8 = s => payDate(String(s || '').slice(0, 10));
+  const row = (r, opts = {}) => `<div class="rd-row${r.done_on ? ' done' : ''}" data-rdrag="${r.id}" draggable="true">
+      <div class="rd-body"><a class="rd-t" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(readTitle(r))}</a>
+        <div class="rd-meta"><span>${esc(r.site || siteOf(r.url))}</span>${r.published_on ? `<span>от ${d8(r.published_on)}</span>` : ''}<span>добавлена ${d8(r.created_at)}</span>${r.done_on ? `<span>прочитана ${d8(r.done_on)}</span>` : ''}${opts.folder && rfolder(r.folder_id) ? `<span class="rd-f">${esc(rfolder(r.folder_id).name)}</span>` : ''}</div></div>
+      <button class="icon small" data-act="${r.done_on ? 'read-back' : 'read-ok'}" data-id="${r.id}" aria-label="${r.done_on ? 'Вернуть в список' : 'Прочитала'}">${r.done_on ? '↩' : '✓'}</button>
+      <button class="icon small" data-act="read-edit" data-id="${r.id}" aria-label="Изменить">✎</button></div>`;
+  const fhead = f => `<h2 class="group" data-rdrop="${f ? f.id : ''}">${f ? esc(f.name) : 'Без папки'}${f ? `<button class="edit-sec" data-act="rfolder-edit" data-id="${f.id}" aria-label="Изменить папку">✎</button>` : ''}</h2>`;
+  let body = '';
+  if (sel === 'done') body = done.map(r => row(r, { folder: true })).join('') || '<div class="empty small">Прочитанных пока нет</div>';
+  else {
+    const groups = sel === '' ? S.rfolders.concat([null]) : [sel === 'none' ? null : rfolder(sel)];
+    for (const f of groups) {
+      const list = open.filter(inF(f ? f.id : null));
+      if (sel === '' && !list.length) continue;
+      body += fhead(f) + (list.map(r => row(r)).join('') || `<div class="empty small" data-rdrop="${f ? f.id : ''}">Пусто</div>`);
+    }
+    body = body || '<div class="empty small">Список пуст</div>';
   }
-}
-function renderReads(reset = false) {
-  const val = id => (reset ? null : document.getElementById(id)?.value);
-  const kept = { u: val('rd-u'), t: val('rd-t') };
-  const day = readOfDay();
-  const open = S.reads.filter(r => !r.done_on);
-  const row = r => `<div class="rd-row${r.done_on ? ' done' : ''}${r === day ? ' today' : ''}">
-      <a class="rd-t" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(readTitle(r))}</a>
-      <span class="rd-d">${r === day ? '📰 сегодня' : payDate(r.done_on || String(r.created_at).slice(0, 10))}</span>
-      ${r.done_on ? `<span></span><button class="icon small" data-act="read-back" data-id="${r.id}" aria-label="Вернуть в очередь">↩</button>`
-        : `${r === day ? '<span></span>' : `<button class="icon small" data-act="read-now" data-id="${r.id}" aria-label="Читать сегодня">⤒</button>`}<button class="icon small" data-act="read-del" data-id="${r.id}" aria-label="Удалить">🗑</button>`}</div>`;
-  const a = S.rd.tab === 'a';
-  const list = !S.readOn ? '<div class="empty small">⚠ Нет таблицы очереди: запусти в Supabase файл 022_reads.sql</div>'
-    : a ? (!S.rd.arch ? '<div class="empty small">Загружаю…</div>' : S.rd.arch.map(row).join('') || '<div class="empty small">Прочитанных пока нет</div>')
-    : (open.map(row).join('') || '<div class="empty small">Очередь пуста</div>');
-  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet pay rd">
-    <h3>Очередь чтения</h3>
-    <div class="rd-form">
-      <input class="inp" id="rd-u" inputmode="url" placeholder="Ссылка" value="${esc(kept.u ?? '')}">
-      <input class="inp" id="rd-t" placeholder="Название" value="${esc(kept.t ?? '')}">
-      <button class="btn main" data-act="read-add" aria-label="В очередь">+</button>
-    </div>
-    <div class="seg pay-tabs"><button class="pill ${a ? '' : 'on'}" data-act="read-tab" data-v="q">В очереди: ${open.length}</button>
-      <button class="pill ${a ? 'on' : ''}" data-act="read-tab" data-v="a">Прочитанные</button></div>
-    <div class="pay-list">${list}</div>
-    <div class="actions"><span></span><button class="btn" data-act="close">Закрыть</button></div>
-  </div></div>`;
+  const tr = todayReads();
+  const todayBox = tr.length || open.length ? `<h2 class="group">Сегодня<button class="edit-sec" data-act="read-reroll" aria-label="Другие статьи">🎲</button></h2>
+    ${tr.map(r => row(r, { folder: true })).join('') || '<div class="empty small">На сегодня статей нет</div>'}` : '';
+  return head + `<div class="split rd-split">
+      <nav class="side">${side}</nav>
+      <div class="main">
+        <div class="rd-add"><input class="inp" id="rd-u" inputmode="url" placeholder="Ссылка" autocomplete="off"><button class="btn main" data-act="read-add" aria-label="Добавить">+</button></div>
+        ${sel === 'done' ? '' : todayBox}
+        ${body}
+      </div></div>`;
 }
 async function readAdd() {
-  const u = document.getElementById('rd-u').value, t = document.getElementById('rd-t').value;
+  const inp = document.getElementById('rd-u');
+  const u = inp?.value || '';
   if (!u.trim()) return toast('Вставь ссылку');
-  const msg = await addRead(u, t);
+  inp.value = '';
+  const sel = S.rsel;
+  const msg = await addRead(u, '', fid(sel));
   toast(msg);
-  if (msg.startsWith('📰')) { S.rd.tab = 'q'; renderReads(true); render(); document.getElementById('rd-u')?.focus(); }
+  if (!msg.startsWith('📰')) { const i = document.getElementById('rd-u'); if (i) i.value = u; }
+  document.getElementById('rd-u')?.focus();
 }
+// окно статьи: название, сайт, дата статьи, папка, ссылка
+function openReadEdit(id) {
+  const r = readById(id);
+  if (!r) return;
+  $modal.dataset.kind = 'read-edit';
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet">
+    <h3>Статья</h3>
+    <div class="field"><label>Название</label><input class="inp" id="re-t" value="${esc(r.title)}" placeholder="${esc(shortUrl(r.url))}"></div>
+    <div class="field pair"><div><label>Сайт</label><input class="inp" id="re-s" value="${esc(r.site || '')}"></div>
+      <div><label>Дата статьи</label><input class="inp" id="re-p" type="date" value="${esc(r.published_on || '')}"></div></div>
+    <div class="field"><label>Папка</label><select class="inp" id="re-f"><option value="">Без папки</option>${S.rfolders.map(f => `<option value="${f.id}" ${f.id === r.folder_id ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Ссылка</label><input class="inp" id="re-u" value="${esc(r.url)}"></div>
+    <div class="hint">Добавлена ${payDate(String(r.created_at).slice(0, 10))}${r.done_on ? ` · прочитана ${payDate(r.done_on)}` : ''}</div>
+    <div class="actions">
+      <div class="row"><button class="btn danger" data-act="read-del" data-id="${r.id}">Удалить</button><button class="icon" data-act="read-meta" data-id="${r.id}" aria-label="Взять название и дату с сайта">↻</button></div>
+      <div class="row"><button class="btn" data-act="close">Отмена</button><button class="btn main" data-act="read-save" data-id="${r.id}">Сохранить</button></div>
+    </div></div></div>`;
+}
+async function readSave(id) {
+  const r = readById(id);
+  if (!r) return;
+  const v = k => document.getElementById(k).value.trim();
+  const url = v('re-u');
+  if (!okUrl(url)) return toast('Это не похоже на ссылку');
+  await rdUpd(r, { title: v('re-t'), site: v('re-s'), published_on: v('re-p') || null, folder_id: fid(v('re-f')), url });
+  closeModal();
+  render();
+}
+async function readMeta(id) {
+  const r = readById(id);
+  if (!r) return;
+  toast('Смотрю на сайте…');
+  if (!(await fetchMeta(r).catch(() => false))) return toast('Не получилось: сайт не отдал данные или не установлена функция readmeta');
+  openReadEdit(id);
+  render();
+  toast('Готово');
+}
+// папка: название, удалить (статьи остаются, без папки)
+function openFolder(id) {
+  const f = id ? rfolder(id) : null;
+  $modal.dataset.kind = 'rfolder';
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet">
+    <h3>${f ? 'Папка' : 'Новая папка'}</h3>
+    <div class="field"><input class="inp" id="rf-name" placeholder="Название" value="${esc(f?.name || '')}"></div>
+    <div class="actions">
+      ${f ? `<button class="btn danger" data-act="rfolder-del" data-id="${f.id}">Удалить</button>` : '<span></span>'}
+      <div class="row"><button class="btn" data-act="close">Отмена</button><button class="btn main" data-act="rfolder-save" data-id="${f?.id || ''}">Сохранить</button></div>
+    </div></div></div>`;
+  document.getElementById('rf-name').focus();
+}
+async function folderSave(id) {
+  const name = document.getElementById('rf-name').value.trim();
+  if (!name) return toast('Напиши название');
+  if (id) { const f = rfolder(id); await call(sb.from('read_folders').update({ name }).eq('id', f.id)); f.name = name; }
+  else {
+    const [f] = await call(sb.from('read_folders').insert({ name, position: S.rfolders.length }).select());
+    S.rfolders.push(f);
+    S.rsel = f.id;
+  }
+  closeModal();
+  render();
+}
+async function folderDel(id) {
+  const f = rfolder(id), n = S.reads.filter(r => r.folder_id === f.id).length;
+  if (!confirm(`Удалить папку «${f.name}»?${n ? ` Статьи (${n}) останутся — без папки.` : ''}`)) return;
+  await call(sb.from('read_folders').delete().eq('id', f.id));
+  S.rfolders = S.rfolders.filter(x => x !== f);
+  S.reads.forEach(r => { if (r.folder_id === f.id) r.folder_id = null; });
+  if (String(S.rsel) === String(f.id)) S.rsel = '';
+  closeModal();
+  render();
+}
+// перетаскивание статьи в папку (компьютер)
+let rdDrag = null;
+document.addEventListener('dragstart', e => { const row = e.target.closest?.('[data-rdrag]'); if (row) { rdDrag = row.dataset.rdrag; e.dataTransfer.setData('text/plain', rdDrag); row.classList.add('dragging'); } });
+document.addEventListener('dragend', () => { rdDrag = null; document.querySelectorAll('[data-rdrag].dragging, [data-rdrop].drop-in').forEach(x => x.classList.remove('dragging', 'drop-in')); });
+document.addEventListener('dragover', e => {
+  const t = rdDrag && e.target.closest?.('[data-rdrop]');
+  if (!t) return;
+  e.preventDefault();
+  document.querySelectorAll('[data-rdrop].drop-in').forEach(x => x !== t && x.classList.remove('drop-in'));
+  t.classList.add('drop-in');
+});
+document.addEventListener('drop', e => {
+  const t = rdDrag && e.target.closest?.('[data-rdrop]');
+  if (!t) return;
+  e.preventDefault();
+  const id = rdDrag;
+  rdDrag = null;
+  readMove(id, fid(t.dataset.rdrop)).catch(() => { });
+});
+// ⚙ → «Чтение»
+function readSetHTML() {
+  if (!S.readOn) return '';
+  const c = readCfg();
+  const pill = (act, v, on, label) => `<button class="pill ${on ? 'on' : ''}" data-act="${act}" data-v="${v}">${label}</button>`;
+  const keys = S.rfolders.map(f => [String(f.id), esc(f.name)]).concat([['none', 'Без папки']]);
+  return `<h2>Чтение</h2>
+    <div class="limits"><label>Статей в день<span><input class="inp num" id="rd-n" type="number" min="0" max="20" value="${+c.n || 0}"></span></label></div>
+    <div class="hint">Какие</div>
+    <div class="flower-secs">${pill('rcfg-mode', 'old', c.mode !== 'rand', 'Самые старые')}${pill('rcfg-mode', 'rand', c.mode === 'rand', 'Случайные')}</div>
+    ${S.rfolders.length ? `<div class="hint">Из папок</div><div class="flower-secs">${keys.map(([k, n]) => pill('rcfg-f', k, !c.off.includes(k), n)).join('')}</div>` : ''}`;
+}
+async function saveReadCfg(patch, btn) {
+  const old = readCfg(), cfg = { ...old, ...patch };
+  S.user.user_metadata.reads = cfg;
+  const { error } = await sb.auth.updateUser({ data: { reads: cfg } });
+  if (error) { S.user.user_metadata.reads = old; return toast('Не получилось сохранить: ' + error.message); }
+  if (btn) {
+    if (patch.mode) btn.parentElement.querySelectorAll('[data-act=rcfg-mode]').forEach(b => b.classList.toggle('on', b.dataset.v === cfg.mode));
+    else btn.classList.toggle('on', !cfg.off.includes(btn.dataset.v));
+  }
+  await pickReads();
+  render();
+}
+document.addEventListener('change', ev => {
+  if (ev.target.id === 'rd-n') saveReadCfg({ n: Math.max(0, Math.min(20, Math.round(+ev.target.value) || 0)) }).catch(() => { });
+});
 
 // ---------- справка ----------
 const HELP = [
@@ -2259,7 +2435,7 @@ const HELP = [
   ['Повтор по циклу', 'Для графиков вроде «2 дня делать, 1 пропустить»: в окне задачи Повтор → «Цикл». Укажи, сколько дней делать, сколько пропускать и первый день цикла — ниже видны ближайшие дни. В дни пропуска задачи нет, и пропуском это не считается. Сбился график — поменяй первый день цикла.'],
   ['Цветок на подоконнике', 'Растёт от привычек: смотрит, сколько из отметок за последние 7 дней — «сделано». Почти всё (от 85%) — цветёт, больше половины (от 60%) — бутоны, меньше — вянет, совсем мало (меньше 35%) — засыхает, листья падают. Сегодня все привычки сделаны — прилетает бабочка. Наведи на цветок — увидишь «X из Y». Цветок можно передвинуть мышкой вдоль подоконника. В ⚙ → «Цветок» можно выбрать, привычки из каких разделов он считает. Виден, когда включён вид за окном и есть хоть одна такая привычка.'],
   ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных, вид за окном. <b>Размер задач по разделам</b> — все задачи раздела получат этот размер, если у задачи не выбран свой (например, «Проекты» — ✦ вдохновение). <b>Цветок</b> — привычки каких разделов он считает (светится — считается). <b>Питомцы</b> — кого показывать (светится — видно). <b>Режим раздела</b> (✎ у раздела) — задачи раздела переезжают вместе с ним.'],
-  ['Очередь чтения 📰', 'Статьи «прочитать потом», чтобы не держать их открытыми во вкладках. Каждый день на «Сегодня» (в личном режиме) — <b>одна</b> статья из очереди, та, что лежит дольше всех. Название — открыть статью. ✓ — прочитала (уходит в «Прочитанные», следующая придёт завтра), ↷ — потом (в конец очереди, вместо неё сразу следующая), 🗑 — не интересно (удалить). Пока ничего не нажато, статья остаётся статьёй дня и завтра.<br><br><b>Как положить статью в очередь:</b><br>• на телефоне — в браузере «Поделиться» → «Задачи». Если «Задач» в списке нет — удали приложение с телефона и установи заново (Chrome → ⋮ → «Установить приложение»);<br>• на компьютере — перетащи эту кнопку мышкой на панель закладок браузера: ' + `<a class="bm" href="javascript:void(window.open('${location.origin + location.pathname}?pop=1&url='+encodeURIComponent(location.href)+'&title='+encodeURIComponent(document.title),'tmread','width=420,height=300'))">📰 В очередь</a>` + '. Потом на странице статьи нажми её: появится окошко «В очереди» и само закроется — вкладку со статьёй можно закрывать;<br>• или вставить ссылку в окне 📰 (в заголовке): адрес и, если хочешь, название.<br><br>В окне 📰: ⤒ — читать сегодня (вместо статьи дня), 🗑 — удалить, во вкладке «Прочитанные» ↩ — вернуть в очередь.'],
+  ['Чтение 📰', 'Статьи «прочитать потом» — чтобы не держать их открытыми вкладками. Вкладка «Чтение» (в личном режиме).<br><br><b>Каждый день</b> программа выбирает несколько статей (сколько и какие — ⚙ → «Чтение»: самые старые или случайные, из каких папок). Пока на сегодня есть непрочитанные, на подоконнике лежит газета (на телефоне или без вида за окном — значок 📰 в заголовке). Нажми на неё — список статей на сегодня: название открывает статью, ✓ — прочитала, 🎲 «Другие» — выбрать другие статьи вместо непрочитанных. Всё прочитано — газета исчезает до завтра. Во вкладке «Чтение» те же статьи — вверху, в «Сегодня».<br><br><b>Добавить статью</b> — вставить ссылку в поле вверху вкладки и нажать «+» (или Enter). Название, сайт и дату статьи программа берёт со страницы сама; если не вышло — ✎ и вписать, или ↻ в окне статьи — попробовать ещё раз. Статья попадает в открытую папку. Ещё способы:<br>• на телефоне — в браузере «Поделиться» → «Задачи». Если «Задач» в списке нет — удали приложение с телефона и установи заново (Chrome → ⋮ → «Установить приложение»);<br>• на компьютере — перетащи эту кнопку мышкой на панель закладок браузера: ' + `<a class="bm" href="javascript:void(window.open('${location.origin + location.pathname}?pop=1&url='+encodeURIComponent(location.href)+'&title='+encodeURIComponent(document.title),'tmread','width=420,height=300'))">📰 В чтение</a>` + '. Потом на странице статьи нажми её: появится окошко «Добавлено» и само закроется — вкладку со статьёй можно закрывать.<br><br><b>Папки</b> — слева (на телефоне — строкой сверху): «+ Папка», ✎ у названия — переименовать или удалить (статьи останутся, без папки). Переложить статью — перетащить мышкой на папку или ✎ у статьи → «Папка».<br><br>У статьи видно: сайт, «от» — дата самой статьи, «добавлена» — когда положила в список. ✓ — прочитала (уходит в «✓ Прочитанные», там видно, когда прочитана; ↩ — вернуть в список). ✎ — название, сайт, дата, папка, ссылка, удалить.'],
   ['Устройства', 'Всё хранится в облаке. Входи с той же почтой на телефоне и компьютере. На телефоне: Chrome → ⋮ → «Установить приложение».'],
 ];
 
@@ -2299,6 +2475,7 @@ function openSettings() {
     <div class="limits">${Object.entries(LIMITS).map(([k, l]) => `<label>${l.name}<span>с <input class="inp num" id="lim-${k}" type="number" min="1" value="${lim(k)}"> дн.</span></label>`).join('')}</div>
     <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn main" data-act="limits-save">Сохранить</button></div>
     ${flowerSecsHTML()}
+    ${readSetHTML()}
     ${secSizesHTML()}
     ${slotsHTML()}
     <h2>Уведомления</h2>
@@ -4045,14 +4222,22 @@ document.addEventListener('click', async ev => {
       case 'help': openHelp(); break;
       case 'occ': openOcc(); break;
       case 'pay': await openPay(); break;
-      case 'reads': await openReads(); break;
       case 'read-add': await readAdd(); break;
       case 'read-ok': await readOk(id); break;
-      case 'read-later': await readLater(id); break;
-      case 'read-drop': case 'read-del': await readDel(id); break;
-      case 'read-now': await readNow(id); break;
+      case 'read-del': await readDel(id); break;
       case 'read-back': await readBack(id); break;
-      case 'read-tab': await readsTab(v); break;
+      case 'read-edit': openReadEdit(id); break;
+      case 'read-save': await readSave(id); break;
+      case 'read-meta': await readMeta(id); break;
+      case 'read-reroll': await rerollReads(); break;
+      case 'read-pile': readBubble(el); break;
+      case 'rsel': S.rsel = v; render(); break;
+      case 'rfolder-new': openFolder(null); break;
+      case 'rfolder-edit': openFolder(id); break;
+      case 'rfolder-save': await folderSave(id); break;
+      case 'rfolder-del': await folderDel(id); break;
+      case 'rcfg-mode': await saveReadCfg({ mode: v }, el); break;
+      case 'rcfg-f': { const off = readCfg().off; await saveReadCfg({ off: off.includes(v) ? off.filter(x => x !== v) : [...off, v] }, el); break; }
       case 'howto': ev.stopPropagation(); openHowto(id); break;
       case 'guide': openGuide(id); break;
       case 'hw-close': case 'hw-close-bg': closeHowto(); break;
@@ -4146,7 +4331,7 @@ document.addEventListener('click', async ev => {
       case 'tpl-from': tplFromTask(); break;
       case 't-fsub': S.tpl.from.subs[+v].on = !S.tpl.from.subs[+v].on; syncTemplate(); break;
       case 'decor': S.edit.decor = v || null; syncEdit(); break;
-      case 'view': S.view = v; S.pick = null; localSet('view', v); render(); scrollTo(0, 0); break;
+      case 'view': $bubble.hidden = true; S.view = v; S.pick = null; localSet('view', v); render(); scrollTo(0, 0); break;
       case 'done': el.classList.add('ok'); await complete(byId(id)); break;
       case 'undo': await undo(byId(id)); break;
       case 'sub': await toggleSub(byId(id), +v); break;
@@ -4261,7 +4446,8 @@ document.addEventListener('keydown', ev => {
   if (ev.key === 'Enter' && ev.target.id === 'pass') auth('login');
   if (ev.key === 'Enter' && ev.target.id === 'f-title') saveEdit();
   if (ev.key === 'Enter' && (ev.target.id === 'pay-w' || ev.target.id === 'pay-a')) savePay();
-  if (ev.key === 'Enter' && (ev.target.id === 'rd-u' || ev.target.id === 'rd-t')) readAdd().catch(() => { });
+  if (ev.key === 'Enter' && ev.target.id === 'rd-u') readAdd().catch(() => { });
+  if (ev.key === 'Enter' && ev.target.id === 'rf-name') folderSave($modal.querySelector('[data-act=rfolder-save]').dataset.id).catch(() => { });
   if (ev.key === 'Enter' && ev.target.id === 's-name') saveSection($modal.querySelector('[data-act=s-save]').dataset.id);
   if (ev.key === 'Escape') hideCtx();
   if (ev.key === 'Escape' && S.howto) return closeHowto();
