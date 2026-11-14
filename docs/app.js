@@ -216,7 +216,7 @@ function habitStats(t) {
 async function load() {
   const since = addDays(today(), -62);
   const monthFrom = S.month && S.month < since ? S.month : since;
-  const [tasks, sections, logs, templates, projects, times] = await Promise.all([
+  const [tasks, sections, logs, templates, projects, times, reads] = await Promise.all([
     call(sb.from('tasks').select('*').or(`done_on.is.null,done_on.gte.${monthFrom},project_id.not.is.null`).order('position').order('created_at')),
     call(sb.from('sections').select('*').order('position').order('created_at')),
     call(sb.from('task_log').select('*').gte('day', monthFrom).order('id')),
@@ -224,7 +224,11 @@ async function load() {
     call(sb.from('projects').select('*').order('created_at', { ascending: false })),
     // фактическое время (017_time.sql); пока таблицы нет — просто пусто, без ошибки
     sb.from('time_log').select('*').gte('day', addDays(today(), -400)).order('day').then(r => (r.error ? null : r.data)),
+    // очередь чтения (022_reads.sql): в очереди + прочитанные сегодня
+    sb.from('reads').select('*').or(`done_on.is.null,done_on.eq.${today()}`).order('queued_at').then(r => (r.error ? null : r.data)),
   ]);
+  S.reads = reads || [];
+  S.readOn = !!reads;
   S.tasks = tasks;
   S.sections = sections;
   S.logs = logs;
@@ -235,6 +239,8 @@ async function load() {
   S.timeOn = !!times;
   S.loaded = true;
   S.hLogs = null;
+  if (await takeShare()) return; // окошко кнопки-закладки: только положить статью в очередь
+  await pickRead().catch(() => { });
   if (await autoGenerate()) return load(); // закончился период — шаблоны создали задачи
   await ideaExpire().catch(() => { });
   render();
@@ -441,7 +447,7 @@ function renderToday() {
   const doneToday = S.showDone ? doneIds.map(id => S.tasks.find(t => t.id === id)).filter(Boolean) : [];
 
   let html = `<header class="top"><h1>Сегодня <span class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</span></h1><div class="tools">${MODE()}${GEARS.v}</div></header>`;
-  html += meterCard('top');
+  html += meterCard('top') + readCard();
   if (!due.length && !doneToday.length && !events.length && !inWork.length) {
     html += '<div class="empty">Задач на сегодня нет.<br>Нажми «+», чтобы добавить.</div>';
   }
@@ -1935,7 +1941,7 @@ async function deleteBulk() {
 }
 
 // ---------- настройки (шестерёнка) ----------
-const GEAR0 = '<button class="icon" data-act="pay" aria-label="Платежи">💳</button><button class="icon" data-act="occ" aria-label="Что случилось сегодня">☀</button><button class="icon" data-act="help" aria-label="Справка">?</button><button class="icon" data-act="settings" aria-label="Настройки">⚙</button>';
+const GEAR0 = '<button class="icon" data-act="reads" aria-label="Очередь чтения">📰</button><button class="icon" data-act="pay" aria-label="Платежи">💳</button><button class="icon" data-act="occ" aria-label="Что случилось сегодня">☀</button><button class="icon" data-act="help" aria-label="Справка">?</button><button class="icon" data-act="settings" aria-label="Настройки">⚙</button>';
 const GEARS = { get v() { return booksIcon() + GEAR0; } };
 
 // ---------- случаи (☀): то, что нельзя запланировать заранее ----------
@@ -2054,6 +2060,168 @@ async function payDelete() {
   renderPay(true);
 }
 
+// ---------- очередь чтения (📰): одна статья в день из «прочитать потом» (022_reads.sql) ----------
+// S.reads — в очереди + прочитанные сегодня (грузятся в load); прочитанные целиком — только в окне (S.rd.arch).
+const okUrl = u => /^https?:\/\//i.test(u || '');
+const shortUrl = u => { try { const x = new URL(u); const p = decodeURI(x.pathname).replace(/\/$/, ''); return x.hostname.replace(/^www\./, '') + (p.length > 40 ? p.slice(0, 40) + '…' : p); } catch { return u; } };
+const readTitle = r => r.title || shortUrl(r.url);
+const cleanTitle = s => String(s || '').replace(/\s*[\/|—–-]\s*Хабр\s*$/i, '').replace(/\s+/g, ' ').trim();
+const readOfDay = () => (S.reads || []).find(r => !r.done_on && r.shown_on === today());
+const sortReads = () => S.reads.sort((a, b) => String(a.queued_at).localeCompare(String(b.queued_at)));
+// Статья дня: уже выбрана на сегодня — она; сегодня уже прочитана — больше не выдаём; иначе самая давняя в очереди.
+async function pickRead() {
+  if (!S.readOn || readOfDay() || S.reads.some(r => r.done_on === today())) return;
+  const next = S.reads.find(r => !r.done_on);
+  if (!next) return;
+  next.shown_on = today();
+  await sb.from('reads').update({ shown_on: next.shown_on }).eq('id', next.id);
+}
+async function addRead(url, title) {
+  if (!S.readOn) return 'Сначала запусти в Supabase файл 022_reads.sql';
+  url = String(url || '').trim().replace(/[)\]>.,;]+$/, '');
+  if (!okUrl(url)) return 'Это не похоже на ссылку';
+  if (S.reads.some(r => !r.done_on && r.url === url)) return 'Уже в очереди';
+  const [x] = await call(sb.from('reads').insert({ url, title: cleanTitle(title) }).select());
+  S.reads.push(x);
+  sortReads();
+  await pickRead();
+  return '📰 В очереди: ' + readTitle(x);
+}
+// Пришла ссылка: «Поделиться» на телефоне (share_target в manifest) или кнопка-закладка на компьютере (?pop=1 — окошко само закроется).
+async function takeShare() {
+  if (S.shareDone) return false;
+  S.shareDone = true;
+  const p = new URLSearchParams(location.search);
+  if (!p.has('url') && !p.has('text')) return false;
+  const pop = p.has('pop');
+  history.replaceState(null, '', location.pathname);
+  const text = p.get('text') || '';
+  const url = ((p.get('url') || '') + ' ' + text).match(/https?:\/\/\S+/)?.[0];
+  const title = p.get('title') || (url ? text.replace(url, '') : text).trim();
+  const msg = url ? await addRead(url, title).catch(e => 'Ошибка: ' + e.message) : 'Не нашла ссылку';
+  if (pop) {
+    $app.innerHTML = `<div class="empty rd-pop">${esc(msg)}</div>`;
+    setTimeout(() => window.close(), 1500);
+    return true;
+  }
+  toast(msg);
+  return false;
+}
+// Статья дня на «Сегодня»
+function readCard() {
+  const r = S.space === 'personal' && readOfDay();
+  if (!r) return '';
+  return `<div class="read-day"><span class="rd-ico">📰</span>
+    <a class="rd-t" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(readTitle(r))}</a>
+    <button class="icon small" data-act="read-ok" data-id="${r.id}" aria-label="Прочитала">✓</button>
+    <button class="icon small" data-act="read-later" data-id="${r.id}" aria-label="Потом">↷</button>
+    <button class="icon small" data-act="read-drop" data-id="${r.id}" aria-label="Не интересно">🗑</button></div>`;
+}
+const readById = id => (S.reads || []).concat(S.rd?.arch || []).find(r => String(r.id) === String(id));
+const rdUpd = (r, upd) => { Object.assign(r, upd); return call(sb.from('reads').update(upd).eq('id', r.id)); };
+function readsRedraw() { if ($modal.dataset.kind === 'reads') renderReads(); render(); }
+async function readOk(id) {
+  const r = readById(id);
+  if (!r) return;
+  const old = { done_on: r.done_on, shown_on: r.shown_on };
+  await rdUpd(r, { done_on: today(), shown_on: r.shown_on || today() });
+  if (S.rd?.arch && !S.rd.arch.includes(r)) S.rd.arch.unshift(r);
+  readsRedraw();
+  toast('Прочитано', async () => { await rdUpd(r, old); if (S.rd?.arch) S.rd.arch = S.rd.arch.filter(x => x !== r); readsRedraw(); });
+}
+async function readLater(id) {
+  const r = readById(id);
+  if (!r) return;
+  const old = { queued_at: r.queued_at, shown_on: r.shown_on };
+  await rdUpd(r, { queued_at: new Date().toISOString(), shown_on: null });
+  sortReads();
+  await pickRead();
+  readsRedraw();
+  toast('В конец очереди', async () => {
+    const now = readOfDay();
+    if (now && now !== r) await rdUpd(now, { shown_on: null });
+    await rdUpd(r, old); sortReads(); readsRedraw();
+  });
+}
+async function readDel(id) {
+  const r = readById(id);
+  if (!r) return;
+  await call(sb.from('reads').delete().eq('id', r.id));
+  S.reads = S.reads.filter(x => x !== r);
+  if (S.rd?.arch) S.rd.arch = S.rd.arch.filter(x => x !== r);
+  readsRedraw();
+  toast('Удалено', async () => {
+    const [x] = await call(sb.from('reads').insert({ url: r.url, title: r.title, queued_at: r.queued_at, shown_on: r.shown_on, done_on: r.done_on }).select());
+    if (!x.done_on || x.done_on === today()) { S.reads.push(x); sortReads(); }
+    if (x.done_on && S.rd?.arch) S.rd.arch.unshift(x);
+    readsRedraw();
+  });
+}
+async function readNow(id) {
+  const r = readById(id), cur = readOfDay();
+  if (!r) return;
+  if (cur && cur !== r) await rdUpd(cur, { shown_on: null });
+  await rdUpd(r, { shown_on: today() });
+  readsRedraw();
+}
+async function readBack(id) {
+  const r = readById(id);
+  if (!r) return;
+  await rdUpd(r, { done_on: null, shown_on: null, queued_at: new Date().toISOString() });
+  S.rd.arch = S.rd.arch.filter(x => x !== r);
+  if (!S.reads.includes(r)) S.reads.push(r);
+  sortReads();
+  readsRedraw();
+}
+async function openReads() {
+  $modal.dataset.kind = 'reads';
+  S.rd = { tab: 'q', arch: null };
+  renderReads(true);
+}
+async function readsTab(tab) {
+  S.rd.tab = tab;
+  renderReads();
+  if (tab === 'a' && !S.rd.arch && S.readOn) {
+    const { data } = await sb.from('reads').select('*').not('done_on', 'is', null).order('done_on', { ascending: false }).limit(300);
+    S.rd.arch = data || [];
+    if ($modal.dataset.kind === 'reads') renderReads();
+  }
+}
+function renderReads(reset = false) {
+  const val = id => (reset ? null : document.getElementById(id)?.value);
+  const kept = { u: val('rd-u'), t: val('rd-t') };
+  const day = readOfDay();
+  const open = S.reads.filter(r => !r.done_on);
+  const row = r => `<div class="rd-row${r.done_on ? ' done' : ''}${r === day ? ' today' : ''}">
+      <a class="rd-t" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(readTitle(r))}</a>
+      <span class="rd-d">${r === day ? '📰 сегодня' : payDate(r.done_on || String(r.created_at).slice(0, 10))}</span>
+      ${r.done_on ? `<span></span><button class="icon small" data-act="read-back" data-id="${r.id}" aria-label="Вернуть в очередь">↩</button>`
+        : `${r === day ? '<span></span>' : `<button class="icon small" data-act="read-now" data-id="${r.id}" aria-label="Читать сегодня">⤒</button>`}<button class="icon small" data-act="read-del" data-id="${r.id}" aria-label="Удалить">🗑</button>`}</div>`;
+  const a = S.rd.tab === 'a';
+  const list = !S.readOn ? '<div class="empty small">⚠ Нет таблицы очереди: запусти в Supabase файл 022_reads.sql</div>'
+    : a ? (!S.rd.arch ? '<div class="empty small">Загружаю…</div>' : S.rd.arch.map(row).join('') || '<div class="empty small">Прочитанных пока нет</div>')
+    : (open.map(row).join('') || '<div class="empty small">Очередь пуста</div>');
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet pay rd">
+    <h3>Очередь чтения</h3>
+    <div class="rd-form">
+      <input class="inp" id="rd-u" inputmode="url" placeholder="Ссылка" value="${esc(kept.u ?? '')}">
+      <input class="inp" id="rd-t" placeholder="Название" value="${esc(kept.t ?? '')}">
+      <button class="btn main" data-act="read-add" aria-label="В очередь">+</button>
+    </div>
+    <div class="seg pay-tabs"><button class="pill ${a ? '' : 'on'}" data-act="read-tab" data-v="q">В очереди: ${open.length}</button>
+      <button class="pill ${a ? 'on' : ''}" data-act="read-tab" data-v="a">Прочитанные</button></div>
+    <div class="pay-list">${list}</div>
+    <div class="actions"><span></span><button class="btn" data-act="close">Закрыть</button></div>
+  </div></div>`;
+}
+async function readAdd() {
+  const u = document.getElementById('rd-u').value, t = document.getElementById('rd-t').value;
+  if (!u.trim()) return toast('Вставь ссылку');
+  const msg = await addRead(u, t);
+  toast(msg);
+  if (msg.startsWith('📰')) { S.rd.tab = 'q'; renderReads(true); render(); document.getElementById('rd-u')?.focus(); }
+}
+
 // ---------- справка ----------
 const HELP = [
   ['Сегодня', 'Всё, что нужно сделать сегодня: привычки, задачи (и просроченные), события. Кружок — отметить. Нажать на отметку ещё раз — отменить.'],
@@ -2091,6 +2259,7 @@ const HELP = [
   ['Повтор по циклу', 'Для графиков вроде «2 дня делать, 1 пропустить»: в окне задачи Повтор → «Цикл». Укажи, сколько дней делать, сколько пропускать и первый день цикла — ниже видны ближайшие дни. В дни пропуска задачи нет, и пропуском это не считается. Сбился график — поменяй первый день цикла.'],
   ['Цветок на подоконнике', 'Растёт от привычек: смотрит, сколько из отметок за последние 7 дней — «сделано». Почти всё (от 85%) — цветёт, больше половины (от 60%) — бутоны, меньше — вянет, совсем мало (меньше 35%) — засыхает, листья падают. Сегодня все привычки сделаны — прилетает бабочка. Наведи на цветок — увидишь «X из Y». Цветок можно передвинуть мышкой вдоль подоконника. В ⚙ → «Цветок» можно выбрать, привычки из каких разделов он считает. Виден, когда включён вид за окном и есть хоть одна такая привычка.'],
   ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных, вид за окном. <b>Размер задач по разделам</b> — все задачи раздела получат этот размер, если у задачи не выбран свой (например, «Проекты» — ✦ вдохновение). <b>Цветок</b> — привычки каких разделов он считает (светится — считается). <b>Питомцы</b> — кого показывать (светится — видно). <b>Режим раздела</b> (✎ у раздела) — задачи раздела переезжают вместе с ним.'],
+  ['Очередь чтения 📰', 'Статьи «прочитать потом», чтобы не держать их открытыми во вкладках. Каждый день на «Сегодня» (в личном режиме) — <b>одна</b> статья из очереди, та, что лежит дольше всех. Название — открыть статью. ✓ — прочитала (уходит в «Прочитанные», следующая придёт завтра), ↷ — потом (в конец очереди, вместо неё сразу следующая), 🗑 — не интересно (удалить). Пока ничего не нажато, статья остаётся статьёй дня и завтра.<br><br><b>Как положить статью в очередь:</b><br>• на телефоне — в браузере «Поделиться» → «Задачи». Если «Задач» в списке нет — удали приложение с телефона и установи заново (Chrome → ⋮ → «Установить приложение»);<br>• на компьютере — перетащи эту кнопку мышкой на панель закладок браузера: ' + `<a class="bm" href="javascript:void(window.open('${location.origin + location.pathname}?pop=1&url='+encodeURIComponent(location.href)+'&title='+encodeURIComponent(document.title),'tmread','width=420,height=300'))">📰 В очередь</a>` + '. Потом на странице статьи нажми её: появится окошко «В очереди» и само закроется — вкладку со статьёй можно закрывать;<br>• или вставить ссылку в окне 📰 (в заголовке): адрес и, если хочешь, название.<br><br>В окне 📰: ⤒ — читать сегодня (вместо статьи дня), 🗑 — удалить, во вкладке «Прочитанные» ↩ — вернуть в очередь.'],
   ['Устройства', 'Всё хранится в облаке. Входи с той же почтой на телефоне и компьютере. На телефоне: Chrome → ⋮ → «Установить приложение».'],
 ];
 
@@ -3876,6 +4045,14 @@ document.addEventListener('click', async ev => {
       case 'help': openHelp(); break;
       case 'occ': openOcc(); break;
       case 'pay': await openPay(); break;
+      case 'reads': await openReads(); break;
+      case 'read-add': await readAdd(); break;
+      case 'read-ok': await readOk(id); break;
+      case 'read-later': await readLater(id); break;
+      case 'read-drop': case 'read-del': await readDel(id); break;
+      case 'read-now': await readNow(id); break;
+      case 'read-back': await readBack(id); break;
+      case 'read-tab': await readsTab(v); break;
       case 'howto': ev.stopPropagation(); openHowto(id); break;
       case 'guide': openGuide(id); break;
       case 'hw-close': case 'hw-close-bg': closeHowto(); break;
@@ -4084,6 +4261,7 @@ document.addEventListener('keydown', ev => {
   if (ev.key === 'Enter' && ev.target.id === 'pass') auth('login');
   if (ev.key === 'Enter' && ev.target.id === 'f-title') saveEdit();
   if (ev.key === 'Enter' && (ev.target.id === 'pay-w' || ev.target.id === 'pay-a')) savePay();
+  if (ev.key === 'Enter' && (ev.target.id === 'rd-u' || ev.target.id === 'rd-t')) readAdd().catch(() => { });
   if (ev.key === 'Enter' && ev.target.id === 's-name') saveSection($modal.querySelector('[data-act=s-save]').dataset.id);
   if (ev.key === 'Escape') hideCtx();
   if (ev.key === 'Escape' && S.howto) return closeHowto();
