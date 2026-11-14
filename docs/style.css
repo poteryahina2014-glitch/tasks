@@ -828,7 +828,18 @@ textarea.t-howto { width: 100%; min-height: 110px; resize: vertical; font: inher
 #f-subs .subrow.arch .inp { color: var(--muted); }
 
 /* ---------- «Чтение» 📰 ---------- */
-.rd-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; margin: 4px 0 6px; }
+.rd-add { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center; margin: 4px 0 6px; }
+/* плитка */
+.rd-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.rd-tile { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.rd-tile.dragging { opacity: .4; }
+.rd-tile.done { opacity: .7; }
+.rd-img { position: relative; display: grid; place-items: center; aspect-ratio: 1.9 / 1; background: hsl(var(--h) 35% 32%); color: #fff9; font-size: 42px; font-weight: 700; text-decoration: none; }
+.rd-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.rd-tile .rd-t { padding: 8px 10px 4px; flex: 1 1 auto; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.rd-foot { display: grid; grid-template-columns: minmax(0, 1fr) 32px 32px; gap: 4px; align-items: end; padding: 0 6px 6px 10px; }
+.rd-foot .rd-meta { margin: 0 0 6px; }
+@media (max-width: 520px) { .rd-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } .rd-img { font-size: 30px; } .rd-tile .rd-t { font-size: 14px; } }
 .rd-add .btn.main { min-width: 44px; font-size: 18px; padding: 8px 0; }
 .rd-row { display: grid; grid-template-columns: minmax(0, 1fr) 32px 32px; gap: 6px; align-items: center; padding: 8px 10px; margin-bottom: 6px;
   background: var(--card); border: 1px solid var(--border); border-radius: 12px; }

@@ -40,7 +40,12 @@ function parse(html: string, url: string) {
   const published = toDay(meta(html, ['article:published_time', 'og:published_time', 'datepublished', 'date', 'pubdate', 'publish-date', 'dc.date', 'aiturec:datetime', 'parsely-pub-date', 'sailthru.date']))
     || toDay((html.match(/"datePublished"\s*:\s*"([^"]+)"/) || [])[1] || '')
     || toDay((html.match(/<time\b[^>]*\bdatetime\s*=\s*["']([^"']+)["']/i) || [])[1] || '');
-  return { title: title.slice(0, 300), site: site.slice(0, 100), published };
+  // картинка статьи (для вида «плиткой»): og:image, twitter:image, <link rel="image_src">; адрес — полный
+  let image = meta(html, ['og:image', 'og:image:url', 'og:image:secure_url', 'twitter:image', 'twitter:image:src', 'vk:image'])
+    || unent((html.match(/<link\b[^>]*rel\s*=\s*["']image_src["'][^>]*href\s*=\s*["']([^"']+)["']/i) || [])[1] || '');
+  try { image = image ? new URL(image, url).href : ''; } catch { image = ''; }
+  if (!/^https?:\/\//i.test(image)) image = '';
+  return { title: title.slice(0, 300), site: site.slice(0, 100), published, image: image.slice(0, 1000) };
 }
 // ---- конец разбора ----
 
