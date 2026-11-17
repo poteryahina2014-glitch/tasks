@@ -1549,7 +1549,7 @@ function petLate(t) {
   if (t.kind === 'habit') return tail.filter(l => l.status === 'missed' && !(+l.part >= .5)).length + (winEnd(t) < today() ? 1 : 0);
   if (t.due_date > today()) return 0;
   // с окном просрочка начинается после его последнего дня
-  const moved = tail.find(l => l.status === 'moved');
+  const moved = firstMoved(t);
   const w = Math.max(1, winRaw(t));
   const since = moved ? addDays(moved.day, w - 1) : winEnd(t);
   return since && since < today() ? daysBetween(since, today()) : 0;
@@ -2668,8 +2668,21 @@ const reviewDay = t => t.plan_date || t.due_date;
 const secWin = id => +(S.sections.find(s => s.id === id) || {}).default_window || 0;
 const winRaw = t => (isEvent(t) || t.kind === 'occasion' || t.plan_date || !t.due_date ? 0 : (t.window_days ?? secWin(t.section_id)) || 0);
 const logTail = t => { const l = S.logs.filter(x => x.task_id === t.id); let i = l.length; while (i > 0 && l[i - 1].status !== 'done') i--; return l.slice(i); };
+// Первый перенос утренней проверкой в непрерывной цепочке, которая привела к нынешнему сроку.
+// Перенос ставит срок на день, когда его сделали (created_at). Если срок потом меняли руками
+// (убрали и поставили снова), цепочка рвётся — старые переносы не считаются.
+const logDay = l => (l.created_at ? iso(new Date(l.created_at)) : null);
+function firstMoved(t) {
+  const mv = logTail(t).filter(l => l.status === 'moved');
+  let i = mv.length - 1;
+  if (i < 0) return null;
+  const last = logDay(mv[i]);
+  if (last && last !== t.due_date) return null;
+  while (i > 0) { const d = logDay(mv[i - 1]); if (d && d !== mv[i].day) break; i--; }
+  return mv[i];
+}
 // окно прошло и утренняя проверка перенесла задачу — дальше это обычная просрочка, нового окна нет
-const winDays = t => { const n = winRaw(t); return n > 1 && !(t.kind !== 'habit' && logTail(t).some(l => l.status === 'moved')) ? n : 0; };
+const winDays = t => { const n = winRaw(t); return n > 1 && !(t.kind !== 'habit' && firstMoved(t)) ? n : 0; };
 const winEnd = t => (winDays(t) ? addDays(reviewDay(t), winDays(t) - 1) : reviewDay(t));
 function reviewList() {
   if (S.space === 'work') return []; // в работе утренней проверки нет (её решение 12.11.2026): итоги дня разносит сама до 17:00
