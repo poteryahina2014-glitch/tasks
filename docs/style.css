@@ -157,6 +157,21 @@ textarea.inp { min-height: 64px; resize: vertical; }
 .review .rv-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; border-top: 1px solid var(--border); margin-top: 8px; }
 .review .rv-count { color: var(--muted); font-size: 14px; }
 .review .yn .btn.no-on { background: var(--bad); color: var(--bg); }
+/* Утреннее окно: блоки сворачиваются, высота постоянная */
+.sheet.review.morning { max-width: 760px; }
+.mo-block { border-bottom: 1px solid var(--border); padding: 4px 0 8px; }
+.mo-block:last-child { border-bottom: 0; }
+.mo-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; width: 100%; box-sizing: border-box; text-align: left; padding: 8px 8px 8px 2px; font-size: 16px; font-weight: 600; color: var(--text); }
+.mo-info { color: var(--muted); font-size: 13px; font-weight: 400; white-space: nowrap; }
+.mo-body h2 { font-size: 14px; margin: 10px 0 6px; }
+.yn.sz .btn { min-width: 38px; padding: 6px 8px; }
+.bd-row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 4px; }
+.bd-row b { font-weight: 500; }
+.bd-row span { color: var(--muted); white-space: nowrap; }
+/* заметка под задачей в списке */
+.tnote { margin-top: 6px; color: var(--muted); font-style: italic; font-size: 13px; line-height: 1.4; }
+.tnote p, .tnote ul, .tnote ol { margin: 0; }
+.tnote ul, .tnote ol { padding-left: 18px; }
 .review .task { flex-wrap: wrap; }
 .review .yn { display: flex; gap: 8px; }
 .review .yn .btn { padding: 8px 12px; }
@@ -358,7 +373,8 @@ body.work .pill.mode { border-color: var(--accent); }
 .sub-box.on { border-color: var(--good); }
 
 /* Задача залита бледным цветом своего раздела */
-.task.tinted { background: color-mix(in srgb, var(--sec) 16%, var(--card)); border-color: color-mix(in srgb, var(--sec) 40%, var(--border)); }
+/* раздел — тонкая полоска слева (её выбор 18.11.2026; запасной вариант — цветом только кружок-отметка) */
+.task.tinted { box-shadow: inset 4px 0 0 var(--sec); }
 .task.tinted.picked { border-color: var(--accent); background: var(--sel); }
 
 /* Быстрое меню по правой кнопке */
@@ -603,11 +619,11 @@ body.bg h2, body.bg header h1, body.bg .empty { text-shadow: 0 1px 3px #000, 0 0
 .az + .edit-sec { margin-left: 0; }
 
 /* окно предложений на день */
-.offer .rv-list h2 { font-size: 15px; margin: 14px 0 0; }
+.morning .mo-body h2, .offer .rv-list h2 { font-size: 15px; margin: 14px 0 0; }
 .offer .rv-list h2:first-child { margin-top: 4px; }
 .offer .rv-list .hint { margin: 2px 0 6px; }
-.offer .yn .btn { padding: 6px 10px; font-size: 13px; }
-.offer .yn .btn.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.morning .yn .btn, .offer .yn .btn { padding: 6px 10px; font-size: 13px; }
+.morning .yn .btn.on, .offer .yn .btn.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
 .offer .rv-foot .hint { flex: 1; margin: 0; }
 /* окно предложений скрыто — кнопка вернуться к нему, внизу по центру */
 #offer-chip { position: fixed; left: 50%; translate: -50% 0; bottom: calc(86px + env(safe-area-inset-bottom)); z-index: 3;
@@ -621,8 +637,8 @@ body.bg .slot-head { text-shadow: 0 1px 3px #000, 0 0 10px #000a; }
 .offer .limits select { max-width: 170px; }
 .limits select.inp { width: auto; }
 @media (max-width: 600px) {
-  .offer .task .body { flex-basis: 100%; }
-  .offer .yn { width: 100%; justify-content: flex-end; }
+  .morning .task .body, .offer .task .body { flex-basis: 100%; }
+  .morning .yn, .offer .yn { width: 100%; justify-content: flex-end; }
   .offer .rv-foot .hint { font-size: 11px; }
 }
 
@@ -872,3 +888,23 @@ textarea.t-howto { width: 100%; min-height: 110px; resize: vertical; font: inher
 
 /* на телефоне в заголовке 7 значков (📰 добавился 14.11.2026) — плотнее, чтобы «Сегодня» помещалось */
 @media (max-width: 520px) { header .tools { gap: 0; } header .tools .icon { width: 34px; height: 36px; font-size: 18px; } }
+
+/* Архив сделанного */
+.arch-body { flex: 1; overflow-y: auto; min-height: 0; margin-top: 10px; }
+.arch-nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.arch-nums div { background: var(--card); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; }
+.arch-nums b { font-size: 22px; font-weight: 600; }
+.arch-nums span { color: var(--muted); font-size: 12px; }
+.arch-bars { display: grid; grid-template-columns: repeat(var(--n), 1fr); gap: 3px; height: 140px; align-items: end; margin-bottom: 8px; }
+.arch-bars .ab { height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; }
+.arch-bars .ab i { width: 100%; max-width: 34px; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 2px; }
+.arch-bars .ab span { font-size: 11px; color: var(--muted); height: 14px; }
+.arch-top .at { display: grid; grid-template-columns: minmax(0, 1.4fr) 1fr 32px; gap: 8px; align-items: center; padding: 3px 0; font-size: 14px; }
+.arch-top .at span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arch-top .at i { height: 10px; background: var(--habit); border-radius: 5px; }
+.arch-top .at b { text-align: right; font-weight: 500; }
+.arch-day { margin-bottom: 10px; }
+.arch-day .ad-h { display: flex; justify-content: space-between; font-weight: 600; font-size: 14px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.arch-day .ad-h span { color: var(--muted); font-weight: 400; }
+.arch-day .ad-t { font-size: 14px; padding: 3px 0 3px 4px; }
+.arch-day .ad-t span { color: var(--muted); font-size: 12px; margin-left: 8px; }

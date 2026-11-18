@@ -246,9 +246,10 @@ async function load() {
   await pickReads().catch(() => { });
   if (await autoGenerate()) return load(); // закончился период — шаблоны создали задачи
   await ideaExpire().catch(() => { });
+  // дни рождения: задачи «Поздравить» и «Подарок» — раз в день
+  if (S.bdayDay !== today()) { S.bdayDay = today(); if (await bdayGen().catch(() => false)) return load(); }
   render();
   renderReview();
-  if (S.offer && ($modal.dataset.kind === 'offer' || S.offer.hidden)) renderOffer(); // окно предложений открыто — обновить список
   readImages().catch(() => { });
   firstHelp();
   maybeOffer();
@@ -361,7 +362,8 @@ function taskRow(t, opts = {}) {
   if (size) tags.push(`<span title="${SIZES[size].name}${slotName ? ', ' + slotName : ''}">${SIZES[size].icon}${slotName ? ' ' + slotName : ''}</span>`);
   if (isEvent(t) && !opts.mark) opts = { ...opts, mark: '•', markStyle: 'border-color:var(--accent);color:var(--accent)' };
   if (sec && !opts.noSection) tags.push(`<span>${esc(sec.name)}</span>`);
-  const rep = repeatLabel(t);
+  if (t.bday && t.gift_days) tags.push(`<span>🎁 за ${t.gift_days / 7} нед.</span>`);
+  const rep = t.bday ? '' : repeatLabel(t);
   if (rep) tags.push(`<span>↻ ${esc(rep)}</span>`);
   const subs = subsOf(t);
   if (t.remind_at || t.remind_days) tags.push(`<span>🔔 ${[hhmm(t.remind_at), t.remind_days ? 'за ' + t.remind_days + ' дн.' : ''].filter(Boolean).join(', ')}</span>`);
@@ -403,6 +405,7 @@ function taskRow(t, opts = {}) {
       <div class="title">${esc(t.title)}</div>
       ${meta.length ? `<div class="meta">${meta.join('')}</div>` : ''}
       ${subList}
+      ${t.notes && !opts.mark && !opts.done ? `<div class="tnote">${richText(t.notes)}</div>` : ''}
     </div>
     ${tags.length ? `<div class="tags" data-act="${act}" data-id="${t.id}">${tags.join('')}</div>` : ''}
     ${dusty ? WEB : ''}
@@ -423,7 +426,9 @@ function renderToday() {
   const ORDER = { lunch: 1, after: 2, eve: 3 };
   const ideaEve = t => personal && sizeOf(t) === 'idea'; // вдохновение в выходные — «вечером»
   const rank = t => (fit.inSlot[t.id] ? ORDER[fit.inSlot[t.id]] : sizeOf(t) === 'quick' ? 0 : ideaEve(t) ? 3 : 4);
-  const sorted = due.map((t, i) => [t, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([t]) => t);
+  // внутри части дня — по разделам (в порядке разделов), без раздела — в конце
+  const secIx = t => { const i = S.sections.findIndex(s => s.id === t.section_id); return i < 0 ? 1e6 : i; };
+  const sorted = due.map((t, i) => [t, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || secIx(a[0]) - secIx(b[0]) || a[1] - b[1]).map(([t]) => t);
   const GROUPS = [[0, null, slotted ? '☀ Утро' : '⚡ пятиминутки'], [1, 'lunch'], [2, 'after'], [3, 'eve', '🌙 вечером'], [4, null, 'остальное']];
   const used = GROUPS.filter(([r, k]) => sorted.some(t => rank(t) === r) || (slotted && fit.slots[k]));
   let groups = '';
@@ -631,7 +636,9 @@ function renderSections() {
     const all = sectionTasks(id);
     // задачи проектов — отдельными блоками с прогрессом вверху раздела
     const projs = S.noDate || S.sizes.length ? [] : S.projects.filter(p => !p.archived && ((p.section_id || null) === id || all.some(t => t.project_id === p.id)));
-    const list = all.filter(t => !projs.some(p => p.id === t.project_id));
+    const list0 = all.filter(t => !projs.some(p => p.id === t.project_id));
+    // дни рождения — от ближайшего
+    const list = list0.filter(t => !t.bday).concat(list0.filter(t => t.bday).sort((a, b) => (upcoming(a) < upcoming(b) ? -1 : 1)));
     const paused = pausedSec(id);
     if (sel === null && !all.length && !projs.length && (id === null || S.noDate || S.sizes.length)) continue;
     const head = `<h2 class="group ${paused ? 'paused' : ''}" data-drop-sec="${id || ''}">${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}${esc(name || '')}
@@ -1947,6 +1954,71 @@ async function deleteBulk() {
   await load();
 }
 
+// ---------- архив сделанного и графики (её просьба 18.11.2026) ----------
+// Отметки «сделано» за год грузятся при открытии; названия давно сделанных задач догружаются по id.
+async function openArchive() {
+  $modal.dataset.kind = 'archive';
+  S.arch = S.arch || { range: +(localGet('arange') || 30) };
+  $modal.innerHTML = '<div class="overlay" data-act="close-bg"><div class="sheet fixed arch"><h3>Архив</h3><div class="empty">Загружаю…</div></div></div>';
+  // за год отметок больше 1000 (лимит одного запроса) — грузим частями
+  const logs = [];
+  for (let i = 0; ; i += 1000) {
+    const part = await call(sb.from('task_log').select('id,task_id,done_on,day,status').eq('status', 'done').gte('done_on', addDays(today(), -365)).order('id').range(i, i + 999));
+    logs.push(...part);
+    if (part.length < 1000) break;
+  }
+  logs.sort((a, b) => (a.done_on < b.done_on ? 1 : -1));
+  const known = new Map(S.tasks.map(t => [t.id, t]));
+  const missing = [...new Set(logs.map(l => l.task_id))].filter(id => !known.has(id));
+  for (let i = 0; i < missing.length; i += 100) {
+    const part = await call(sb.from('tasks').select('id,title,section_id,space,kind,repeat_unit').in('id', missing.slice(i, i + 100)));
+    part.forEach(t => known.set(t.id, t));
+  }
+  S.arch.logs = logs.filter(l => known.has(l.task_id) && spaceOf(known.get(l.task_id)) === S.space).map(l => ({ ...l, t: known.get(l.task_id) }));
+  if ($modal.dataset.kind === 'archive') renderArchive();
+}
+
+function renderArchive() {
+  const a = S.arch, n = a.range, t0 = today(), from = addDays(t0, -(n - 1));
+  const logs = a.logs.filter(l => l.done_on >= from);
+  // столбики: по дням (неделя, месяц) или по месяцам (год)
+  const bars = [];
+  if (n <= 31) for (let i = n - 1; i >= 0; i--) {
+    const d = addDays(t0, -i);
+    bars.push({ v: logs.filter(l => l.done_on === d).length, label: n === 7 ? DAYS[parse(d).getDay()].slice(0, 2) : String(parse(d).getDate()), title: dateLabel(d) });
+  } else for (let i = 11; i >= 0; i--) {
+    const x = parse(t0); x.setDate(1); x.setMonth(x.getMonth() - i);
+    const m = iso(x).slice(0, 7);
+    bars.push({ v: logs.filter(l => l.done_on.startsWith(m)).length, label: MONTHS[x.getMonth()].slice(0, 3), title: MONTHS[x.getMonth()] + ' ' + x.getFullYear() });
+  }
+  const max = Math.max(1, ...bars.map(b => b.v));
+  const days = new Set(logs.map(l => l.done_on)).size;
+  const best = bars.reduce((b, x) => (x.v > b.v ? x : b), { v: 0 });
+  // чаще всего — повторяющиеся задачи и привычки
+  const freq = {};
+  for (const l of logs) if (l.t.repeat_unit) freq[l.task_id] = (freq[l.task_id] || 0) + 1;
+  const top = Object.entries(freq).sort((x, y) => y[1] - x[1]).slice(0, 10);
+  const topMax = top.length ? top[0][1] : 1;
+  // список по дням
+  const byDay = {};
+  for (const l of logs) (byDay[l.done_on] = byDay[l.done_on] || []).push(l.t);
+  const sec = t => sectionOf(t);
+  $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet fixed arch">
+    <h3>Архив</h3>
+    <div class="seg">${[[7, 'Неделя'], [30, 'Месяц'], [365, 'Год']].map(([v, l]) => `<button class="pill ${n === v ? 'on' : ''}" data-act="arch-range" data-v="${v}">${l}</button>`).join('')}</div>
+    <div class="arch-body">
+    <div class="arch-nums"><div><b>${logs.length}</b><span>сделано</span></div><div><b>${num1(logs.length / n)}</b><span>в среднем в день</span></div>
+      <div><b>${best.v}</b><span>лучший ${n <= 31 ? 'день' : 'месяц'}${best.v ? ': ' + best.title : ''}</span></div><div><b>${days}</b><span>дней с делами</span></div></div>
+    <div class="arch-bars" style="--n:${bars.length}">${bars.map(b => `<div class="ab" title="${b.title}: ${b.v}"><i style="height:${Math.round(b.v / max * 100)}%"></i><span>${bars.length > 15 && b.label.length < 3 && +b.label % 5 && b.label !== '1' ? '' : b.label}</span></div>`).join('')}</div>
+    ${top.length ? `<h2>Чаще всего</h2><div class="arch-top">${top.map(([id, c]) => { const t = a.logs.find(l => l.task_id === id).t; return `<div class="at"><span>${esc(t.title)}</span><i style="width:${Math.round(c / topMax * 100)}%"></i><b>${c}</b></div>`; }).join('')}</div>` : ''}
+    <h2>По дням</h2>
+    ${Object.keys(byDay).sort().reverse().map(d => `<div class="arch-day"><div class="ad-h">${cap(dateLabel(d))}<span>${byDay[d].length}</span></div>
+      ${byDay[d].map(t => `<div class="ad-t">✓ ${esc(t.title)}${sec(t) ? `<span>${esc(sec(t).name)}</span>` : ''}</div>`).join('')}</div>`).join('') || '<div class="empty small">Пока пусто</div>'}
+    </div>
+    <div class="actions"><span></span><button class="btn main" data-act="close">Закрыть</button></div>
+  </div></div>`;
+}
+
 // ---------- настройки (шестерёнка) ----------
 const GEAR0 = '<button class="icon" data-act="pay" aria-label="Платежи">💳</button><button class="icon" data-act="occ" aria-label="Что случилось сегодня">☀</button><button class="icon" data-act="help" aria-label="Справка">?</button><button class="icon" data-act="settings" aria-label="Настройки">⚙</button>';
 const GEARS = { get v() { return booksIcon() + readIcon() + GEAR0; } };
@@ -2458,15 +2530,16 @@ document.addEventListener('change', ev => {
 
 // ---------- справка ----------
 const HELP = [
-  ['Сегодня', 'Всё, что нужно сделать сегодня: привычки, задачи (и просроченные), события. Кружок — отметить. Нажать на отметку ещё раз — отменить.'],
+  ['Сегодня', 'Всё, что нужно сделать сегодня: привычки, задачи (и просроченные), события. Кружок — отметить. Нажать на отметку ещё раз — отменить. Внутри каждой части дня задачи идут по разделам; цветная полоска слева — цвет раздела.'],
   ['Новая задача', '«+» внизу. Вид: <b>задача</b>, <b>привычка</b> (вода, зарядка) или <b>событие</b> (встреча, его не отмечают). Можно указать срок, время, повтор, напоминание и раздел.'],
   ['Повтор', 'Каждый день / неделю / месяц / N дней или по дням недели. «От выполнения»: следующий срок считается от дня, когда сделали, а не от старого срока.'],
-  ['Утренняя проверка', 'Утром спросит, что сделано из вчерашнего: ✓ — сделано, ✕ — не сделано, в конце «Подтвердить». Несделанная задача переедет на сегодня. У привычки засчитается пропуск. У привычки с подпунктами каждый подпункт отмечается отдельно: сделано 2 из 4 — день засчитается наполовину (в статистике и цветке по доле; серию такой день прерывает, питомцы не грустят, если сделано хотя бы половина).'],
+  ['Утреннее окно', 'При первом открытии за день — одно окно из нескольких блоков (каждый сворачивается щелчком по заголовку): что получилось сделать вчера, что можно сделать сегодня, задачи без размера и дни рождения на ближайший месяц. Всё сохраняется одной кнопкой «Сохранить». Пока не отмечено всё из вчерашнего, окно не закрывается; если вопросов про вчера нет, окно можно «Скрыть» — внизу останется кнопка, чтобы вернуться. <b>Задачи без размера</b>: выбери каждой ⚡ ◐ ● ✦ (повторное нажатие снимает); не выбранные останутся без размера и появятся завтра снова.'],
+  ['Утренняя проверка', 'Утром спросит, что сделано из вчерашнего: ✓ — сделано, ✕ — не сделано. Несделанная задача переедет на сегодня. У привычки засчитается пропуск. У привычки с подпунктами каждый подпункт отмечается отдельно: сделано 2 из 4 — день засчитается наполовину (в статистике и цветке по доле; серию такой день прерывает, питомцы не грустят, если сделано хотя бы половина).'],
   ['Привычки', 'Вкладка со статистикой: сколько дней из 30 / 3 месяцев / года получилось, серия подряд, лучшая серия, пропуски и квадратики по дням.'],
   ['Календарь', 'Месяц или неделя, фильтры по разделам. Нажми на день: там расписание и свободное время между делами.'],
   ['Разделы', 'Папки для задач. ✎ у раздела: название, цвет, «выключить» на время (задачи прячутся, но не удаляются). «Без срока» вверху — показать только задачи без даты. ☐ («Выбрать») — изменить или удалить сразу несколько задач (☑ — выбрать все). На компьютере задачи можно перетаскивать мышкой.'],
   ['А→Я', 'Кнопка у заголовка раздела в «Разделах»: расставляет его задачи по алфавиту. Потом их можно двигать мышкой, а нажать А→Я снова — когда захочется. Новая задача встаёт в конец.'],
-  ['Размер и предложения на день', 'В окне задачи — «Размер»: ⚡ пятиминутка, ◐ средняя, ● на весь день, ✦ вдохновение. В ⚙ можно задать размер сразу всем задачам раздела (например, «Проекты» — вдохновение). Каждое утро после проверки (в личном режиме) открывается окно со всеми задачами <b>без срока</b>, которые можно взять сегодня: все пятиминутки; средние — если есть свободное окошко (обед, после работы или после ужина, время — в ⚙; окошко занимают задачи, стоящие в нём на сегодня, и события в это время), в выходные — всегда; большие — в субботу и воскресенье, если на этот день ещё нет большой; вдохновение — если на сегодня ещё не взято ни вдохновение, ни большая задача. Если вечер так и остался свободным, с 16 до 19 вдохновение предлагается ещё раз. Оба окна — по одному разу в день на весь аккаунт: показалось на телефоне — на компьютере уже не появится. У задач по вдохновению нет просрочки: не сделано в свой день — задача снова без срока. «Сегодня» — ставит срок на сегодня, «Не сегодня» — предложу завтра, «Потом» — через 4 дня; то, что не выбрано, предложу завтра. Пятиминутку можно сделать в любой свободный момент, вдохновение — на вечер, если есть настроение.'],
+  ['Размер и предложения на день', 'В окне задачи — «Размер»: ⚡ пятиминутка, ◐ средняя, ● на весь день, ✦ вдохновение. В ⚙ можно задать размер сразу всем задачам раздела (например, «Проекты» — вдохновение). Каждое утро после проверки (в личном режиме) открывается окно со всеми задачами <b>без срока</b>, которые можно взять сегодня: все пятиминутки; средние — если есть свободное окошко (обед, после работы или после ужина, время — в ⚙; окошко занимают задачи, стоящие в нём на сегодня, и события в это время), в выходные — всегда; большие — в субботу и воскресенье, если на этот день ещё нет большой; вдохновение — если на сегодня ещё не взято ни вдохновение, ни большая задача. Если вечер так и остался свободным, с 16 до 19 вдохновение предлагается ещё раз. Оба окна — по одному разу в день на весь аккаунт: показалось на телефоне — на компьютере уже не появится. У задач по вдохновению нет просрочки: не сделано в свой день — задача снова без срока. «Сегодня» — ставит срок на сегодня, «Потом» — предложу через 4 дня; то, что не выбрано, предложу завтра. Пятиминутку можно сделать в любой свободный момент, вдохновение — на вечер, если есть настроение.'],
   ['Быстрое меню', 'Долгое нажатие на задачу (на компьютере — правая кнопка): на сегодня, на завтра, в другой раздел.'],
   ['🏠 / 💼', 'Личное и работа отдельно, переключатель вверху. В работе есть «Шаблоны»: повторяющиеся проекты из шагов (например, квартальная отчётность), создаются сами.'],
   ['Шаблоны (работа)', '«⟳ Шаблоны» в колонке разделов. Шаблон сам создаёт проект с задачами, когда заканчивается месяц, квартал или год, — в разделе шаблона. <b>Какие месяцы</b>: «Только некоторые» — задачи создадутся только за отмеченные месяцы (например, оценка урожая — июль–октябрь). <b>Создавать заранее</b> за N рабочих дней до конца периода; 0 — на следующий день после конца. <b>Шаги</b>: «с» и «до» — числа месяца, «мес.» — какой по счёту месяц после конца периода (1 — следующий), «часов» — оценка (если по факту уже записано время, новые задачи получат среднее по факту). У шага могут быть подзадачи — без своих сроков; «после шагов» — номера шагов, которые надо сделать раньше. <b>Создать задачи сейчас</b> — за выбранный период, не дожидаясь конца. <b>Копия</b> — например, сделать годовую отчётность из квартальной.'],
@@ -2474,7 +2547,10 @@ const HELP = [
   ['Подпункты', 'В окне задачи «+ Подпункт»: письма, проверки и т.п. Отмечаются прямо под задачей. В шаблоне у шага — «+ подзадача».'],
   ['Потраченное время (работа)', 'В окне рабочей задачи — «Потрачено по факту»: напиши часы (1,5 или 1:30), выбери день и нажми «+ Записать». Можно записывать несколько раз — итог складывается. В строке задачи ⏱ факт / оценка (красным — если вышло больше оценки). На «Плане» у дня — «по факту». Вкладка <b>«Время»</b> (на компьютере): сколько ушло по дням, по дням недели, по задачам и сколько обычно занимают шаги шаблонов.'],
   ['Шаблон из задачи', 'В окне рабочей задачи — «⟳ Сделать шаблон из этой задачи». Выбери, за какой период эта задача (например, октябрь 2026), и какие подпункты взять. Сама задача станет первой (за этот период), следующие шаблон создаст сам — «… — ноябрь 2026». Оценка часов у новых задач — среднее фактическое время за прошлые периоды. В окне шаблона — таблица «Время по периодам».'],
-  ['«Сегодня» по частям дня', 'В будни (личный режим) дела на сегодня идут по частям дня: ☀ утро — пятиминутки; 🍽 обед, 🌆 после работы, 🌙 после ужина — окошки (время — в ⚙); остальное — то, что не попало в окошки. Окошки видны всегда, пустые ячейки по 30 минут — свободное место. В окошке сами стоят только задачи со своим «Когда» (в окне задачи, у средних и вдохновения) и вдохновение без «Когда» — после ужина; остальные задачи ты расставляешь сама: на компьютере перетаскиваешь в окошко, между окошками или обратно (в утро или остальное), на телефоне — долгое нажатие → «В окошко». Это только на сегодня, «Когда» не меняется. Место в окошке занимают средние и прочие задачи (30 минут или своё время ⏱) и события в это время; пятиминутки и вдохновение показываются в окошке, но места не занимают. Если задач больше, чем ячеек, ничего не переносится — свободных ячеек просто не остаётся. В выходные окошек нет.'],
+  ['«Сегодня» по частям дня', 'В будни (личный режим) дела на сегодня идут по частям дня: ☀ утро — пятиминутки; 🍽 обед, 🌆 после работы, 🌙 после ужина — окошки (время — в ⚙); остальное — то, что не попало в окошки. Окошки видны всегда, пустые ячейки по 30 минут — свободное место. В окошке сами стоят только задачи со своим «Когда» (в окне задачи, у средних и вдохновения) и вдохновение без «Когда» — после ужина; остальные задачи ты расставляешь сама: на компьютере перетаскиваешь в окошко, между окошками или обратно (в утро или остальное), на телефоне — долгое нажатие → «В окошко». Это только на сегодня, «Когда» не меняется. Место в окошке занимают средние и прочие задачи (30 минут или своё время ⏱) и события в это время; пятиминутки и вдохновение показываются в окошке, но места не занимают. Если задач больше, чем ячеек, ничего не переносится — свободных ячеек просто не остаётся. Сделанная задача своё место не освобождает: ячейка просто исчезает. В выходные окошек нет.'],
+  ['Заметка под задачей', 'Заметка из окна задачи видна в списке прямо под задачей (и под подпунктами) — серым курсивом. Ссылки в ней нажимаются.'],
+  ['📦 Архив и графики', '⚙ → «Архив сделанного и графики». За неделю, месяц или год: сколько сделано, в среднем в день, лучший день (за год — месяц), столбики по дням (за год — по месяцам), какие повторяющиеся задачи и привычки делались чаще всего, и список сделанного по дням. Считается только текущий режим (личный или работа).'],
+  ['🎂 Дни рождения', 'День рождения — это событие с отметкой «День рождения» (в окне события, вкладка «Главное»): там же выбирается подарок — 🎁 за 1–4 недели или без подарка. За 2 месяца до дня рождения сами появляются задачи: «Поздравить: …» — в сам день, с напоминанием в 9:00, и, если нужен подарок, «Подарок: …» — за выбранное число недель, с напоминанием в 10:00. Удалять их не надо — отметь сделанными (удалённая появится снова). В разделе дни рождения идут от ближайшего; в утреннем окне — блок «Дни рождения в ближайший месяц».<br><br><b>Загрузить из Google</b>: ⚙ → «Загрузить дни рождения из файла». Подходит файл контактов (contacts.google.com → Экспорт → Google CSV) или календаря (.ics: Google Календарь → Настройки → Импорт и экспорт → Экспорт, архив распаковать). Появится раздел «Дни рождения»; кто уже есть (по имени), не добавится второй раз. Без года рождения дата тоже подходит. Подарок потом выбираешь каждому в его окне.'],
   ['Платежи 💳', 'Кнопка 💳 в заголовке — записи о платежах, по которым потом не вспомнить, за что платила (маркетплейсы, наложенный платёж и т. п.). Запись — дата (по умолчанию сегодня), сумма и за что; Enter — записать. Когда разнесла платёж в таблицу расходов, нажми ✓ — запись уходит во «Внесённые» (там ↩ возвращает обратно). Щелчок по записи — исправить или удалить её. Вверху — сколько ещё не внесено и на какую сумму. Во «Внесённых» видно последние 3 месяца.'],
   ['Подпункты у вдохновения', 'У задачи с размером ✦ вдохновение отмеченный подпункт не зачёркивается, а уходит в архив — можно отмечать прямо в «Разделах», даже если задача не на сегодня. Посмотреть сделанное — в окне задачи «▸ Архив · N» под подпунктами (там же можно снять галочку — подпункт вернётся). Сразу после отметки во всплывающей подсказке есть «Отменить».'],
   ['Подпункт ↔ задача', 'В окне сохранённой задачи ⤴ у подпункта — сделать его отдельной задачей (сразу, с тем же разделом, проектом, сроком и планом). Наоборот: правая кнопка мыши (на телефоне — долгое нажатие) по задаче → «⤵ Подпунктом к задаче…» → выбираешь задачу (можно найти по названию). Название задачи и её подпункты станут подпунктами выбранной, заметка допишется к её заметке, а сама задача удалится. Если у задачи есть повтор или история отметок, сначала спрошу. Задачу, у которой есть «Следом», так перенести нельзя.'],
@@ -2520,10 +2596,12 @@ function openSettings() {
   $modal.innerHTML = `<div class="overlay" data-act="close-bg"><div class="sheet fixed">
     <h3>Настройки</h3>
     <div class="menu">
+      <button class="btn" data-act="archive">📦 Архив сделанного и графики</button>
       <button class="btn ${S.showDone ? 'on' : ''}" data-act="show-done">${S.showDone ? '✓ ' : ''}Показывать выполненные</button>
       <button class="btn ${S.bg ? 'on' : ''}" data-act="bg-toggle">${S.bg ? '✓ ' : ''}Вид за окном на фоне</button>
       <button class="btn" data-act="set-name">Имя для приветствия: ${userName() ? esc(userName()) : 'не задано'}</button>
       <button class="btn" data-act="import">Загрузить задачи из файла</button>
+      <button class="btn" data-act="bday-import">Загрузить дни рождения из файла</button>
       <button class="btn" data-act="logout">Выйти из аккаунта</button>
     </div>
     <h2>Питомцы и картинки</h2>
@@ -2690,19 +2768,72 @@ function reviewList() {
   return active().filter(t => !isEvent(t) && reviewDay(t) && winEnd(t) < t0).sort((a, b) => reviewDay(a) < reviewDay(b) ? -1 : 1);
 }
 
+// Утреннее окно (её решение 18.11.2026): одно окно с блоками — что получилось сделать, предложения на сегодня,
+// задачи без размера, дни рождения. Блоки сворачиваются (запоминается на устройстве — tm.mo);
+// всё пишется в базу одной кнопкой «Сохранить». Пока не отмечено всё из вчерашнего, окно не закрывается.
+const moOpen = () => { try { return JSON.parse(localGet('mo') || '{}'); } catch { return {}; } };
+function moToggle(k) {
+  const o = moOpen();
+  o[k] = o[k] === false;
+  localSet('mo', JSON.stringify(o));
+  renderReview();
+}
 function renderReview() {
   const list = reviewList();
-  if (!list.length) {
-    if ($modal.dataset.kind === 'review') { $modal.innerHTML = ''; $modal.dataset.kind = ''; }
+  const o = S.offer;
+  const kind = $modal.dataset.kind;
+  // из утреннего окна открыли задачу — дождаться, пока её закроют
+  if (kind && kind !== 'morning' && (o || !list.length)) return;
+  offerChip();
+  if (!list.length && (!o || o.hidden)) {
+    if (kind === 'morning') { $modal.innerHTML = ''; $modal.dataset.kind = ''; }
     return;
   }
-  const onlyYesterday = list.every(t => winEnd(t) === addDays(today(), -1));
-  const ch = rvKeep(list);
+  const open = moOpen(), isOpen = k => open[k] !== false;
+  const block = (k, title, info, body) => `<section class="mo-block">
+    <button class="mo-head" data-act="mo-tog" data-v="${k}"><span>${isOpen(k) ? '▾' : '▸'} ${title}</span><span class="mo-info${k === 'rv' ? ' rv-count' : ''}">${info}</span></button>
+    ${isOpen(k) ? `<div class="mo-body">${body}</div>` : ''}</section>`;
+  const blocks = [];
+  if (list.length) {
+    const onlyYesterday = list.every(t => winEnd(t) === addDays(today(), -1));
+    blocks.push(block('rv', onlyYesterday ? 'Что из вчерашнего получилось сделать?' : 'Что из этого получилось сделать?', '', reviewRows(list)));
+  }
+  if (o) {
+    const g = offerBody(o);
+    if (g.n) blocks.push(block('of', o.mode === 'eve' ? 'По вдохновению' : 'Что можно сделать сегодня', `отмечено ${Object.keys(o.pick).length}`, g.html));
+    const sz = o.sizes.map(byId).filter(t => t && !t.done_on && !sizeOf(t));
+    if (sz.length) blocks.push(block('sz', 'Задачи без размера', `отмечено ${sz.filter(t => o.spick[t.id]).length} из ${sz.length}`, sz.map(t => sizeRow(t, o)).join('')));
+    const bd = o.mode === 'full' ? bdaysSoon(31) : [];
+    if (bd.length) blocks.push(block('bd', '🎂 Дни рождения в ближайший месяц', '', bd.map(bdayRow).join('')));
+  }
+  if (!blocks.length) {
+    if (kind === 'morning') { $modal.innerHTML = ''; $modal.dataset.kind = ''; }
+    return;
+  }
   const scroll = $modal.querySelector('.rv-list')?.scrollTop || 0;
-  $modal.dataset.kind = 'review';
-  $modal.innerHTML = `<div class="overlay"><div class="sheet review">
-    <h3>Привет${userName() ? ', ' + esc(userName()) : ''}! ${onlyYesterday ? 'Что из вчерашнего получилось сделать?' : 'Что из этого получилось сделать?'}</h3>
-    <div class="rv-list">${list.map(t => {
+  const eveOnly = !list.length && o?.mode === 'eve';
+  $modal.dataset.kind = 'morning';
+  $modal.innerHTML = `<div class="overlay" data-act="of-hide-bg"><div class="sheet review morning">
+    <h3>${eveOnly ? 'Добрый вечер' : 'Привет'}${userName() ? ', ' + esc(userName()) : ''}!</h3>
+    <div class="rv-list">${blocks.join('')}</div>
+    <div class="rv-foot"><span></span>
+      ${list.length ? '' : '<button class="btn" data-act="of-hide">Скрыть</button>'}
+      <button class="btn main" data-act="mo-save">Сохранить</button></div>
+  </div></div>`;
+  $modal.querySelector('.rv-list').scrollTop = scroll;
+  if (list.length) rvCount(list);
+  // высота — по содержимому, но только растёт (пришли новые блоки), от сворачивания не прыгает
+  const sh = $modal.querySelector('.sheet.morning');
+  if (kind !== 'morning') S.moH = 0;
+  sh.style.height = 'auto';
+  S.moH = Math.min(Math.max(S.moH || 0, sh.scrollHeight + 2), innerHeight * 0.88);
+  sh.style.height = S.moH + 'px';
+}
+
+// Строки блока «что получилось сделать»
+function reviewRows(list) {
+  const ch = rvKeep(list);
+  return list.map(t => {
       const head = `<div class="body"><div class="title">${esc(t.title)}</div>
         <div class="meta"><span>${t.plan_date ? 'план: ' : ''}${dateLabel(reviewDay(t))}${winDays(t) ? ' — ' + dateLabel(winEnd(t)) : ''}</span><span>${t.kind === 'habit' ? 'привычка' : 'задача'}</span>${t.plan_date && t.due_date ? `<span>дедлайн ${dateLabel(t.due_date)}</span>` : ''}</div></div>`;
       // привычка с подпунктами: каждый подпункт отмечается сам, доля считается по ним
@@ -2717,11 +2848,7 @@ function renderReview() {
         <button class="btn yes${ch[rvKey(t)] === 'yes' ? ' good' : ''}" data-act="r-yes" data-id="${t.id}" aria-label="Сделано">✓</button>
         <button class="btn no${ch[rvKey(t)] === 'no' ? ' no-on' : ''}" data-act="r-no" data-id="${t.id}" aria-label="Не сделано">✕</button>
       </div></div>`;
-    }).join('')}</div>
-    <div class="rv-foot"><span class="rv-count"></span><button class="btn main" data-act="r-save">Подтвердить</button></div>
-  </div></div>`;
-  $modal.querySelector('.rv-list').scrollTop = scroll;
-  rvCount(list);
+  }).join('');
 }
 
 // Отметки копятся в S.rv и пишутся в базу только по «Подтвердить» — можно пересмотреть.
@@ -2745,8 +2872,9 @@ function rvSubMark(el, id, i, v) {
 }
 function rvCount(list = reviewList()) {
   const n = list.filter(rvMarked).length;
-  $modal.querySelector('.rv-count').textContent = `Отмечено ${n} из ${list.length}`;
-  $modal.querySelector('[data-act=r-save]').disabled = n < list.length;
+  const c = $modal.querySelector('.rv-count'), b = $modal.querySelector('[data-act=mo-save]');
+  if (c) c.textContent = `отмечено ${n} из ${list.length}`;
+  if (b) b.disabled = n < list.length;
 }
 function rvMark(el, id, v) {
   const t = byId(id);
@@ -2756,7 +2884,7 @@ function rvMark(el, id, v) {
   yn.querySelector('[data-act=r-no]').classList.toggle('no-on', v === 'no');
   rvCount();
 }
-async function rvSave() {
+async function rvSave(reload = true) {
   for (const t of reviewList()) {
     let v = S.rv[rvKey(t)], part = null;
     if (Array.isArray(v)) {
@@ -2780,7 +2908,7 @@ async function rvSave() {
     }
   }
   S.rv = {};
-  await load();
+  if (reload) await load();
 }
 
 // ---------- размер задачи и предложения на день ----------
@@ -2855,6 +2983,14 @@ function dayFit(d) {
       if (!SLOTS[k]) continue;
       const sl = slots[k], m = slotMin(t);
       sl.used += m; sl.titles.push(t.title); sl.items.push({ t, min: m }); inSlot[t.id] = k;
+    }
+    // сделанное сегодня в окошке своё место не освобождает (её просьба 18.11.2026): ячейка просто исчезает
+    const doneIds = new Set(S.logs.filter(l => l.status === 'done' && l.done_on === d).map(l => l.task_id));
+    for (const id of doneIds) {
+      const t = byId(id);
+      if (!t || isEvent(t) || items.includes(t)) continue;
+      const k = fixedSlot(t, d);
+      if (SLOTS[k]) slots[k].used += slotMin(t);
     }
   }
   const room = k => (slots[k] ? slots[k].cap - slots[k].used : 0);
@@ -2950,7 +3086,7 @@ function offerGroups(mode) {
 
 // Окна предложений — раз утром и раз с 16 до 19 на весь аккаунт (отметки в user_metadata, видны всем устройствам).
 async function maybeOffer() {
-  if (!S.user || !S.loaded || S.space !== 'personal' || $modal.dataset.kind || S.offer || reviewList().length || S.offerBusy) return;
+  if (!S.user || !S.loaded || S.space !== 'personal' || ($modal.dataset.kind && $modal.dataset.kind !== 'morning') || S.offer || S.offerBusy) return;
   const d = today(), h = new Date().getHours(), eve = h >= 16 && h < 19;
   // быстрая отметка этого устройства — чтобы не спрашивать сервер каждую минуту
   if (localGet('offer') === d && (!eve || localGet('offerEve') === d)) return;
@@ -2970,8 +3106,8 @@ async function maybeOffer() {
     if (eve) localSet('offerEve', d);
     const mark = { offer_day: d, ...(eve ? { offer_eve: d } : {}) };
     sb.auth.updateUser({ data: mark }).then(({ data }) => { if (data?.user) S.user = data.user; });
-    if (!offerGroups(mode).some(g => g.list.length)) return;
-    if ($modal.dataset.kind || reviewList().length) return;
+    const has = offerGroups(mode).some(g => g.list.length) || (mode === 'full' && (sizeList().length || bdaysSoon(31).length));
+    if (!has || ($modal.dataset.kind && $modal.dataset.kind !== 'morning')) return;
     openOffer(mode);
   } finally { S.offerBusy = false; }
 }
@@ -2985,23 +3121,40 @@ async function ideaExpire() {
   stale.forEach(t => { t.due_date = null; t.plan_date = null; t.slot = null; });
 }
 
-// Окно предложений — черновик: отметки можно ставить, менять и снимать, в базу всё уходит по «Сохранить».
+// Предложения в утреннем окне — черновик: отметки можно ставить, менять и снимать, в базу всё уходит по «Сохранить».
 // Список задач запоминается при открытии, чтобы выбранное «Сегодня» не пропадало из окна (вдохновений можно взять несколько).
-// «Скрыть» убирает окно, не теряя отметок: внизу остаётся кнопка, чтобы вернуться.
+// «Скрыть» (если нет вопросов про вчера) убирает окно, не теряя отметок: внизу остаётся кнопка, чтобы вернуться.
 function openOffer(mode) {
   const groups = offerGroups(mode).map(g => ({ ...g, ids: g.list.map(t => t.id) }));
-  S.offer = { mode, groups, pick: {}, hidden: false };
-  renderOffer();
+  const sizes = mode === 'full' ? sizeList().map(t => t.id) : [];
+  S.offer = { mode, groups, pick: {}, sizes, spick: {}, hidden: false };
+  renderReview();
+}
+const renderOffer = () => renderReview();
+
+// Задачи без размера (в утреннем окне — разнести размеры): по разделам, внутри — как в «Разделах»
+function sizeList() {
+  const secIx = t => { const i = S.sections.findIndex(s => s.id === t.section_id); return i < 0 ? 1e6 : i; };
+  return active().filter(t => !t.done_on && !isEvent(t) && t.kind !== 'occasion' && !t.bday_of && !sizeOf(t))
+    .sort((a, b) => secIx(a) - secIx(b) || byPos(a, b));
+}
+function sizeRow(t, o) {
+  const sec = sectionOf(t);
+  return `<div class="task${sec ? ' tinted' : ''}${o.spick[t.id] ? ' picked' : ''}"${sec ? ` style="--sec:${esc(sec.color)}"` : ''}>
+    <div class="body" data-act="edit" data-id="${t.id}"><div class="title">${esc(t.title)}</div>
+      ${sec ? `<div class="meta"><span>${esc(sec.name)}</span></div>` : ''}</div>
+    <div class="yn sz">${Object.entries(SIZES).map(([k, z]) => `<button class="btn ${o.spick[t.id] === k ? 'on' : ''}" data-act="mo-size" data-id="${t.id}" data-v="${k}" aria-label="${z.name}">${z.icon}</button>`).join('')}</div></div>`;
+}
+function sizeAct(id, k) {
+  const p = S.offer.spick;
+  if (p[id] === k) delete p[id]; else p[id] = k;
+  renderReview();
 }
 
-function renderOffer() {
-  const o = S.offer;
-  if (!o) return;
-  offerChip();
-  if (o.hidden) return;
-  const scroll = $modal.querySelector('.rv-list')?.scrollTop || 0;
+// Блок предложений: { n — сколько задач, html }
+function offerBody(o) {
   const daysLying = t => Math.max(0, Math.round((parse(today()) - parse((t.created_at || '').slice(0, 10) || today())) / 864e5));
-  const btn = (t, act, label, off) => `<button class="btn ${o.pick[t.id] === act ? 'on' : ''}" data-act="${act}" data-id="${t.id}"${off ? ' disabled title="В обед уже нет места"' : ''}>${label}</button>`;
+  const btn = (t, act, label) => `<button class="btn ${o.pick[t.id] === act ? 'on' : ''}" data-act="${act}" data-id="${t.id}">${label}</button>`;
   // «В обед» у вдохновения — в будни; места в окошке вдохновение не занимает
   const lunchLeft = dayFit(today()).slots.lunch ? 1 : null;
   const lunchBtn = t => lunchLeft === null || sizeOf(t) !== 'idea' ? '' : btn(t, 'of-lunch', 'В обед');
@@ -3010,65 +3163,68 @@ function renderOffer() {
     return `<div class="task${sec ? ' tinted' : ''}${o.pick[t.id] ? ' picked' : ''}"${sec ? ` style="--sec:${esc(sec.color)}"` : ''}>
       <div class="body" data-act="edit" data-id="${t.id}"><div class="title">${esc(t.title)}</div>
         <div class="meta">${sec ? `<span>${esc(sec.name)}</span>` : ''}${n ? `<span>лежит ${n} дн.</span>` : ''}</div></div>
-      <div class="yn">${lunchBtn(t)}${btn(t, 'of-today', sizeOf(t) === 'idea' && lunchLeft !== null ? 'Вечером' : 'Сегодня')}${btn(t, 'of-tomorrow', 'Не сегодня')}${btn(t, 'of-later', 'Потом')}</div></div>`;
+      <div class="yn">${lunchBtn(t)}${btn(t, 'of-today', sizeOf(t) === 'idea' && lunchLeft !== null ? 'Вечером' : 'Сегодня')}${btn(t, 'of-later', 'Потом')}</div></div>`;
   };
   const live = id => { const t = byId(id); return t && !t.done_on ? t : null; };
   const groups = o.groups.map(g => ({ ...g, list: g.ids.map(live).filter(Boolean) })).filter(g => g.list.length || g.full);
-  const n = Object.keys(o.pick).length;
-  const eve = o.mode === 'eve';
-  $modal.dataset.kind = 'offer';
-  $modal.innerHTML = `<div class="overlay" data-act="of-hide-bg"><div class="sheet review offer">
-    <h3>${eve ? 'Может, займёмся чем-то по вдохновению?' : `${userName() ? esc(userName()) + ', что' : 'Что'} можно сделать сегодня`}</h3>
-    <div class="rv-list">${groups.map(g => `<h2>${SIZES[g.size].icon} ${SIZES[g.size].title}</h2>
+  return {
+    n: groups.reduce((a, g) => a + g.list.length, 0) || (groups.length ? 1 : 0),
+    html: groups.map(g => `<h2>${SIZES[g.size].icon} ${SIZES[g.size].title}</h2>
       ${g.note || g.full ? `<div class="hint">${g.note || ''}${g.note && g.full ? '<br>' : ''}${g.full ? 'Свободных окошек сегодня нет' : ''}</div>` : ''}
-      ${g.list.map(row).join('')}`).join('') || '<div class="empty">Всё разобрано</div>'}</div>
-    <div class="rv-foot"><span class="hint">Отмечено: ${n}</span>
-      <button class="btn" data-act="of-hide" title="Посмотреть дела на сегодня, отметки сохранятся">Скрыть</button>
-      <button class="btn main" data-act="of-close">Сохранить</button></div>
-  </div></div>`;
-  $modal.querySelector('.rv-list').scrollTop = scroll;
+      ${g.list.map(row).join('')}`).join(''),
+  };
 }
 
-// Кнопка внизу экрана, пока окно предложений скрыто.
+// Кнопка внизу экрана, пока утреннее окно скрыто.
 function offerChip() {
   let el = document.getElementById('offer-chip');
   const show = S.offer && S.offer.hidden;
   if (!show) { el?.remove(); return; }
   if (!el) { el = document.createElement('button'); el.id = 'offer-chip'; el.className = 'btn main'; el.dataset.act = 'of-show'; document.body.append(el); }
-  const n = Object.keys(S.offer.pick).length;
-  el.textContent = `${S.offer.mode === 'eve' ? '✦ Вдохновение' : '☀ Предложения'}${n ? ' · отмечено ' + n : ''}`;
+  const n = Object.keys(S.offer.pick).length + Object.keys(S.offer.spick).length;
+  el.textContent = `${S.offer.mode === 'eve' ? '✦ Вдохновение' : '☀ Утро'}${n ? ' · отмечено ' + n : ''}`;
 }
 
 // Повторное нажатие той же кнопки снимает отметку.
 function offerAct(id, act) {
   const p = S.offer.pick;
   if (p[id] === act) delete p[id]; else p[id] = act;
-  renderOffer();
+  renderReview();
 }
 
+// Скрыть можно, только когда нет вопросов про вчера
 function offerHide(hidden) {
+  if (!S.offer || (hidden && reviewList().length)) return;
   S.offer.hidden = hidden;
   if (hidden) { $modal.innerHTML = ''; $modal.dataset.kind = ''; }
-  renderOffer();
+  renderReview();
 }
 
-// «Сегодня» — срок на сегодня; «Не сегодня» — предложить завтра; «Потом» — через 4 дня.
-async function closeOffer() {
-  const pick = S.offer?.pick || {};
+// «Сохранить» утреннего окна: вчерашнее, предложения («Сегодня» — срок на сегодня, «Потом» — предложить через 4 дня), размеры.
+async function moSave(el) {
+  const list = reviewList();
+  if (list.some(t => !rvMarked(t))) return;
+  el.disabled = true; el.textContent = 'Сохраняю…';
+  const o = S.offer;
   S.offer = null;
   offerChip();
-  closeModal();
-  const ids = act => Object.keys(pick).filter(id => pick[id] === act);
-  const jobs = [
-    [ids('of-today'), { due_date: today(), offer_after: null }],
-    [ids('of-lunch'), { due_date: today(), offer_after: null, slot: 'lunch' }],
-    [ids('of-tomorrow'), { offer_after: addDays(today(), 1) }],
-    [ids('of-later'), { offer_after: addDays(today(), 4) }],
-  ].filter(([list]) => list.length);
-  for (const [list, upd] of jobs) list.forEach(id => { const t = byId(id); if (t) Object.assign(t, upd); });
-  render();
-  for (const [list, upd] of jobs) await call(sb.from('tasks').update(upd).in('id', list));
-  load().catch(() => { });
+  try {
+    if (list.length) await rvSave(false);
+    if (o) {
+      const ids = act => Object.keys(o.pick).filter(id => o.pick[id] === act);
+      const jobs = [
+        [ids('of-today'), { due_date: today(), offer_after: null }],
+        [ids('of-lunch'), { due_date: today(), offer_after: null, slot: 'lunch' }],
+        [ids('of-later'), { offer_after: addDays(today(), 4) }],
+      ];
+      for (const k of Object.keys(SIZES)) jobs.push([Object.keys(o.spick).filter(id => o.spick[id] === k), { size: k }]);
+      for (const [ids, upd] of jobs) if (ids.length) await call(sb.from('tasks').update(upd).in('id', ids));
+    }
+  } finally {
+    S.rv = {};
+    $modal.innerHTML = ''; $modal.dataset.kind = '';
+    await load();
+  }
 }
 
 // Размер по умолчанию для всех задач раздела (в ⚙).
@@ -3158,6 +3314,9 @@ function openEdit(t) {
     <div class="field"><label>Раздел</label>
       <select class="inp" id="f-section"><option value="">Без раздела</option>
         ${mySecs().map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
+    <div class="field" id="f-bday-box"><label>День рождения</label>
+      <select class="inp" id="f-bday"><option value="">Нет</option><option value="0" ${e.bday && !e.gift_days ? 'selected' : ''}>🎂 без подарка</option>
+        ${[7, 14, 21, 28].map(n => `<option value="${n}" ${e.bday && e.gift_days === n ? 'selected' : ''}>🎂 🎁 за ${n / 7} нед.</option>`).join('')}</select></div>
     </div><div class="notes-col">
     <div class="field" id="f-subs-box"><div id="f-subs"></div>
       <div class="row sub-links"><button class="link" data-act="sub-add">+ Подпункт</button><button class="link" id="f-subs-arch" data-act="sub-arch" hidden></button></div></div>
@@ -3262,6 +3421,8 @@ function syncEdit() {
   $modal.querySelector('#f-unit option[value=cycle]').hidden = isEvent(e);
   const cycle = e.repeat_unit === 'cycle';
   const q = s => $modal.querySelectorAll(s);
+  const bb = document.getElementById('f-bday-box');
+  if (bb) bb.style.display = isEvent(e) ? '' : 'none';
   q('[data-act=kind]').forEach(b => b.classList.toggle('on', b.dataset.v === e.kind));
   q('[data-act=from]').forEach(b => b.classList.toggle('on', b.dataset.v === e.repeat_from));
   q('[data-act=wd]').forEach(b => b.classList.toggle('on', (e.repeat_weekdays || []).includes(+b.dataset.v)));
@@ -3465,7 +3626,7 @@ async function toggleSubModal(i) {
 // так, будто все поля, которые появляются от кнопок, уже показаны. Потом окно уже не меняет размер
 // от нажатий; что не поместилось (много подпунктов) — прокручивается внутри.
 function fitSheet() {
-  const sh = $modal.querySelector('.sheet.fixed, .sheet.review');
+  const sh = $modal.querySelector('.sheet.fixed, .sheet.review:not(.morning)');
   if (!sh) return;
   const panes = [...sh.querySelectorAll(':scope > .e-pane, :scope > .tpl-pane')];
   const was = panes.map(p => p.hidden);
@@ -3489,9 +3650,7 @@ function closeModal() {
   S.tpl = null;
   $modal.innerHTML = '';
   $modal.dataset.kind = '';
-  renderReview();
-  // открыли задачу из окна предложений — после неё вернуться в окно
-  if (S.offer && !S.offer.hidden && !$modal.dataset.kind) renderOffer();
+  renderReview(); // открыли задачу из утреннего окна — после неё вернуться в окно
 }
 
 async function saveEdit() {
@@ -3551,6 +3710,14 @@ async function saveEdit() {
     const { on, off, anchor } = cycleForm();
     Object.assign(row, { repeat_every: on, repeat_off: off, repeat_anchor: anchor, repeat_from: 'due', repeat_weekdays: null });
     if (!cycleOn(row.due_date, on, off, anchor)) row.due_date = nextCycle(row.due_date, on, off, anchor); // срок — только на день цикла
+  }
+  // день рождения (024_bdays.sql): пока база не обновлена, у остальных поле не отправляем
+  const bv = isEvent(row) ? document.getElementById('f-bday').value : '';
+  if (bv !== '' || e.bday) {
+    row.bday = bv !== '';
+    row.gift_days = row.bday && +bv ? +bv : null;
+    if (row.bday) Object.assign(row, { repeat_unit: 'year', repeat_every: 1, repeat_weekdays: null });
+    S.bdayDay = null; // пересчитать задачи «Поздравить»/«Подарок»
   }
   if (isEvent(row)) {
     row.repeat_from = 'due';
@@ -3656,6 +3823,116 @@ document.addEventListener('change', async ev => {
   try { await importFile(ev.target.files[0]); } catch (e) { console.error(e); }
   ev.target.value = '';
 });
+
+// ---------- дни рождения (её просьба 18.11.2026; нужен supabase/024_bdays.sql) ----------
+// День рождения — ежегодное событие с отметкой bday. За 60 дней заранее создаются задачи «Поздравить: …» (в сам день,
+// напоминание 9:00) и, если задан подарок, «Подарок: …» за gift_days дней (напоминание 10:00). Один раз на год:
+// уникальный индекс (bday_of, bday_year, bday_kind) в базе.
+const bdays = () => S.tasks.filter(t => t.bday && t.due_date);
+function bdaysSoon(n) {
+  const to = addDays(today(), n);
+  return bdays().filter(t => !pausedSec(t.section_id)).map(t => ({ t, d: upcoming(t) }))
+    .filter(x => x.d && x.d <= to).sort((a, b) => (a.d < b.d ? -1 : 1));
+}
+function bdayRow({ t, d }) {
+  const n = daysBetween(today(), d);
+  return `<div class="bd-row" data-act="edit" data-id="${t.id}"><b>${esc(t.title)}${t.gift_days ? ' 🎁' : ''}</b><span>${dateLabel(d)}${n ? ` · через ${n} дн.` : ''}</span></div>`;
+}
+async function bdayGen() {
+  if (!S.tasks.some(t => 'bday' in t)) return false;
+  const rows = [];
+  for (const { t, d } of bdaysSoon(60)) {
+    const y = +d.slice(0, 4);
+    const has = k => S.tasks.some(x => x.bday_of === t.id && x.bday_year === y && x.bday_kind === k);
+    const base = { kind: 'task', section_id: t.section_id, space: spaceOf(t), bday_of: t.id, bday_year: y };
+    if (!has('hi')) rows.push({ ...base, bday_kind: 'hi', title: `Поздравить: ${t.title}`, due_date: d, remind_at: '09:00', size: 'quick' });
+    if (t.gift_days && !has('gift')) {
+      const g = addDays(d, -t.gift_days);
+      rows.push({ ...base, bday_kind: 'gift', title: `Подарок: ${t.title}`, due_date: g > today() ? g : today(), remind_at: '10:00', size: 'mid' });
+    }
+  }
+  if (!rows.length) return false;
+  await call(sb.from('tasks').upsert(rows, { onConflict: 'bday_of,bday_year,bday_kind', ignoreDuplicates: true }));
+  return true;
+}
+
+// Загрузка из файла: выгрузка Google Контактов (CSV) или календаря (ICS).
+function parseCSV(text) {
+  const rows = [];
+  let row = [], f = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"') q = true;
+    else if (c === ',') { row.push(f); f = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(f); rows.push(row); row = []; f = ''; }
+    else f += c;
+  }
+  if (f || row.length) { row.push(f); rows.push(row); }
+  return rows;
+}
+// «1990-05-12», «--05-12» (без года), «19900512» → ISO; без года — 2000 (високосный: 29 февраля тоже подходит)
+function bdayDate(s) {
+  const m = String(s || '').trim().match(/^(?:(\d{4})|-)-?(\d{2})-?(\d{2})/);
+  if (!m) return null;
+  return `${m[1] || '2000'}-${m[2]}-${m[3]}`;
+}
+function bdaysFromCSV(text) {
+  const [head, ...rows] = parseCSV(text.replace(/^﻿/, ''));
+  if (!head) return [];
+  const ix = n => head.findIndex(h => h.trim().toLowerCase() === n);
+  const b = ix('birthday');
+  if (b < 0) return [];
+  const pick = (r, ...names) => names.map(n => (ix(n) >= 0 ? (r[ix(n)] || '').trim() : '')).filter(Boolean).join(' ');
+  return rows.map(r => ({
+    name: pick(r, 'first name', 'last name') || pick(r, 'given name', 'family name') || pick(r, 'name') || pick(r, 'nickname') || pick(r, 'file as'),
+    date: bdayDate(r[b]),
+  })).filter(x => x.name && x.date);
+}
+function bdaysFromICS(text) {
+  const lines = text.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '').split(/\r?\n/);
+  const out = [];
+  let ev = null;
+  for (const l of lines) {
+    if (l === 'BEGIN:VEVENT') ev = {};
+    else if (l === 'END:VEVENT' && ev) {
+      const sum = (ev.SUMMARY || '').replace(/\\([,;\\])/g, '$1').replace(/\\n/gi, ' ');
+      if (ev.DTSTART && (/YEARLY/.test(ev.RRULE || '') || /рожд|birthday/i.test(sum))) {
+        const name = sum.replace(/(день рождения|birthday)\s*[:–—-]?\s*/i, '').replace(/[’']s\s*$/i, '').replace(/^[\s:–—-]+|[\s:–—-]+$/g, '');
+        const date = bdayDate(ev.DTSTART);
+        if (name && date) out.push({ name, date });
+      }
+      ev = null;
+    } else if (ev) {
+      const m = l.match(/^([A-Z-]+)(?:;[^:]*)?:(.*)$/);
+      if (m && !(m[1] in ev)) ev[m[1]] = m[2];
+    }
+  }
+  return out;
+}
+async function importBdays(file) {
+  if (!S.tasks.some(t => 'bday' in t)) return toast('Сначала запусти в Supabase файл 024_bdays.sql');
+  const text = await file.text();
+  const found = /BEGIN:VCALENDAR/.test(text) ? bdaysFromICS(text) : bdaysFromCSV(text);
+  if (!found.length) return toast('В файле не нашлось дней рождения');
+  let sec = S.sections.find(s => s.name.trim().toLowerCase() === 'дни рождения');
+  if (!sec) [sec] = await call(sb.from('sections').insert({ name: 'Дни рождения', color: '#ED93B1', position: S.sections.length, space: 'personal' }).select());
+  // уже есть с таким именем — не дублируем
+  const have = new Set(bdays().map(t => t.title.trim().toLowerCase()));
+  const seen = new Set();
+  const rows = found.filter(x => { const k = x.name.toLowerCase(); if (have.has(k) || seen.has(k)) return false; seen.add(k); return true; })
+    .map(x => ({ title: x.name, kind: 'event', bday: true, due_date: x.date, repeat_unit: 'year', repeat_every: 1, repeat_from: 'due', section_id: sec.id, space: 'personal' }));
+  if (rows.length) await call(sb.from('tasks').insert(rows));
+  S.bdayDay = null;
+  await load();
+  toast(`Дни рождения: добавлено ${rows.length}${found.length > rows.length ? `, уже были — ${found.length - rows.length}` : ''}`);
+}
+document.addEventListener('change', async ev => {
+  if (ev.target.id !== 'bday-file' || !ev.target.files[0]) return;
+  try { await importBdays(ev.target.files[0]); } catch (e) { console.error(e); }
+  ev.target.value = '';
+});
+
 
 // Выключить / включить раздел. При включении устаревшие сроки переносятся вперёд:
 // повторяющиеся — на ближайший повтор не раньше сегодня, остальные — на сегодня,
@@ -4290,6 +4567,8 @@ document.addEventListener('click', async ev => {
       case 'logout': closeModal(); await sb.auth.signOut(); break;
       case 'set-name': await setName(); break;
       case 'settings': openSettings(); break;
+      case 'archive': await openArchive(); break;
+      case 'arch-range': S.arch.range = +el.dataset.v; localSet('arange', el.dataset.v); renderArchive(); break;
       case 'help': openHelp(); break;
       case 'occ': openOcc(); break;
       case 'pay': await openPay(); break;
@@ -4489,8 +4768,10 @@ document.addEventListener('click', async ev => {
       case 'size': S.edit.size = v || null; syncEdit(); break;
       case 'slot': S.edit.slot = v || null; syncEdit(); break;
       case 'sec-size': await setSecSize(id, v); break;
-      case 'of-today': case 'of-lunch': case 'of-tomorrow': case 'of-later': offerAct(id, act); break;
-      case 'of-close': await closeOffer(); break;
+      case 'of-today': case 'of-lunch': case 'of-later': offerAct(id, act); break;
+      case 'mo-save': await moSave(el); break;
+      case 'mo-tog': moToggle(el.dataset.v); break;
+      case 'mo-size': sizeAct(id, el.dataset.v); break;
       case 'of-hide': case 'of-hide-bg': offerHide(true); break;
       case 'of-show': offerHide(false); break;
       case 'slots-save': await saveSlots(); break;
@@ -4501,11 +4782,11 @@ document.addEventListener('click', async ev => {
       case 's-delete': await deleteSection(id); break;
       case 's-pause': await togglePause(id); break;
       case 'import': closeModal(); document.getElementById('import-file').click(); break;
+      case 'bday-import': closeModal(); document.getElementById('bday-file').click(); break;
       case 'r-yes': rvMark(el, id, 'yes'); break;
       case 'r-no': rvMark(el, id, 'no'); break;
       case 'r-sy': rvSubMark(el, id, +v, 'yes'); break;
       case 'r-sn': rvSubMark(el, id, +v, 'no'); break;
-      case 'r-save': el.disabled = true; el.textContent = 'Сохраняю…'; await rvSave(); break;
     }
   } catch (e) {
     console.error(e);
@@ -4523,8 +4804,8 @@ document.addEventListener('keydown', ev => {
   if (ev.key === 'Enter' && ev.target.id === 's-name') saveSection($modal.querySelector('[data-act=s-save]').dataset.id);
   if (ev.key === 'Escape') hideCtx();
   if (ev.key === 'Escape' && S.howto) return closeHowto();
-  if (ev.key === 'Escape' && $modal.dataset.kind === 'offer') offerHide(true);
-  else if (ev.key === 'Escape' && $modal.dataset.kind && $modal.dataset.kind !== 'review') closeModal();
+  if (ev.key === 'Escape' && $modal.dataset.kind === 'morning') offerHide(true);
+  else if (ev.key === 'Escape' && $modal.dataset.kind && $modal.dataset.kind !== 'morning') closeModal();
 });
 
 // ---------- синхронизация ----------
