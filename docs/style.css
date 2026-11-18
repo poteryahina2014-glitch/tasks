@@ -928,7 +928,13 @@ textarea.t-howto { width: 100%; min-height: 110px; resize: vertical; font: inher
   align-content: flex-start; align-items: flex-end; justify-content: center; gap: 0 10px;
   background: repeating-linear-gradient(to bottom, transparent 0 114px, #6b4a33 114px 124px, #4a3324 124px 126px); }
 #bg .wall .shelves > div { position: relative; right: auto; bottom: auto; height: 114px; width: min(130px, calc(50% - 6px)); display: flex; align-items: flex-end; margin-bottom: 12px; }
+#bg .wall .shelves > .cat-spot { flex: 0 0 100%; height: 114px; margin-bottom: 12px; } /* нижняя полка всегда свободна — для кота */
 #bg .wall .shelves > .paper { width: min(120px, calc(50% - 6px)); }
 #bg .shelves > div svg { width: 100%; }
 #bg .books .balloon { transform-box: fill-box; transform-origin: 50% 100%; animation: balloon 3s ease-in-out infinite alternate; }
 @keyframes balloon { from { transform: rotate(-4deg) translateY(0); } to { transform: rotate(4deg) translateY(-3px); } }
+
+/* Кот на полке: меньше, прыжок — дугой с небольшим отскоком */
+#pets .pet.cat { transform-origin: 50% 100%; }
+#pets .pet.cat.shelf .pet-text { visibility: hidden; }
+#pets .pet.cat.jump { transition: left .8s ease-in-out, bottom .8s cubic-bezier(.3, 1.45, .55, 1), scale .8s ease-in-out; z-index: 2; }
