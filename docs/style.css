@@ -919,3 +919,16 @@ textarea.t-howto { width: 100%; min-height: 110px; resize: vertical; font: inher
 .bdi.on { opacity: 1; }
 .bdi input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
 .bdi span { color: var(--muted); font-size: 13px; white-space: nowrap; }
+
+/* Стена справа от окна с полками (18.11.2026): книги, день рождения, газета стоят тут, а не на подоконнике */
+#bg .wall { position: absolute; top: 0; right: 0; bottom: 0; background: #2a2431;
+  background-image: repeating-linear-gradient(90deg, #ffffff05 0 18px, transparent 18px 36px);
+  box-shadow: inset 14px 0 18px -8px #0009; }
+#bg .shelves { position: absolute; left: 14px; right: 14px; top: 16%; min-height: 252px; display: flex; flex-wrap: wrap;
+  align-content: flex-start; align-items: flex-end; justify-content: center; gap: 0 10px;
+  background: repeating-linear-gradient(to bottom, transparent 0 114px, #6b4a33 114px 124px, #4a3324 124px 126px); }
+#bg .wall .shelves > div { position: relative; right: auto; bottom: auto; height: 114px; width: min(130px, calc(50% - 6px)); display: flex; align-items: flex-end; margin-bottom: 12px; }
+#bg .wall .shelves > .paper { width: min(120px, calc(50% - 6px)); }
+#bg .shelves > div svg { width: 100%; }
+#bg .books .balloon { transform-box: fill-box; transform-origin: 50% 100%; animation: balloon 3s ease-in-out infinite alternate; }
+@keyframes balloon { from { transform: rotate(-4deg) translateY(0); } to { transform: rotate(4deg) translateY(-3px); } }

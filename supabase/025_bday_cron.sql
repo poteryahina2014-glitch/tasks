@@ -1,5 +1,5 @@
 -- Дни рождения: задачи создаёт сама база по расписанию (18.11.2026), приложение открывать не нужно.
--- «Поздравить: …» — в сам день рождения (напоминание 9:00), тихая: не в списках, а тортом на подоконнике (decor 'cake');
+-- «Поздравить: …» — в сам день рождения, без уведомления (её решение: уведомления она смахивает), тихая: не в списках, а тортом на подоконнике (decor 'cake');
 -- «Подарок: …»   — за gift_days дней до него (напоминание 10:00).
 -- Каждая создаётся один раз на год (таблица bday_done): удалишь — снова не появится.
 -- Запустить один раз в Supabase → SQL Editor. Можно запускать повторно.
@@ -40,7 +40,7 @@ begin
       get diagnostics n = row_count;
       if n > 0 then
         insert into tasks (user_id, title, kind, due_date, remind_at, size, decor, section_id, space, bday_of, bday_year, bday_kind)
-        values (r.user_id, 'Поздравить: ' || r.title, 'task', loc, '09:00', 'quick', 'cake', r.section_id, r.space, r.id, y, 'hi')
+        values (r.user_id, 'Поздравить: ' || r.title, 'task', loc, null, 'quick', 'cake', r.section_id, r.space, r.id, y, 'hi')
         on conflict do nothing;
       end if;
     end if;
