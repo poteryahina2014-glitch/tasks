@@ -924,7 +924,7 @@ textarea.t-howto { width: 100%; min-height: 110px; resize: vertical; font: inher
 #bg .wall { position: absolute; top: 0; right: 0; bottom: 0; background: #2a2431;
   background-image: repeating-linear-gradient(90deg, #ffffff05 0 18px, transparent 18px 36px);
   box-shadow: inset 14px 0 18px -8px #0009; }
-#bg .shelves { position: absolute; left: 14px; right: 14px; top: 16%; min-height: 252px; display: flex; flex-wrap: wrap;
+#bg .shelves { position: absolute; left: 14px; right: 14px; top: 16%; min-height: 378px; display: flex; flex-wrap: wrap;
   align-content: flex-start; align-items: flex-end; justify-content: center; gap: 0 10px;
   background: repeating-linear-gradient(to bottom, transparent 0 114px, #6b4a33 114px 124px, #4a3324 124px 126px); }
 #bg .wall .shelves > div { position: relative; right: auto; bottom: auto; height: 114px; width: min(130px, calc(50% - 6px)); display: flex; align-items: flex-end; margin-bottom: 12px; }
@@ -938,3 +938,13 @@ textarea.t-howto { width: 100%; min-height: 110px; resize: vertical; font: inher
 #pets .pet.cat { transform-origin: 50% 100%; }
 #pets .pet.cat.shelf .pet-text { visibility: hidden; }
 #pets .pet.cat.jump { transition: left .8s ease-in-out, bottom .8s cubic-bezier(.3, 1.45, .55, 1), scale .8s ease-in-out; z-index: 2; }
+
+/* Стена: список уже, чтобы строки не упирались в стену; подоконник кончается у стены, под стеной — тумба */
+@media (min-width: 900px) { body.wall #app { max-width: calc(var(--appw) - 80px); } body.wall .fab { right: max(28px, calc(50% - 522px)); } }
+@media (min-width: 1280px) and (max-width: 1639px) { body.pets.wall #app { max-width: calc(var(--appw) - 80px); } }
+#bg .cabinet { position: absolute; left: 0; right: 0; bottom: 0; height: 84px; display: flex; gap: 6px; padding: 18px 10px 6px;
+  background: linear-gradient(#5a4636, #4a3829 12px, #2e241d 13px, #3a2d24); box-shadow: 0 -6px 18px #0006; }
+#bg .cabinet i { flex: 1; border: 2px solid #2a2019; border-radius: 4px; background: #44342a; position: relative; }
+#bg .cabinet i::after { content: ''; position: absolute; top: 45%; width: 6px; height: 6px; border-radius: 50%; background: #b99a6b; }
+#bg .cabinet i:first-child::after { right: 8px; } #bg .cabinet i:last-child::after { left: 8px; }
+#bg .wall .paper { cursor: grab; touch-action: none; user-select: none; }
