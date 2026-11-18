@@ -1,8 +1,11 @@
 -- Дни рождения: задачи создаёт сама база по расписанию (18.11.2026), приложение открывать не нужно.
--- «Поздравить: …» — в сам день рождения (напоминание 9:00);
+-- «Поздравить: …» — в сам день рождения (напоминание 9:00), тихая: не в списках, а тортом на подоконнике (decor 'cake');
 -- «Подарок: …»   — за gift_days дней до него (напоминание 10:00).
 -- Каждая создаётся один раз на год (таблица bday_done): удалишь — снова не появится.
 -- Запустить один раз в Supabase → SQL Editor. Можно запускать повторно.
+
+alter table tasks drop constraint if exists tasks_decor_check;
+alter table tasks add constraint tasks_decor_check check (decor in ('dust', 'meter', 'books', 'cake'));
 
 create table if not exists bday_done (
   user_id uuid not null default auth.uid() references auth.users on delete cascade,
@@ -36,8 +39,8 @@ begin
       insert into bday_done (user_id, bday_id, year, kind) values (r.user_id, r.id, y, 'hi') on conflict do nothing;
       get diagnostics n = row_count;
       if n > 0 then
-        insert into tasks (user_id, title, kind, due_date, remind_at, size, section_id, space, bday_of, bday_year, bday_kind)
-        values (r.user_id, 'Поздравить: ' || r.title, 'task', loc, '09:00', 'quick', r.section_id, r.space, r.id, y, 'hi')
+        insert into tasks (user_id, title, kind, due_date, remind_at, size, decor, section_id, space, bday_of, bday_year, bday_kind)
+        values (r.user_id, 'Поздравить: ' || r.title, 'task', loc, '09:00', 'quick', 'cake', r.section_id, r.space, r.id, y, 'hi')
         on conflict do nothing;
       end if;
     end if;

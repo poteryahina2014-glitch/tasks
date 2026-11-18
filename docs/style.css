@@ -760,6 +760,10 @@ body.bg .group-sep { text-shadow: 0 1px 3px #000; }
 #bg .books { position: absolute; bottom: 66px; width: 230px; pointer-events: auto; cursor: pointer; filter: drop-shadow(0 4px 4px #0006); transition: transform .15s; }
 #bg .books:hover { transform: translateY(-3px); }
 #bg .books svg { display: block; width: 100%; }
+#bg .books.cake { width: 200px; }
+#bg .books .flame { transform-box: fill-box; transform-origin: 50% 100%; animation: flame 1.2s ease-in-out infinite alternate; }
+#bg .books .flame:nth-of-type(2n) { animation-duration: .9s; }
+@keyframes flame { from { transform: scale(1, 1) rotate(-4deg); } to { transform: scale(.85, 1.12) rotate(4deg); } }
 @media (max-width: 899px) { #bg .books { display: none; } }
 .kid-book { opacity: .35; filter: grayscale(1); }
 .kid-book.on { opacity: 1; filter: none; }
