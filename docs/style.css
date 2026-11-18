@@ -908,3 +908,10 @@ textarea.t-howto { width: 100%; min-height: 110px; resize: vertical; font: inher
 .arch-day .ad-h span { color: var(--muted); font-weight: 400; }
 .arch-day .ad-t { font-size: 14px; padding: 3px 0 3px 4px; }
 .arch-day .ad-t span { color: var(--muted); font-size: 12px; margin-left: 8px; }
+
+/* Дни рождения из файла: предпросмотр */
+.bdi-list { flex: 1 1 auto !important; overflow-y: auto; min-height: 0; }
+.bdi { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 4px 2px; opacity: .55; }
+.bdi.on { opacity: 1; }
+.bdi input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
+.bdi span { color: var(--muted); font-size: 13px; white-space: nowrap; }

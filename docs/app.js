@@ -246,8 +246,6 @@ async function load() {
   await pickReads().catch(() => { });
   if (await autoGenerate()) return load(); // закончился период — шаблоны создали задачи
   await ideaExpire().catch(() => { });
-  // дни рождения: задачи «Поздравить» и «Подарок» — раз в день
-  if (S.bdayDay !== today()) { S.bdayDay = today(); if (await bdayGen().catch(() => false)) return load(); }
   render();
   renderReview();
   readImages().catch(() => { });
@@ -2550,7 +2548,8 @@ const HELP = [
   ['«Сегодня» по частям дня', 'В будни (личный режим) дела на сегодня идут по частям дня: ☀ утро — пятиминутки; 🍽 обед, 🌆 после работы, 🌙 после ужина — окошки (время — в ⚙); остальное — то, что не попало в окошки. Окошки видны всегда, пустые ячейки по 30 минут — свободное место. В окошке сами стоят только задачи со своим «Когда» (в окне задачи, у средних и вдохновения) и вдохновение без «Когда» — после ужина; остальные задачи ты расставляешь сама: на компьютере перетаскиваешь в окошко, между окошками или обратно (в утро или остальное), на телефоне — долгое нажатие → «В окошко». Это только на сегодня, «Когда» не меняется. Место в окошке занимают средние и прочие задачи (30 минут или своё время ⏱) и события в это время; пятиминутки и вдохновение показываются в окошке, но места не занимают. Если задач больше, чем ячеек, ничего не переносится — свободных ячеек просто не остаётся. Сделанная задача своё место не освобождает: ячейка просто исчезает. В выходные окошек нет.'],
   ['Заметка под задачей', 'Заметка из окна задачи видна в списке прямо под задачей (и под подпунктами) — серым курсивом. Ссылки в ней нажимаются.'],
   ['📦 Архив и графики', '⚙ → «Архив сделанного и графики». За неделю, месяц или год: сколько сделано, в среднем в день, лучший день (за год — месяц), столбики по дням (за год — по месяцам), какие повторяющиеся задачи и привычки делались чаще всего, и список сделанного по дням. Считается только текущий режим (личный или работа).'],
-  ['🎂 Дни рождения', 'День рождения — это событие с отметкой «День рождения» (в окне события, вкладка «Главное»): там же выбирается подарок — 🎁 за 1–4 недели или без подарка. За 2 месяца до дня рождения сами появляются задачи: «Поздравить: …» — в сам день, с напоминанием в 9:00, и, если нужен подарок, «Подарок: …» — за выбранное число недель, с напоминанием в 10:00. Удалять их не надо — отметь сделанными (удалённая появится снова). В разделе дни рождения идут от ближайшего; в утреннем окне — блок «Дни рождения в ближайший месяц».<br><br><b>Загрузить из Google</b>: ⚙ → «Загрузить дни рождения из файла». Подходит файл контактов (contacts.google.com → Экспорт → Google CSV) или календаря (.ics: Google Календарь → Настройки → Импорт и экспорт → Экспорт, архив распаковать). Появится раздел «Дни рождения»; кто уже есть (по имени), не добавится второй раз. Без года рождения дата тоже подходит. Подарок потом выбираешь каждому в его окне.'],
+  ['🎂 Дни рождения', 'День рождения — это событие с отметкой «День рождения» (в окне события, вкладка «Главное»). Там же выбирается подарок: 🎁 за 1–4 недели или без подарка. Задачи появляются сами, даже если приложение не открыто: «Поздравить: …» — в сам день рождения (напоминание в 9:00), «Подарок: …» — за выбранное число недель (напоминание в 10:00). Каждая — один раз в год: удалила — больше в этом году не появится. В разделе дни рождения идут от ближайшего; в утреннем окне — блок «Дни рождения в ближайший месяц».<br><br><b>Загрузить из Google Календаря</b>: calendar.google.com → ⚙ Настройки → «Импорт и экспорт» → «Экспорт». Скачается архив .zip — его можно выбрать сразу, распаковывать не нужно: ⚙ → «Загрузить дни рождения из файла». Подходит и файл контактов (contacts.google.com → Экспорт → Google CSV). Откроется список: отмечены те, где в названии «день рождения» или «ДР»; остальные ежегодные события (годовщины и т. п.) — без отметки, их можно отметить самой. Имя можно поправить прямо в списке («мамы» → «Мама»). «⚠ уже есть» — такое имя уже есть в «Днях рождения». Подарок потом выбираешь каждому в его окне.'],
+  ['💾 Резервная копия', '⚙ → «Резервная копия»: скачивает все твои данные (задачи, разделы, историю отметок, шаблоны, чтение, платежи) одним файлом zadachi-ДАТА.json. Хранить где удобно (например, на Google Диске). Если что-то сломается, по этому файлу всё можно восстановить.'],
   ['Платежи 💳', 'Кнопка 💳 в заголовке — записи о платежах, по которым потом не вспомнить, за что платила (маркетплейсы, наложенный платёж и т. п.). Запись — дата (по умолчанию сегодня), сумма и за что; Enter — записать. Когда разнесла платёж в таблицу расходов, нажми ✓ — запись уходит во «Внесённые» (там ↩ возвращает обратно). Щелчок по записи — исправить или удалить её. Вверху — сколько ещё не внесено и на какую сумму. Во «Внесённых» видно последние 3 месяца.'],
   ['Подпункты у вдохновения', 'У задачи с размером ✦ вдохновение отмеченный подпункт не зачёркивается, а уходит в архив — можно отмечать прямо в «Разделах», даже если задача не на сегодня. Посмотреть сделанное — в окне задачи «▸ Архив · N» под подпунктами (там же можно снять галочку — подпункт вернётся). Сразу после отметки во всплывающей подсказке есть «Отменить».'],
   ['Подпункт ↔ задача', 'В окне сохранённой задачи ⤴ у подпункта — сделать его отдельной задачей (сразу, с тем же разделом, проектом, сроком и планом). Наоборот: правая кнопка мыши (на телефоне — долгое нажатие) по задаче → «⤵ Подпунктом к задаче…» → выбираешь задачу (можно найти по названию). Название задачи и её подпункты станут подпунктами выбранной, заметка допишется к её заметке, а сама задача удалится. Если у задачи есть повтор или история отметок, сначала спрошу. Задачу, у которой есть «Следом», так перенести нельзя.'],
@@ -2597,6 +2596,7 @@ function openSettings() {
     <h3>Настройки</h3>
     <div class="menu">
       <button class="btn" data-act="archive">📦 Архив сделанного и графики</button>
+      <button class="btn" data-act="backup">💾 Резервная копия</button>
       <button class="btn ${S.showDone ? 'on' : ''}" data-act="show-done">${S.showDone ? '✓ ' : ''}Показывать выполненные</button>
       <button class="btn ${S.bg ? 'on' : ''}" data-act="bg-toggle">${S.bg ? '✓ ' : ''}Вид за окном на фоне</button>
       <button class="btn" data-act="set-name">Имя для приветствия: ${userName() ? esc(userName()) : 'не задано'}</button>
@@ -3717,7 +3717,6 @@ async function saveEdit() {
     row.bday = bv !== '';
     row.gift_days = row.bday && +bv ? +bv : null;
     if (row.bday) Object.assign(row, { repeat_unit: 'year', repeat_every: 1, repeat_weekdays: null });
-    S.bdayDay = null; // пересчитать задачи «Поздравить»/«Подарок»
   }
   if (isEvent(row)) {
     row.repeat_from = 'due';
@@ -3824,10 +3823,9 @@ document.addEventListener('change', async ev => {
   ev.target.value = '';
 });
 
-// ---------- дни рождения (её просьба 18.11.2026; нужен supabase/024_bdays.sql) ----------
-// День рождения — ежегодное событие с отметкой bday. За 60 дней заранее создаются задачи «Поздравить: …» (в сам день,
-// напоминание 9:00) и, если задан подарок, «Подарок: …» за gift_days дней (напоминание 10:00). Один раз на год:
-// уникальный индекс (bday_of, bday_year, bday_kind) в базе.
+// ---------- дни рождения (её просьба 18.11.2026; нужны supabase/024_bdays.sql и 025_bday_cron.sql) ----------
+// День рождения — ежегодное событие с отметкой bday. Задачи «Поздравить: …» (в сам день, 9:00) и «Подарок: …»
+// (за gift_days дней, 10:00) создаёт сама база — bday_gen() по расписанию, раз на год (таблица bday_done).
 const bdays = () => S.tasks.filter(t => t.bday && t.due_date);
 function bdaysSoon(n) {
   const to = addDays(today(), n);
@@ -3838,24 +3836,6 @@ function bdayRow({ t, d }) {
   const n = daysBetween(today(), d);
   return `<div class="bd-row" data-act="edit" data-id="${t.id}"><b>${esc(t.title)}${t.gift_days ? ' 🎁' : ''}</b><span>${dateLabel(d)}${n ? ` · через ${n} дн.` : ''}</span></div>`;
 }
-async function bdayGen() {
-  if (!S.tasks.some(t => 'bday' in t)) return false;
-  const rows = [];
-  for (const { t, d } of bdaysSoon(60)) {
-    const y = +d.slice(0, 4);
-    const has = k => S.tasks.some(x => x.bday_of === t.id && x.bday_year === y && x.bday_kind === k);
-    const base = { kind: 'task', section_id: t.section_id, space: spaceOf(t), bday_of: t.id, bday_year: y };
-    if (!has('hi')) rows.push({ ...base, bday_kind: 'hi', title: `Поздравить: ${t.title}`, due_date: d, remind_at: '09:00', size: 'quick' });
-    if (t.gift_days && !has('gift')) {
-      const g = addDays(d, -t.gift_days);
-      rows.push({ ...base, bday_kind: 'gift', title: `Подарок: ${t.title}`, due_date: g > today() ? g : today(), remind_at: '10:00', size: 'mid' });
-    }
-  }
-  if (!rows.length) return false;
-  await call(sb.from('tasks').upsert(rows, { onConflict: 'bday_of,bday_year,bday_kind', ignoreDuplicates: true }));
-  return true;
-}
-
 // Загрузка из файла: выгрузка Google Контактов (CSV) или календаря (ICS).
 function parseCSV(text) {
   const rows = [];
@@ -3889,6 +3869,8 @@ function bdaysFromCSV(text) {
     date: bdayDate(r[b]),
   })).filter(x => x.name && x.date);
 }
+// Загрузка: выгрузка Google Календаря (.ics или сразу архив .zip) или Google Контактов (CSV).
+// Сначала окно предпросмотра: отметить, кого добавить, и поправить имя («День рождения мамы» → «Мама»).
 function bdaysFromICS(text) {
   const lines = text.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '').split(/\r?\n/);
   const out = [];
@@ -3896,11 +3878,13 @@ function bdaysFromICS(text) {
   for (const l of lines) {
     if (l === 'BEGIN:VEVENT') ev = {};
     else if (l === 'END:VEVENT' && ev) {
-      const sum = (ev.SUMMARY || '').replace(/\\([,;\\])/g, '$1').replace(/\\n/gi, ' ');
-      if (ev.DTSTART && (/YEARLY/.test(ev.RRULE || '') || /рожд|birthday/i.test(sum))) {
-        const name = sum.replace(/(день рождения|birthday)\s*[:–—-]?\s*/i, '').replace(/[’']s\s*$/i, '').replace(/^[\s:–—-]+|[\s:–—-]+$/g, '');
+      const sum = (ev.SUMMARY || '').replace(/\\([,;\\])/g, '$1').replace(/\\n/gi, ' ').trim();
+      const sure = /рожд|birthday|^др([\s:.–—-]|$)|[\s(]др\)?$/i.test(sum);
+      // ежегодное или со словом «день рождения»; ежегодное без этих слов — на выбор, не отмечено
+      if (ev.DTSTART && (/YEARLY/.test(ev.RRULE || '') || sure)) {
+        const name = sum.replace(/(день рождения|birthday|^др(?=[\s:.–—-]|$)|\(?др\)?$)\s*[:.–—-]?\s*/i, '').replace(/[’']s\s*$/i, '').replace(/^[\s:–—-]+|[\s:–—-]+$/g, '') || sum;
         const date = bdayDate(ev.DTSTART);
-        if (name && date) out.push({ name, date });
+        if (name && date) out.push({ name, date, sure });
       }
       ev = null;
     } else if (ev) {
@@ -3910,28 +3894,110 @@ function bdaysFromICS(text) {
   }
   return out;
 }
-async function importBdays(file) {
+// Google отдаёт календари архивом .zip — достаём из него .ics (центральный каталог zip, deflate — средствами браузера)
+async function unzipTexts(buf) {
+  const v = new DataView(buf), u8 = new Uint8Array(buf), out = [];
+  let e = buf.byteLength - 22;
+  while (e >= 0 && v.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) return out;
+  let p = v.getUint32(e + 16, true);
+  const n = v.getUint16(e + 10, true);
+  for (let i = 0; i < n && v.getUint32(p, true) === 0x02014b50; i++) {
+    const method = v.getUint16(p + 10, true), size = v.getUint32(p + 20, true);
+    const nl = v.getUint16(p + 28, true), xl = v.getUint16(p + 30, true), cl = v.getUint16(p + 32, true), off = v.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nl));
+    p += 46 + nl + xl + cl;
+    if (!/\.(ics|csv)$/i.test(name)) continue;
+    const start = off + 30 + v.getUint16(off + 26, true) + v.getUint16(off + 28, true);
+    const data = u8.subarray(start, start + size);
+    if (method === 0) out.push(new TextDecoder().decode(data));
+    else if (method === 8) out.push(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text());
+  }
+  return out;
+}
+async function importBdays(files) {
   if (!S.tasks.some(t => 'bday' in t)) return toast('Сначала запусти в Supabase файл 024_bdays.sql');
-  const text = await file.text();
-  const found = /BEGIN:VCALENDAR/.test(text) ? bdaysFromICS(text) : bdaysFromCSV(text);
+  const texts = [];
+  for (const f of files) {
+    if (/\.zip$/i.test(f.name)) texts.push(...await unzipTexts(await f.arrayBuffer()));
+    else texts.push(await f.text());
+  }
+  const found = texts.flatMap(t => (/BEGIN:VCALENDAR/.test(t) ? bdaysFromICS(t) : bdaysFromCSV(t).map(x => ({ ...x, sure: true }))));
   if (!found.length) return toast('В файле не нашлось дней рождения');
-  let sec = S.sections.find(s => s.name.trim().toLowerCase() === 'дни рождения');
-  if (!sec) [sec] = await call(sb.from('sections').insert({ name: 'Дни рождения', color: '#ED93B1', position: S.sections.length, space: 'personal' }).select());
-  // уже есть с таким именем — не дублируем
   const have = new Set(bdays().map(t => t.title.trim().toLowerCase()));
   const seen = new Set();
-  const rows = found.filter(x => { const k = x.name.toLowerCase(); if (have.has(k) || seen.has(k)) return false; seen.add(k); return true; })
-    .map(x => ({ title: x.name, kind: 'event', bday: true, due_date: x.date, repeat_unit: 'year', repeat_every: 1, repeat_from: 'due', section_id: sec.id, space: 'personal' }));
-  if (rows.length) await call(sb.from('tasks').insert(rows));
-  S.bdayDay = null;
+  S.bdImp = found.filter(x => { const k = x.name.toLowerCase() + x.date.slice(4); if (seen.has(k)) return false; seen.add(k); return true; })
+    .map(x => { const dup = have.has(x.name.toLowerCase()); return { ...x, dup, on: x.sure && !dup }; })
+    .sort((a, b) => a.date.slice(5).localeCompare(b.date.slice(5)));
+  renderBdImp();
+}
+function renderBdImp() {
+  const L = S.bdImp;
+  const md = d => `${+d.slice(8)} ${MONTHS_OF[+d.slice(5, 7) - 1]}${d.startsWith('2000') ? '' : ' ' + d.slice(0, 4)}`;
+  $modal.dataset.kind = 'bdimp';
+  $modal.innerHTML = `<div class="overlay"><div class="sheet fixed bdimp">
+    <h3>Дни рождения из файла</h3>
+    <div class="bdi-list">${L.map((x, i) => `<label class="bdi${x.on ? ' on' : ''}">
+      <input type="checkbox" data-bdi="${i}" ${x.on ? 'checked' : ''}>
+      <input class="inp" data-bdn="${i}" value="${esc(x.name)}">
+      <span>${md(x.date)}${x.dup ? ' · ⚠ уже есть' : ''}</span></label>`).join('')}</div>
+    <div class="actions"><button class="btn" data-act="close">Отмена</button>
+      <button class="btn main" data-act="bdimp-save">Добавить: ${L.filter(x => x.on).length}</button></div>
+  </div></div>`;
+}
+document.addEventListener('input', ev => {
+  const t = ev.target;
+  if (!S.bdImp || !t.dataset) return;
+  if (t.dataset.bdn !== undefined) S.bdImp[+t.dataset.bdn].name = t.value;
+  if (t.dataset.bdi !== undefined) {
+    S.bdImp[+t.dataset.bdi].on = t.checked;
+    t.closest('.bdi').classList.toggle('on', t.checked);
+    $modal.querySelector('[data-act=bdimp-save]').textContent = `Добавить: ${S.bdImp.filter(x => x.on).length}`;
+  }
+});
+async function bdImpSave(el) {
+  const pick = S.bdImp.filter(x => x.on && x.name.trim());
+  if (!pick.length) return closeModal();
+  el.disabled = true;
+  let sec = S.sections.find(s => s.name.trim().toLowerCase() === 'дни рождения');
+  if (!sec) [sec] = await call(sb.from('sections').insert({ name: 'Дни рождения', color: '#ED93B1', position: S.sections.length, space: 'personal' }).select());
+  await call(sb.from('tasks').insert(pick.map(x => ({ title: x.name.trim(), kind: 'event', bday: true, due_date: x.date,
+    repeat_unit: 'year', repeat_every: 1, repeat_from: 'due', section_id: sec.id, space: 'personal' }))));
+  S.bdImp = null;
+  closeModal();
   await load();
-  toast(`Дни рождения: добавлено ${rows.length}${found.length > rows.length ? `, уже были — ${found.length - rows.length}` : ''}`);
+  toast(`Дни рождения: добавлено ${pick.length}`);
 }
 document.addEventListener('change', async ev => {
-  if (ev.target.id !== 'bday-file' || !ev.target.files[0]) return;
-  try { await importBdays(ev.target.files[0]); } catch (e) { console.error(e); }
+  if (ev.target.id !== 'bday-file' || !ev.target.files.length) return;
+  try { await importBdays([...ev.target.files]); } catch (e) { console.error(e); toast('Не получилось прочитать файл'); }
   ev.target.value = '';
 });
+
+// ---------- резервная копия (18.11.2026): все свои данные одним файлом JSON ----------
+const BACKUP_TABLES = ['sections', 'tasks', 'task_log', 'templates', 'projects', 'time_log', 'reads', 'read_folders', 'payments', 'prefs', 'bday_done'];
+async function backup(el) {
+  el.disabled = true; el.textContent = 'Собираю…';
+  const out = { made: new Date().toISOString(), user: S.user.id };
+  try {
+    for (const tb of BACKUP_TABLES) {
+      const rows = [];
+      for (let i = 0; ; i += 1000) {
+        const { data, error } = await sb.from(tb).select('*').range(i, i + 999);
+        if (error) break; // таблицы нет — пропускаем
+        rows.push(...data);
+        if (data.length < 1000) break;
+      }
+      out[tb] = rows;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
+    a.download = `zadachi-${today()}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    el.textContent = `💾 Готово: задач ${out.tasks.length}`;
+  } catch (e) { console.error(e); el.textContent = 'Не получилось — попробуй ещё раз'; el.disabled = false; }
+}
 
 
 // Выключить / включить раздел. При включении устаревшие сроки переносятся вперёд:
@@ -4568,6 +4634,8 @@ document.addEventListener('click', async ev => {
       case 'set-name': await setName(); break;
       case 'settings': openSettings(); break;
       case 'archive': await openArchive(); break;
+      case 'backup': await backup(el); break;
+      case 'bdimp-save': await bdImpSave(el); break;
       case 'arch-range': S.arch.range = +el.dataset.v; localSet('arange', el.dataset.v); renderArchive(); break;
       case 'help': openHelp(); break;
       case 'occ': openOcc(); break;
