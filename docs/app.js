@@ -157,6 +157,22 @@ async function call(promise) {
   if (error) { toast('Ошибка: ' + error.message); throw error; }
   return data;
 }
+// База отдаёт за раз не больше 1000 строк — большие выборки читаем порциями.
+// make() каждый раз строит запрос заново (с сортировкой, иначе порции могут перепутаться).
+// soft: нет таблицы / ошибка — вернуть null без сообщения.
+const PAGE = 1000;
+async function callAll(make, soft = false) {
+  const out = [];
+  for (let i = 0; ; i += PAGE) {
+    const { data, error } = await make().range(i, i + PAGE - 1);
+    if (error) {
+      if (soft) return null;
+      toast('Ошибка: ' + error.message); throw error;
+    }
+    out.push(...data);
+    if (data.length < PAGE) return out;
+  }
+}
 
 const sectionOf = t => S.sections.find(s => s.id === t.section_id);
 // Задачи выключенного раздела нигде не показываются, кроме самого раздела в «Разделах».
@@ -219,15 +235,15 @@ async function load() {
   const since = addDays(today(), -62);
   const monthFrom = S.month && S.month < since ? S.month : since;
   const [tasks, sections, logs, templates, projects, times, reads, rfolders] = await Promise.all([
-    call(sb.from('tasks').select('*').or(`done_on.is.null,done_on.gte.${monthFrom},project_id.not.is.null`).order('position').order('created_at')),
+    callAll(() => sb.from('tasks').select('*').or(`done_on.is.null,done_on.gte.${monthFrom},project_id.not.is.null`).order('position').order('created_at').order('id')),
     call(sb.from('sections').select('*').order('position').order('created_at')),
-    call(sb.from('task_log').select('*').gte('day', monthFrom).order('id')),
+    callAll(() => sb.from('task_log').select('*').gte('day', monthFrom).order('id')),
     call(sb.from('templates').select('*').order('created_at')),
     call(sb.from('projects').select('*').order('created_at', { ascending: false })),
     // фактическое время (017_time.sql); пока таблицы нет — просто пусто, без ошибки
-    sb.from('time_log').select('*').gte('day', addDays(today(), -400)).order('day').then(r => (r.error ? null : r.data)),
+    callAll(() => sb.from('time_log').select('*').gte('day', addDays(today(), -400)).order('day').order('id'), true),
     // очередь чтения (022_reads.sql): в очереди + прочитанные сегодня
-    sb.from('reads').select('*').order('created_at').then(r => (r.error ? null : r.data)),
+    callAll(() => sb.from('reads').select('*').order('created_at').order('id'), true),
     sb.from('read_folders').select('*').order('position').order('created_at').then(r => (r.error ? null : r.data)),
   ]);
   S.reads = reads || [];
@@ -998,7 +1014,7 @@ function renderTime() {
 async function loadHabitLogs(ids) {
   S.hLogs = [];
   if (!ids.length) return;
-  S.hLogs = await call(sb.from('task_log').select('*').in('task_id', ids).gte('day', addDays(today(), -365)).order('id'));
+  S.hLogs = await callAll(() => sb.from('task_log').select('*').in('task_id', ids).gte('day', addDays(today(), -365)).order('id'));
   if (S.view === 'habits') render();
 }
 
@@ -2081,12 +2097,7 @@ async function openArchive() {
   S.arch = S.arch || { range: +(localGet('arange') || 30) };
   $modal.innerHTML = '<div class="overlay" data-act="close-bg"><div class="sheet fixed arch"><h3>Архив</h3><div class="empty">Загружаю…</div></div></div>';
   // за год отметок больше 1000 (лимит одного запроса) — грузим частями
-  const logs = [];
-  for (let i = 0; ; i += 1000) {
-    const part = await call(sb.from('task_log').select('id,task_id,done_on,day,status').eq('status', 'done').gte('done_on', addDays(today(), -365)).order('id').range(i, i + 999));
-    logs.push(...part);
-    if (part.length < 1000) break;
-  }
+  const logs = await callAll(() => sb.from('task_log').select('id,task_id,done_on,day,status').eq('status', 'done').gte('done_on', addDays(today(), -365)).order('id'));
   logs.sort((a, b) => (a.done_on < b.done_on ? 1 : -1));
   const known = new Map(S.tasks.map(t => [t.id, t]));
   const missing = [...new Set(logs.map(l => l.task_id))].filter(id => !known.has(id));
