@@ -12,6 +12,9 @@ const MONTHS_OF = ['января', 'февраля', 'марта', 'апреля
 const DAYS = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
 const SECTION_COLORS = ['#8fb3ff', '#c3a6ff', '#8fd6a0', '#f2c26b', '#f2808a', '#7fd8e8', '#ffab7a', '#e6a3d6'];
 
+// Рабочий режим убран из Задач (её решение 18.11.2026, ревизия 21.11.2026): 💼 не видно, на всех устройствах — личный.
+// Код и рабочие данные в базе остаются — из них потом будет отдельное приложение для работы. Вернуть — true.
+const WORK_ON = false;
 const S = {
   user: null,
   tasks: [],
@@ -24,7 +27,7 @@ const S = {
   edit: null,             // задача в окне редактирования
   loaded: false,
   cal: loadCal(),         // календарь: режим (месяц/неделя) и фильтры
-  space: localGet('space') === 'work' ? 'work' : 'personal', // режим «Личное / Работа» (своё на каждом устройстве)
+  space: WORK_ON && localGet('space') === 'work' ? 'work' : 'personal', // режим «Личное / Работа» (своё на каждом устройстве)
   templates: [],
   projects: [],
   tpl: null,              // шаблон в окне редактирования
@@ -220,7 +223,7 @@ const quiet = t => t.decor === 'books' || t.decor === 'cake';
 const active = () => activeAll().filter(t => !quiet(t) && !pausedSec(t.section_id) && spaceOf(t) === S.space);
 const booksNow = () => activeAll().filter(t => quiet(t) && t.due_date && t.due_date <= today() && !pausedSec(t.section_id) && spaceOf(t) === S.space);
 // рабочие события — в личном календаре видны бледно, как «занято»
-const busyEvents = () => (S.space === 'personal'
+const busyEvents = () => (WORK_ON && S.space === 'personal'
   ? activeAll().filter(t => isEvent(t) && spaceOf(t) === 'work' && !pausedSec(t.section_id)) : []);
 const isEvent = t => t.kind === 'event';
 const hhmm = s => (s ? s.slice(0, 5) : '');
@@ -2685,6 +2688,7 @@ document.addEventListener('change', ev => {
 });
 
 // ---------- справка ----------
+const WORK_HELP = ['🏠 / 💼', 'Шаблоны (работа)', 'Потраченное время (работа)', 'Шаблон из задачи', 'Шаги и подзадачи шаблона (работа)', 'Инструкции к шаблонам 📖 (работа)', 'План (работа, компьютер)', 'Порядок шагов'];
 const HELP = [
   ['Сегодня', 'Всё, что нужно сделать сегодня: привычки, задачи (и просроченные), события. Кружок — отметить. Нажать на отметку ещё раз — отменить. Внутри каждой части дня задачи идут по разделам; цветная полоска слева — цвет раздела.'],
   ['Новая задача', '«+» внизу. Вид: <b>задача</b>, <b>привычка</b> (вода, зарядка) или <b>событие</b> (встреча, его не отмечают). Можно указать срок, время, повтор, напоминание и раздел.'],
@@ -2730,7 +2734,7 @@ const HELP = [
   ['⚙ Настройки', 'Уведомления, имя для приветствия, показ выполненных, вид за окном. <b>Размер задач по разделам</b> — все задачи раздела получат этот размер, если у задачи не выбран свой (например, «Проекты» — ✦ вдохновение). <b>Цветок</b> — привычки каких разделов он считает (светится — считается). <b>Питомцы</b> — кого показывать (светится — видно). <b>Режим раздела</b> (✎ у раздела) — задачи раздела переезжают вместе с ним.'],
   ['Чтение 📰', 'Статьи «прочитать потом» — чтобы не держать их открытыми вкладками. Вкладка «Чтение» (в личном режиме).<br><br><b>Каждый день</b> программа выбирает несколько статей (сколько и какие — ⚙ → «Чтение»: самые старые или случайные, из каких папок). Пока на сегодня есть непрочитанные, на полке лежит газета (на телефоне или без вида за окном — значок 📰 в заголовке). Нажми на неё — список статей на сегодня: название открывает статью, ✓ — прочитала, 🎲 «Другие» — выбрать другие статьи вместо непрочитанных. Всё прочитано — газета исчезает до завтра. Во вкладке «Чтение» те же статьи — вверху, в «Сегодня».<br><br><b>Добавить статью</b> — вставить ссылку в поле вверху вкладки и нажать «+» (или Enter). Название, сайт и дату статьи программа берёт со страницы сама; если не вышло — ✎ и вписать, или ↻ в окне статьи — попробовать ещё раз. Статья попадает в открытую папку. Программа берёт со страницы и картинку статьи: ▦ рядом с «+» — показать статьи плиткой с картинками, ☰ — снова списком. Нет картинки — на плитке первая буква сайта. Сортировка — по дате статьи, от старых к новым (статьи без даты — в конце).<br><br><b>Дубли.</b> Если такая ссылка уже есть (в том числе прочитанная), статья не добавится: появится «⚠ Уже есть …», а во вкладке та статья подсветится. Одной ссылкой считаются адреса с www и без, с «/» в конце и без, с метками вроде utm_…; у Хабра — одна и та же статья по разным адресам. Если дубли уже лежат в списке, у них пометка «⚠ дубль». Ещё способы добавить:<br>• на телефоне — в браузере «Поделиться» → «Задачи». Если «Задач» в списке нет — удали приложение с телефона и установи заново (Chrome → ⋮ → «Установить приложение»);<br>• на компьютере — кнопка расширения «В чтение» на панели браузера (или Alt+Shift+R); правый щелчок по ссылке → «В «Чтение»» — добавить статью, не открывая её. Появится маленькое окошко «Добавлено» и само закроется;<br>• или кнопка-закладка: перетащи её мышкой на панель закладок браузера: ' + `<a class="bm" href="javascript:void(window.open('${location.origin + location.pathname}?pop=1&url='+encodeURIComponent(location.href)+'&title='+encodeURIComponent(document.title),'tmread','width=420,height=300'))">📰 В чтение</a>` + '. Потом на странице статьи нажми её: появится окошко «Добавлено» и само закроется — вкладку со статьёй можно закрывать.<br><br><b>Папки</b> — слева (на телефоне — строкой сверху): «+ Папка», ✎ у названия — переименовать или удалить (статьи останутся, без папки). Переложить статью — перетащить мышкой на папку или ✎ у статьи → «Папка».<br><br>У статьи видно: сайт и «от» — дата самой статьи. Когда положила её в список — в окне статьи (✎). ✓ — прочитала (уходит в «✓ Прочитанные», там видно, когда прочитана; ↩ — вернуть в список). ✎ — название, сайт, дата, папка, ссылка, удалить.'],
   ['Устройства', 'Всё хранится в облаке. Входи с той же почтой на телефоне и компьютере. На телефоне: Chrome → ⋮ → «Установить приложение».'],
-];
+].filter(([t]) => WORK_ON || !WORK_HELP.includes(t));
 
 function openHelp(first = false) {
   $modal.dataset.kind = 'help';
@@ -3904,7 +3908,7 @@ function openSection(sec) {
     <h3>${sec ? 'Раздел' : 'Новый раздел'}</h3>
     <div class="field"><input class="inp" id="s-name" placeholder="Название" value="${esc(sec?.name || '')}"></div>
     <div class="field seg">${SECTION_COLORS.map(c => `<button class="pill ${c === color ? 'on' : ''}" data-act="s-color" data-v="${c}"><i class="dot" style="background:${c};margin:0"></i></button>`).join('')}</div>
-    ${sec ? `<div class="field"><label>Режим</label>
+    ${sec && WORK_ON ? `<div class="field"><label>Режим</label>
       <select class="inp" id="s-space">${Object.entries(SPACES).map(([k, n]) => `<option value="${k}" ${spaceOfSec(sec) === k ? 'selected' : ''}>${n}</option>`).join('')}</select></div>` : ''}
     <div class="actions">
       ${sec ? `<div class="row"><button class="btn danger" data-act="s-delete" data-id="${sec.id}">Удалить</button>
@@ -3919,7 +3923,7 @@ async function saveSection(id) {
   if (!name) return toast('Напиши название');
   const color = $modal.querySelector('[data-act=s-color].on').dataset.v;
   if (id) {
-    const space = document.getElementById('s-space').value;
+    const space = document.getElementById('s-space')?.value || spaceOfSec(S.sections.find(s => s.id === id));
     await call(sb.from('sections').update({ name, color, space }).eq('id', id));
     if (space !== S.space) { S.section = null; toast(`Раздел «${name}» теперь в режиме «${SPACES[space]}»`); }
   }
@@ -4178,10 +4182,10 @@ async function togglePause(id) {
 // ---------- режимы «Личное / Работа» ----------
 const SPACES = { personal: '🏠 Личное', work: '💼 Работа' };
 // только значок: 🏠 — личное, 💼 — работа (что это — в справке)
-const MODE = () => `<button class="icon mode" data-act="space" aria-label="${SPACES[S.space]}">${SPACES[S.space].split(' ')[0]}</button>`;
+const MODE = () => !WORK_ON ? '' : `<button class="icon mode" data-act="space" aria-label="${SPACES[S.space]}">${SPACES[S.space].split(' ')[0]}</button>`;
 
 function setSpace(space) {
-  S.space = space;
+  S.space = WORK_ON ? space : 'personal';
   localSet('space', space);
   S.section = null;
   S.pick = null;
@@ -4259,6 +4263,7 @@ async function createProject(tpl, p) {
 const periodFor = tpl => lastPeriod(tpl.period, addWorkDays(today(), tpl.lead_days || 0));
 let generating = false;
 async function autoGenerate() {
+  if (!WORK_ON) return false; // шаблоны — только в рабочем режиме
   if (generating) return false;
   generating = true;
   let made = false;
