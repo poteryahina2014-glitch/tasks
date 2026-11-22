@@ -181,6 +181,16 @@ function delTasks(ids) {
   toast(ids.length === 1 ? 'Задача удалена' : `Удалено задач: ${ids.length}`, async () => { clearTimeout(timer); forget(); await load(); });
 }
 
+// Пока сохранение идёт, повторный вызов (двойной Enter, Enter + щелчок) ничего не делает — иначе две одинаковые задачи.
+function once(fn) {
+  let busy = false;
+  return async function (...a) {
+    if (busy) return;
+    busy = true;
+    try { return await fn.apply(this, a); } finally { busy = false; }
+  };
+}
+
 async function call(promise) {
   const { data, error } = await promise;
   if (error) { toast('Ошибка: ' + error.message); throw error; }
@@ -2256,7 +2266,7 @@ function renderPay(reset = false) {
     <div class="actions"><span></span><button class="btn" data-act="close">Закрыть</button></div>
   </div></div>`;
 }
-async function savePay() {
+const savePay = once(async function savePay() {
   const p = S.pay;
   if (!p.on) return toast('Сначала запусти в Supabase файл 020_payments_howto.sql');
   const row = { paid_on: document.getElementById('pay-d').value || today(), amount: parseMoney(document.getElementById('pay-a').value),
@@ -2275,7 +2285,7 @@ async function savePay() {
   p.list.sort((a, b) => a.paid_on.localeCompare(b.paid_on) || String(a.created_at).localeCompare(String(b.created_at)));
   renderPay(true);
   document.getElementById('pay-a')?.focus();
-}
+});
 async function payMark(id, done) {
   const x = S.pay.list.find(y => String(y.id) === id);
   if (!x) return;
@@ -2618,7 +2628,7 @@ function openFolder(id) {
     </div></div></div>`;
   document.getElementById('rf-name').focus();
 }
-async function folderSave(id) {
+const folderSave = once(async function folderSave(id) {
   const name = document.getElementById('rf-name').value.trim();
   if (!name) return toast('Напиши название');
   if (id) { const f = rfolder(id); await call(sb.from('read_folders').update({ name }).eq('id', f.id)); f.name = name; }
@@ -2629,7 +2639,7 @@ async function folderSave(id) {
   }
   closeModal();
   render();
-}
+});
 async function folderDel(id) {
   const f = rfolder(id), n = S.reads.filter(r => r.folder_id === f.id).length;
   if (!confirm(`Удалить папку «${f.name}»?${n ? ` Статьи (${n}) останутся — без папки.` : ''}`)) return;
@@ -3812,7 +3822,7 @@ function closeModal() {
   renderReview(); // открыли задачу из утреннего окна — после неё вернуться в окно
 }
 
-async function saveEdit() {
+const saveEdit = once(async function saveEdit() {
   const e = S.edit;
   const title = document.getElementById('f-title').value.trim();
   if (!title) return toast('Напиши, что сделать');
@@ -3892,7 +3902,7 @@ async function saveEdit() {
   closeModal();
   await load();
   if (backToOcc) openOcc();
-}
+});
 
 function deleteEdit() {
   const id = S.edit.id;
@@ -3918,7 +3928,7 @@ function openSection(sec) {
   document.getElementById('s-name').focus();
 }
 
-async function saveSection(id) {
+const saveSection = once(async function saveSection(id) {
   const name = document.getElementById('s-name').value.trim();
   if (!name) return toast('Напиши название');
   const color = $modal.querySelector('[data-act=s-color].on').dataset.v;
@@ -3933,7 +3943,7 @@ async function saveSection(id) {
   }
   closeModal();
   await load();
-}
+});
 
 async function deleteSection(id) {
   if (!confirm('Удалить раздел? Задачи из него останутся, просто без раздела.')) return;
