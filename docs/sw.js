@@ -1,8 +1,8 @@
 // Нужен, чтобы приложение устанавливалось и открывалось без интернета.
 // Свои файлы — сначала из сети, мимо кэша браузера (GitHub Pages кэширует на 10 минут), без сети — из кэша.
 // Запросы к Supabase не трогаем.
-const CACHE = 'tasks-v2';
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.json', 'icons/icon-192.png',
+const CACHE = 'tasks-v3';
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'version.js', 'manifest.json', 'icons/icon-192.png',
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.76.1/dist/umd/supabase.js'];
 
 self.addEventListener('install', e => {
