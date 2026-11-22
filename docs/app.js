@@ -2913,6 +2913,7 @@ function moToggle(k) {
   renderReview();
 }
 function renderReview() {
+  if (S.saving) return; // идёт сохранение утреннего окна — не рисовать заново (иначе кнопка снова доступна и отметки уйдут дважды)
   const list = reviewList();
   const o = S.offer;
   const kind = $modal.dataset.kind;
@@ -3019,7 +3020,13 @@ function rvMark(el, id, v) {
   rvCount();
 }
 async function rvSave(reload = true) {
-  for (const t of reviewList()) {
+  const list = reviewList();
+  // свежие сроки из базы: если задачу уже отметили (другое устройство, повторная отправка при плохой связи),
+  // её срок/план/выполнение изменились — эту отметку не отправляем
+  const fresh = new Map((list.length ? await call(sb.from('tasks').select('id,due_date,plan_date,done_on').in('id', list.map(t => t.id))) : []).map(x => [x.id, x]));
+  const same = t => { const f = fresh.get(t.id); return !!f && f.due_date === t.due_date && (f.plan_date || null) === (t.plan_date || null) && f.done_on === t.done_on; };
+  for (const t of list) {
+    if (!same(t)) continue;
     let v = S.rv[rvKey(t)], part = null;
     if (Array.isArray(v)) {
       const yes = v.filter(x => x === 'yes').length, n = subsOf(t).length;
@@ -3220,7 +3227,7 @@ function offerGroups(mode) {
 
 // Окна предложений — раз утром и раз с 16 до 19 на весь аккаунт (отметки в user_metadata, видны всем устройствам).
 async function maybeOffer() {
-  if (!S.user || !S.loaded || S.space !== 'personal' || ($modal.dataset.kind && $modal.dataset.kind !== 'morning') || S.offer || S.offerBusy) return;
+  if (!S.user || !S.loaded || S.space !== 'personal' || ($modal.dataset.kind && $modal.dataset.kind !== 'morning') || S.offer || S.offerBusy || S.saving) return;
   const d = today(), h = new Date().getHours(), eve = h >= 16 && h < 19;
   // быстрая отметка этого устройства — чтобы не спрашивать сервер каждую минуту
   if (localGet('offer') === d && (!eve || localGet('offerEve') === d)) return;
@@ -3337,7 +3344,8 @@ function offerHide(hidden) {
 // «Сохранить» утреннего окна: вчерашнее, предложения («Сегодня» — срок на сегодня, «Потом» — предложить через 4 дня), размеры.
 async function moSave(el) {
   const list = reviewList();
-  if (list.some(t => !rvMarked(t))) return;
+  if (S.saving || list.some(t => !rvMarked(t))) return;
+  S.saving = true;
   el.disabled = true; el.textContent = 'Сохраняю…';
   const o = S.offer;
   S.offer = null;
@@ -3356,6 +3364,7 @@ async function moSave(el) {
     }
   } finally {
     S.rv = {};
+    S.saving = false;
     $modal.innerHTML = ''; $modal.dataset.kind = '';
     await load();
   }
