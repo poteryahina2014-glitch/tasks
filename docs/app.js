@@ -2033,6 +2033,12 @@ function openBulk() {
     <div class="field"><label>Напомнить на телефон</label>
       <div class="row bpair"><select class="inp" id="b-remindmode">${opt(KEEP, '— не менять —')}${opt('set', 'В это время')}${opt('none', 'Не напоминать')}</select>
       <input class="inp" id="b-remind" type="time" value="09:00"></div></div>
+    <div class="field"><label>Напомнить заранее</label>
+      <div class="row bpair"><select class="inp" id="b-earlymode">${opt(KEEP, '— не менять —')}${opt('set', 'За столько дней')}${opt('none', 'Не напоминать заранее')}</select>
+      <input class="inp num" id="b-early" type="number" min="1" max="60" value="7" style="max-width:70px"></div></div>
+    <div class="field"><label>По какое число</label>
+      <div class="row bpair"><select class="inp" id="b-endmode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить дату')}${opt('none', 'Убрать')}</select>
+      <input class="inp" id="b-end" type="date" value="${today()}"></div></div>
     ${planOn() || S.space === 'work' ? `<div class="field"><label>План: день, когда делаю</label>
       <div class="row bpair"><select class="inp" id="b-planmode">${opt(KEEP, '— не менять —')}${opt('set', 'Поставить день')}${opt('none', 'Убрать план')}</select>
       <input class="inp" id="b-plan" type="date" value="${today()}"></div></div>
@@ -2056,6 +2062,11 @@ function openBulk() {
         <button class="pill" data-act="b-from" data-v="due">от старого срока</button>
         <button class="pill" data-act="b-from" data-v="done">от дня выполнения</button>
       </div></div>
+    <div class="field"><label>Окно ⌛</label>
+      <div class="row bpair"><select class="inp" id="b-winmode">${opt(KEEP, '— не менять —')}${opt('set', 'Дней на выполнение')}${opt('none', 'Как у раздела')}</select>
+      <input class="inp num" id="b-win" type="number" min="0" max="30" value="3" style="max-width:70px"></div></div>
+    <div class="field"><label>День рождения</label>
+      <select class="inp" id="b-bday">${opt(KEEP, '— не менять —')}${opt('', 'Нет')}${opt('0', '🎂 без подарка')}${[7, 14, 21, 28].map(n => opt(String(n), `🎂 🎁 за ${n / 7} нед.`)).join('')}</select></div>
     ${personal ? `<div class="field"><label>Размер</label>
       <select class="inp" id="b-size">${opt(KEEP, '— не менять —')}${opt('', 'Нет (или как у раздела)')}${Object.entries(SIZES).map(([k, z]) => opt(k, z.icon + ' ' + z.name)).join('')}</select></div>
     <div class="field" id="b-slot-box"><label>Когда</label>
@@ -2074,8 +2085,8 @@ function openBulk() {
 }
 
 // «режим → поле»: поле видно, когда выбрано «поставить»
-const BULK_MODES = ['b-datemode', 'b-startmode', 'b-timemode', 'b-remindmode', 'b-planmode', 'b-estmode'];
-const BULK_FIELD = { 'b-datemode': 'b-date', 'b-startmode': 'b-start', 'b-timemode': 'b-time-box', 'b-remindmode': 'b-remind', 'b-planmode': 'b-plan', 'b-estmode': 'b-est' };
+const BULK_MODES = ['b-datemode', 'b-startmode', 'b-timemode', 'b-remindmode', 'b-earlymode', 'b-endmode', 'b-winmode', 'b-planmode', 'b-estmode'];
+const BULK_FIELD = { 'b-datemode': 'b-date', 'b-startmode': 'b-start', 'b-timemode': 'b-time-box', 'b-remindmode': 'b-remind', 'b-earlymode': 'b-early', 'b-endmode': 'b-end', 'b-winmode': 'b-win', 'b-planmode': 'b-plan', 'b-estmode': 'b-est' };
 
 function syncBulk() {
   const unit = document.getElementById('b-unit').value;
@@ -2114,6 +2125,15 @@ async function saveBulk() {
   }
   if (mode('b-timemode') === 'none') { upd.start_time = null; upd.end_time = null; }
   if (mode('b-remindmode') !== KEEP) { upd.remind_at = mode('b-remindmode') === 'set' ? v('b-remind') || '09:00' : null; upd.reminded_on = null; }
+  if (mode('b-earlymode') !== KEEP) { upd.remind_days = mode('b-earlymode') === 'set' ? Math.min(60, Math.max(1, Math.round(+v('b-early') || 1))) : null; upd.early_on = null; }
+  if (mode('b-endmode') !== KEEP) upd.end_date = mode('b-endmode') === 'set' ? v('b-end') || null : null;
+  if (mode('b-winmode') !== KEEP) upd.window_days = mode('b-winmode') === 'set' ? Math.min(30, Math.max(0, Math.round(+v('b-win') || 0))) : null;
+  // день рождения — как в окне задачи: событие, повтор раз в год, подарок за N дней
+  if (mode('b-bday') !== KEEP) {
+    upd.bday = v('b-bday') !== '';
+    upd.gift_days = upd.bday && +v('b-bday') ? +v('b-bday') : null;
+    if (upd.bday) Object.assign(upd, { kind: 'event', repeat_unit: 'year', repeat_every: 1, repeat_weekdays: null });
+  }
   if (mode('b-planmode') !== KEEP) upd.plan_date = mode('b-planmode') === 'set' ? v('b-plan') || today() : null;
   if (mode('b-estmode') !== KEEP) upd.estimate = mode('b-estmode') === 'set' ? parseFloat(v('b-est').replace(',', '.')) || null : null;
   if (mode('b-size') !== KEEP) { upd.size = v('b-size') || null; upd.slot = upd.size === 'mid' || upd.size === 'idea' ? v('b-slot') || null : null; }
@@ -2723,7 +2743,7 @@ const HELP = [
   ['Быстрое меню', 'Долгое нажатие на задачу (на компьютере — правая кнопка): на сегодня, на завтра, в другой раздел.'],
   ['🏠 / 💼', 'Личное и работа отдельно, переключатель вверху. В работе есть «Шаблоны»: повторяющиеся проекты из шагов (например, квартальная отчётность), создаются сами.'],
   ['Шаблоны (работа)', '«⟳ Шаблоны» в колонке разделов. Шаблон сам создаёт проект с задачами, когда заканчивается месяц, квартал или год, — в разделе шаблона. <b>Какие месяцы</b>: «Только некоторые» — задачи создадутся только за отмеченные месяцы (например, оценка урожая — июль–октябрь). <b>Создавать заранее</b> за N рабочих дней до конца периода; 0 — на следующий день после конца. <b>Шаги</b>: «с» и «до» — числа месяца, «мес.» — какой по счёту месяц после конца периода (1 — следующий), «часов» — оценка (если по факту уже записано время, новые задачи получат среднее по факту). У шага могут быть подзадачи — без своих сроков; «после шагов» — номера шагов, которые надо сделать раньше. <b>Создать задачи сейчас</b> — за выбранный период, не дожидаясь конца. <b>Копия</b> — например, сделать годовую отчётность из квартальной.'],
-  ['Изменить несколько', '☐ в «Разделах» → отметь задачи → ✎. Меняется только то, где выбрано не «— не менять —».'],
+  ['Изменить несколько', '☐ в «Разделах» → отметь задачи → ✎. Меняется только то, где выбрано не «— не менять —». Можно поменять всё, что есть в окне задачи, кроме того, что у каждой своё: название, заметка, подпункты, «Делать после», «Следом» и цикл. Например, отметить несколько дней рождения и поставить всем «🎁 за 2 нед.»'],
   ['Подпункты', 'В окне задачи «+ Подпункт»: письма, проверки и т.п. Отмечаются прямо под задачей. В шаблоне у шага — «+ подзадача».'],
   ['Потраченное время (работа)', 'В окне рабочей задачи — «Потрачено по факту»: напиши часы (1,5 или 1:30), выбери день и нажми «+ Записать». Можно записывать несколько раз — итог складывается. В строке задачи ⏱ факт / оценка (красным — если вышло больше оценки). На «Плане» у дня — «по факту». Вкладка <b>«Время»</b> (на компьютере): сколько ушло по дням, по дням недели, по задачам и сколько обычно занимают шаги шаблонов.'],
   ['Шаблон из задачи', 'В окне рабочей задачи — «⟳ Сделать шаблон из этой задачи». Выбери, за какой период эта задача (например, октябрь 2026), и какие подпункты взять. Сама задача станет первой (за этот период), следующие шаблон создаст сам — «… — ноябрь 2026». Оценка часов у новых задач — среднее фактическое время за прошлые периоды. В окне шаблона — таблица «Время по периодам».'],
