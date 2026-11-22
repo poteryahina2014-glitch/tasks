@@ -20,7 +20,7 @@ const S = {
   tasks: [],
   sections: [],
   logs: [],
-  view: localGet('view') || 'today',
+  view: 'today', // при запуске всегда «Сегодня» (её решение: не последняя открытая вкладка)
   section: null,          // выбранный раздел на вкладке «Разделы» (null — все)
   month: null,            // первый день месяца в календаре
   day: null,              // выбранный день в календаре
@@ -675,12 +675,17 @@ const sectionTasks = secId => activeAll().filter(t => (t.section_id || null) ===
 function renderSections() {
   const sel = S.section;
   const count = id => sectionTasks(id).length;
+  const pausedN = mySecs().filter(s => s.paused).length;
+  const showPaused = S.showPaused || pausedSec(sel); // открыт выключенный раздел — список не прячем
   // слева (на телефоне — строкой сверху): разделы; на них можно бросать задачи
   const item = (id, name, color, n) => `<button class="pill side-item ${sel === id ? 'on' : ''} ${pausedSec(id) ? 'paused' : ''}" data-act="section" data-id="${id || ''}" data-drop-sec="${id || ''}">
       ${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}<span class="name">${esc(name)}</span>${pausedSec(id) ? '<span class="n" title="Раздел выключен">⏸</span>' : n ? `<span class="n">${n}</span>` : ''}</button>`;
   const side = [`<button class="pill side-item ${sel === null ? 'on' : ''}" data-act="section" data-id="">Все<span class="n">${active().filter(t => !eventOver(t) && filterOk(t)).length}</span></button>`]
-    .concat(mySecs().map(s => item(s.id, s.name, s.color, count(s.id))))
+    .concat(mySecs().filter(s => !s.paused).map(s => item(s.id, s.name, s.color, count(s.id))))
     .concat(count(null) ? [item('none', 'Без раздела', null, count(null))] : [])
+    // выключенные разделы не мешают в списке (её просьба): спрятаны за кнопкой ⏸ N
+    .concat(pausedN ? [`<button class="pill side-item paused-btn ${showPaused ? 'on' : ''}" data-act="show-paused" aria-label="Выключенные разделы">⏸ ${pausedN}</button>`] : [])
+    .concat(showPaused ? mySecs().filter(s => s.paused).map(s => item(s.id, s.name, s.color, count(s.id))) : [])
     .concat(['<button class="pill side-item add" data-act="new-section">+ Раздел</button>'])
     .concat(S.space === 'work' ? ['<button class="pill side-item add tpl-btn" data-act="templates">⟳ Шаблоны</button>'] : []);
 
@@ -696,6 +701,7 @@ function renderSections() {
     // дни рождения — от ближайшего
     const list = list0.filter(t => !t.bday).concat(list0.filter(t => t.bday).sort((a, b) => (upcoming(a) < upcoming(b) ? -1 : 1)));
     const paused = pausedSec(id);
+    if (paused && sel === null && !showPaused) continue;
     if (sel === null && !all.length && !projs.length && (id === null || S.noDate || S.sizes.length)) continue;
     const head = `<h2 class="group ${paused ? 'paused' : ''}" data-drop-sec="${id || ''}">${color ? `<i class="dot" style="background:${esc(color)}"></i>` : ''}${esc(name || '')}
       ${paused ? '<span class="off">⏸ выключен</span>' : ''}
@@ -2705,12 +2711,13 @@ const HELP = [
   ['Сегодня', 'Всё, что нужно сделать сегодня: привычки, задачи (и просроченные), события. Кружок — отметить. Нажать на отметку ещё раз — отменить. Внутри каждой части дня задачи идут по разделам; цветная полоска слева — цвет раздела.'],
   ['Новая задача', '«+» внизу. Вид: <b>задача</b>, <b>привычка</b> (вода, зарядка) или <b>событие</b> (встреча, его не отмечают). Можно указать срок, время, повтор, напоминание и раздел.'],
   ['Повтор', 'Каждый день / неделю / месяц / N дней или по дням недели. «От выполнения»: следующий срок считается от дня, когда сделали, а не от старого срока. Ежемесячная задача на 29–31 число не сползает: в коротком месяце она встаёт на последний день (31 января → 28 февраля → 31 марта), потом снова на своё число. Так же ежегодная на 29 февраля: в обычный год — 28-го, в високосный — 29-го.'],
+  ['Окно задачи', 'Закрыть: «Отмена», Esc или щелчок мимо окна. Если название или заметка уже набраны или изменены, по Esc и щелчку мимо программа спросит, точно ли закрыть без сохранения. Приложение всегда открывается на «Сегодня».'],
   ['Удаление', '«Удалить» в окне задачи или 🗑 в «Выбрать». Задача сразу пропадает, внизу на 6 секунд появляется «Отменить» — нажми, и она вернётся. Без отмены задача удаляется насовсем вместе с историей (и с её задачами «Следом»). Если закрыть приложение раньше, чем пройдут 6 секунд, задача не удалится.'],
   ['Утреннее окно', 'При первом открытии за день — одно окно из нескольких блоков (каждый сворачивается щелчком по заголовку): что получилось сделать вчера, что можно сделать сегодня, задачи без размера и дни рождения на ближайший месяц. Всё сохраняется одной кнопкой «Сохранить». Пока не отмечено всё из вчерашнего, окно не закрывается; если вопросов про вчера нет, окно можно «Скрыть» — внизу останется кнопка, чтобы вернуться. <b>Задачи без размера</b>: выбери каждой ⚡ ◐ ● ✦ (повторное нажатие снимает); не выбранные останутся без размера и появятся завтра снова.'],
   ['Утренняя проверка', 'Утром спросит, что сделано из вчерашнего: ✓ — сделано, ✕ — не сделано. Несделанная задача переедет на сегодня. У привычки засчитается пропуск. У привычки с подпунктами каждый подпункт отмечается отдельно: сделано 2 из 4 — день засчитается наполовину (в статистике и цветке по доле; серию такой день прерывает, питомцы не грустят, если сделано хотя бы половина).'],
   ['Привычки', 'Вкладка со статистикой: сколько дней из 30 / 3 месяцев / года получилось, серия подряд, лучшая серия, пропуски и квадратики по дням.'],
   ['Календарь', 'Месяц или неделя, фильтры по разделам. Нажми на день: там расписание и свободное время между делами.'],
-  ['Разделы', 'Папки для задач. ✎ у раздела: название, цвет, «выключить» на время (задачи прячутся, но не удаляются). «Без срока» вверху — показать только задачи без даты. ☐ («Выбрать») — изменить или удалить сразу несколько задач (☑ — выбрать все). На компьютере задачи можно перетаскивать мышкой.'],
+  ['Разделы', 'Папки для задач. ✎ у раздела: название, цвет, «выключить» на время (задачи прячутся, но не удаляются). Выключенные разделы не видны в списке разделов: они спрятаны за кнопкой ⏸ с их числом внизу списка — нажми, чтобы показать и включить обратно. «Без срока» вверху — показать только задачи без даты. ☐ («Выбрать») — изменить или удалить сразу несколько задач (☑ — выбрать все). На компьютере задачи можно перетаскивать мышкой.'],
   ['А→Я', 'Кнопка у заголовка раздела в «Разделах»: расставляет его задачи по алфавиту. Потом их можно двигать мышкой, а нажать А→Я снова — когда захочется. Новая задача встаёт в конец.'],
   ['Размер и предложения на день', 'В окне задачи — «Размер»: ⚡ пятиминутка, ◐ средняя, ● на весь день, ✦ вдохновение. В ⚙ можно задать размер сразу всем задачам раздела (например, «Проекты» — вдохновение). Каждое утро в утреннем окне видны задачи <b>без срока</b>, которые можно взять сегодня: все пятиминутки; средние — если есть свободное окошко (обед или после работы, время — в ⚙; окошко занимают задачи, стоящие в нём на сегодня, и события в это время), в выходные — всегда; большие — в субботу и воскресенье, если на этот день ещё нет большой. Окно — один раз в день на весь аккаунт: показалось на телефоне — на компьютере уже не появится. «Сегодня» — ставит срок на сегодня, «Потом» — предложу через 4 дня; то, что не выбрано, предложу завтра. Пятиминутку можно сделать в любой свободный момент.<br><br><b>Вдохновение</b> не предлагается: его делают, когда есть настроение, — тогда в «Разделах» включи фильтр ✦. У вдохновения нет просрочки: если поставила срок и не сделала в этот день, задача снова без срока.'],
   ['Быстрое меню', 'Долгое нажатие на задачу (на компьютере — правая кнопка): на сегодня, на завтра, в другой раздел.'],
@@ -3816,6 +3823,17 @@ function fitSheet() {
 new MutationObserver(() => fitSheet()).observe($modal, { childList: true });
 addEventListener('resize', () => fitSheet());
 
+// Esc и щелчок мимо окна задачи: если название или заметку уже набрали/поменяли — спросить, а не терять молча.
+// «Отмена» закрывает сразу (нажали нарочно).
+function closeSoft() {
+  if ($modal.dataset.kind === 'edit' && S.edit) {
+    const v = id => document.getElementById(id)?.value ?? null;
+    const changed = (v('f-title') !== null && v('f-title').trim() !== (S.edit.title || '').trim())
+      || (v('f-notes') !== null && v('f-notes') !== (S.edit.notes || ''));
+    if (changed && !confirm('Закрыть без сохранения? Набранное пропадёт.')) return;
+  }
+  closeModal();
+}
 function closeModal() {
   S.edit = null;
   S.tpl = null;
@@ -4910,6 +4928,7 @@ document.addEventListener('click', async ev => {
       case 'b-from': S.bulk.from = v; syncBulk(); break;
       case 'limits-save': await saveLimits(); break;
       case 'nodate': S.noDate = !S.noDate; localSet('nodate', S.noDate ? '1' : ''); render(); break;
+      case 'show-paused': S.showPaused = !S.showPaused; render(); break;
       case 'size-filter':
         S.sizes = S.sizes.includes(v) ? S.sizes.filter(x => x !== v) : S.sizes.concat(v);
         localSet('sizes', S.sizes.join(',')); render(); break;
@@ -4947,7 +4966,8 @@ document.addEventListener('click', async ev => {
         openEdit({ kind: 'task', due_date: due, repeat_from: 'due', section_id: S.view === 'sections' ? S.section : null });
         break;
       }
-      case 'close': case 'close-bg': closeModal(); break;
+      case 'close': closeModal(); break;
+      case 'close-bg': closeSoft(); break;
       case 'save': await saveEdit(); break;
       case 'delete': await deleteEdit(); break;
       case 'kind':
@@ -5044,7 +5064,7 @@ document.addEventListener('keydown', ev => {
   if (ev.key === 'Escape') hideCtx();
   if (ev.key === 'Escape' && S.howto) return closeHowto();
   if (ev.key === 'Escape' && $modal.dataset.kind === 'morning') offerHide(true);
-  else if (ev.key === 'Escape' && $modal.dataset.kind && $modal.dataset.kind !== 'morning') closeModal();
+  else if (ev.key === 'Escape' && $modal.dataset.kind && $modal.dataset.kind !== 'morning') closeSoft();
 });
 
 // ---------- синхронизация ----------
