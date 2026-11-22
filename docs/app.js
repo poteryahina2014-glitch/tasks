@@ -2678,7 +2678,7 @@ const HELP = [
   ['Календарь', 'Месяц или неделя, фильтры по разделам. Нажми на день: там расписание и свободное время между делами.'],
   ['Разделы', 'Папки для задач. ✎ у раздела: название, цвет, «выключить» на время (задачи прячутся, но не удаляются). «Без срока» вверху — показать только задачи без даты. ☐ («Выбрать») — изменить или удалить сразу несколько задач (☑ — выбрать все). На компьютере задачи можно перетаскивать мышкой.'],
   ['А→Я', 'Кнопка у заголовка раздела в «Разделах»: расставляет его задачи по алфавиту. Потом их можно двигать мышкой, а нажать А→Я снова — когда захочется. Новая задача встаёт в конец.'],
-  ['Размер и предложения на день', 'В окне задачи — «Размер»: ⚡ пятиминутка, ◐ средняя, ● на весь день, ✦ вдохновение. В ⚙ можно задать размер сразу всем задачам раздела (например, «Проекты» — вдохновение). Каждое утро после проверки (в личном режиме) открывается окно со всеми задачами <b>без срока</b>, которые можно взять сегодня: все пятиминутки; средние — если есть свободное окошко (обед, после работы или после ужина, время — в ⚙; окошко занимают задачи, стоящие в нём на сегодня, и события в это время), в выходные — всегда; большие — в субботу и воскресенье, если на этот день ещё нет большой; вдохновение — если на сегодня ещё не взято ни вдохновение, ни большая задача. Если вечер так и остался свободным, с 16 до 19 вдохновение предлагается ещё раз. Оба окна — по одному разу в день на весь аккаунт: показалось на телефоне — на компьютере уже не появится. У задач по вдохновению нет просрочки: не сделано в свой день — задача снова без срока. «Сегодня» — ставит срок на сегодня, «Потом» — предложу через 4 дня; то, что не выбрано, предложу завтра. Пятиминутку можно сделать в любой свободный момент, вдохновение — на вечер, если есть настроение.'],
+  ['Размер и предложения на день', 'В окне задачи — «Размер»: ⚡ пятиминутка, ◐ средняя, ● на весь день, ✦ вдохновение. В ⚙ можно задать размер сразу всем задачам раздела (например, «Проекты» — вдохновение). Каждое утро (в личном режиме) в утреннем окне видны задачи <b>без срока</b>, которые можно взять сегодня: все пятиминутки; средние — если есть свободное окошко (обед или после работы, время — в ⚙; окошко занимают задачи, стоящие в нём на сегодня, и события в это время), в выходные — всегда; большие — в субботу и воскресенье, если на этот день ещё нет большой. Окно — один раз в день на весь аккаунт: показалось на телефоне — на компьютере уже не появится. «Сегодня» — ставит срок на сегодня, «Потом» — предложу через 4 дня; то, что не выбрано, предложу завтра. Пятиминутку можно сделать в любой свободный момент.<br><br><b>Вдохновение</b> не предлагается: его делают, когда есть настроение, — тогда в «Разделах» включи фильтр ✦. У вдохновения нет просрочки: если поставила срок и не сделала в этот день, задача снова без срока.'],
   ['Быстрое меню', 'Долгое нажатие на задачу (на компьютере — правая кнопка): на сегодня, на завтра, в другой раздел.'],
   ['🏠 / 💼', 'Личное и работа отдельно, переключатель вверху. В работе есть «Шаблоны»: повторяющиеся проекты из шагов (например, квартальная отчётность), создаются сами.'],
   ['Шаблоны (работа)', '«⟳ Шаблоны» в колонке разделов. Шаблон сам создаёт проект с задачами, когда заканчивается месяц, квартал или год, — в разделе шаблона. <b>Какие месяцы</b>: «Только некоторые» — задачи создадутся только за отмеченные месяцы (например, оценка урожая — июль–октябрь). <b>Создавать заранее</b> за N рабочих дней до конца периода; 0 — на следующий день после конца. <b>Шаги</b>: «с» и «до» — числа месяца, «мес.» — какой по счёту месяц после конца периода (1 — следующий), «часов» — оценка (если по факту уже записано время, новые задачи получат среднее по факту). У шага могут быть подзадачи — без своих сроков; «после шагов» — номера шагов, которые надо сделать раньше. <b>Создать задачи сейчас</b> — за выбранный период, не дожидаясь конца. <b>Копия</b> — например, сделать годовую отчётность из квартальной.'],
@@ -2943,7 +2943,7 @@ function renderReview() {
   }
   if (o) {
     const g = offerBody(o);
-    if (g.n) blocks.push(block('of', o.mode === 'eve' ? 'По вдохновению' : 'Что можно сделать сегодня', `отмечено ${Object.keys(o.pick).length}`, g.html));
+    if (g.n) blocks.push(block('of', 'Что можно сделать сегодня', `отмечено ${Object.keys(o.pick).length}`, g.html));
     const sz = o.sizes.map(byId).filter(t => t && !t.done_on && !sizeOf(t));
     if (sz.length) blocks.push(block('sz', 'Задачи без размера', `отмечено ${sz.filter(t => o.spick[t.id]).length} из ${sz.length}`, sz.map(t => sizeRow(t, o)).join('')));
     const bd = o.mode === 'full' ? bdaysSoon(31) : [];
@@ -2954,10 +2954,9 @@ function renderReview() {
     return;
   }
   const scroll = $modal.querySelector('.rv-list')?.scrollTop || 0;
-  const eveOnly = !list.length && o?.mode === 'eve';
   $modal.dataset.kind = 'morning';
   $modal.innerHTML = `<div class="overlay" data-act="of-hide-bg"><div class="sheet review morning">
-    <h3>${eveOnly ? 'Добрый вечер' : 'Привет'}${userName() ? ', ' + esc(userName()) : ''}!</h3>
+    <h3>Привет${userName() ? ', ' + esc(userName()) : ''}!</h3>
     <div class="rv-list">${blocks.join('')}</div>
     <div class="rv-foot"><span></span>
       ${list.length ? '' : '<button class="btn" data-act="of-hide">Скрыть</button>'}
@@ -3065,7 +3064,7 @@ const SIZES = {
   quick: { icon: '⚡', name: 'пятиминутка', title: 'Пятиминутки', hint: 'Можно сделать в любой свободный момент' },
   mid: { icon: '◐', name: 'средняя', title: 'Средние', hint: '' },
   big: { icon: '●', name: 'на весь день', title: 'Большие', hint: 'Сегодня ничего большого не запланировано — может, взять одну?' },
-  idea: { icon: '✦', name: 'вдохновение', title: 'Вдохновение', hint: 'На вечер, если есть настроение' },
+  idea: { icon: '✦', name: 'вдохновение', title: 'Вдохновение', hint: 'Когда есть настроение' },
 };
 // Свободные окошки будних дней для средних задач. Событие со временем внутри окошка его занимает.
 const SLOTS = {
@@ -3210,8 +3209,8 @@ const offerList = (size, d = today()) => active()
     && (!t.offer_after || t.offer_after <= d) && (!t.start_date || t.start_date <= d))
   .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
 
-// Какие группы показать: mode 'full' — утром (всё), 'eve' — вечером (только вдохновение).
-function offerGroups(mode) {
+// Какие группы показать утром. Вдохновение не предлагается (её решение 22.11.2026): когда есть настроение — фильтр ✦ в «Разделах».
+function offerGroups(mode = 'full') {
   const d = today(), fit = dayFit(d);
   const groups = [];
   const add = (size, note, list = offerList(size)) => { if (list.length || note) groups.push({ size, note, list }); };
@@ -3227,36 +3226,28 @@ function offerGroups(mode) {
     }
     if (fit.weekend && !fit.big) add('big', '');
   }
-  // вечер уже занят (взята задача по вдохновению или большая) — вдохновение не предлагаем
-  if (!fit.idea && !fit.big) add('idea', '');
   return groups.filter(g => g.list.length || g.full);
 }
 
-// Окна предложений — раз утром и раз с 16 до 19 на весь аккаунт (отметки в user_metadata, видны всем устройствам).
+// Окно предложений — раз утром на весь аккаунт (отметка в user_metadata, видна всем устройствам).
+// Вечернего окна (16–19, вдохновение) больше нет — убрано 22.11.2026.
 async function maybeOffer() {
   if (!S.user || !S.loaded || S.space !== 'personal' || ($modal.dataset.kind && $modal.dataset.kind !== 'morning') || S.offer || S.offerBusy || S.saving) return;
-  const d = today(), h = new Date().getHours(), eve = h >= 16 && h < 19;
+  const d = today();
   // быстрая отметка этого устройства — чтобы не спрашивать сервер каждую минуту
-  if (localGet('offer') === d && (!eve || localGet('offerEve') === d)) return;
+  if (localGet('offer') === d) return;
   S.offerBusy = true;
   try {
     // свежие отметки с сервера: могли уже показать на другом устройстве
     const { data } = await sb.auth.getUser();
     if (data?.user) S.user = data.user;
     const md = S.user.user_metadata || {};
-    let mode = null;
-    if (md.offer_day !== d) mode = 'full';
-    else if (eve && md.offer_eve !== d) mode = 'eve';
     localSet('offer', d);
-    if (!mode) { if (eve) localSet('offerEve', d); return; }
-    // вечером: если на вечер уже что-то взято — окна нет, но и отметку не ставим (вдруг потом отменит)
-    if (mode === 'eve' && !offerGroups('eve').some(g => g.list.length)) return;
-    if (eve) localSet('offerEve', d);
-    const mark = { offer_day: d, ...(eve ? { offer_eve: d } : {}) };
-    sb.auth.updateUser({ data: mark }).then(({ data }) => { if (data?.user) S.user = data.user; });
-    const has = offerGroups(mode).some(g => g.list.length) || (mode === 'full' && (sizeList().length || bdaysSoon(31).length));
+    if (md.offer_day === d) return;
+    sb.auth.updateUser({ data: { offer_day: d } }).then(({ data }) => { if (data?.user) S.user = data.user; });
+    const has = offerGroups().some(g => g.list.length) || sizeList().length || bdaysSoon(31).length;
     if (!has || ($modal.dataset.kind && $modal.dataset.kind !== 'morning')) return;
-    openOffer(mode);
+    openOffer('full');
   } finally { S.offerBusy = false; }
 }
 
@@ -3303,15 +3294,12 @@ function sizeAct(id, k) {
 function offerBody(o) {
   const daysLying = t => Math.max(0, Math.round((parse(today()) - parse((t.created_at || '').slice(0, 10) || today())) / 864e5));
   const btn = (t, act, label) => `<button class="btn ${o.pick[t.id] === act ? 'on' : ''}" data-act="${act}" data-id="${t.id}">${label}</button>`;
-  // «В обед» у вдохновения — в будни; места в окошке вдохновение не занимает
-  const lunchLeft = dayFit(today()).slots.lunch ? 1 : null;
-  const lunchBtn = t => lunchLeft === null || sizeOf(t) !== 'idea' ? '' : btn(t, 'of-lunch', 'В обед');
   const row = t => {
     const sec = sectionOf(t), n = daysLying(t);
     return `<div class="task${sec ? ' tinted' : ''}${o.pick[t.id] ? ' picked' : ''}"${sec ? ` style="--sec:${esc(sec.color)}"` : ''}>
       <div class="body" data-act="edit" data-id="${t.id}"><div class="title">${esc(t.title)}</div>
         <div class="meta">${sec ? `<span>${esc(sec.name)}</span>` : ''}${n ? `<span>лежит ${n} дн.</span>` : ''}</div></div>
-      <div class="yn">${lunchBtn(t)}${btn(t, 'of-today', sizeOf(t) === 'idea' && lunchLeft !== null ? 'Вечером' : 'Сегодня')}${btn(t, 'of-later', 'Потом')}</div></div>`;
+      <div class="yn">${btn(t, 'of-today', 'Сегодня')}${btn(t, 'of-later', 'Потом')}</div></div>`;
   };
   const live = id => { const t = byId(id); return t && !t.done_on ? t : null; };
   const groups = o.groups.map(g => ({ ...g, list: g.ids.map(live).filter(Boolean) })).filter(g => g.list.length || g.full);
@@ -3330,7 +3318,7 @@ function offerChip() {
   if (!show) { el?.remove(); return; }
   if (!el) { el = document.createElement('button'); el.id = 'offer-chip'; el.className = 'btn main'; el.dataset.act = 'of-show'; document.body.append(el); }
   const n = Object.keys(S.offer.pick).length + Object.keys(S.offer.spick).length;
-  el.textContent = `${S.offer.mode === 'eve' ? '✦ Вдохновение' : '☀ Утро'}${n ? ' · отмечено ' + n : ''}`;
+  el.textContent = `☀ Утро${n ? ' · отмечено ' + n : ''}`;
 }
 
 // Повторное нажатие той же кнопки снимает отметку.
@@ -3363,7 +3351,6 @@ async function moSave(el) {
       const ids = act => Object.keys(o.pick).filter(id => o.pick[id] === act);
       const jobs = [
         [ids('of-today'), { due_date: today(), offer_after: null }],
-        [ids('of-lunch'), { due_date: today(), offer_after: null, slot: 'lunch' }],
         [ids('of-later'), { offer_after: addDays(today(), 4) }],
       ];
       for (const k of Object.keys(SIZES)) jobs.push([Object.keys(o.spick).filter(id => o.spick[id] === k), { size: k }]);
@@ -4986,7 +4973,7 @@ document.addEventListener('click', async ev => {
       case 'size': S.edit.size = v || null; syncEdit(); break;
       case 'slot': S.edit.slot = v || null; syncEdit(); break;
       case 'sec-size': await setSecSize(id, v); break;
-      case 'of-today': case 'of-lunch': case 'of-later': offerAct(id, act); break;
+      case 'of-today': case 'of-later': offerAct(id, act); break;
       case 'mo-save': await moSave(el); break;
       case 'mo-tog': moToggle(el.dataset.v); break;
       case 'mo-size': sizeAct(id, el.dataset.v); break;
