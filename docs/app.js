@@ -73,8 +73,14 @@ function addMonths(s, n) {
   return iso(t);
 }
 
-// Тот же расчёт, что next_due в базе (здесь — только для показа повторов в календаре).
-function nextDue(from, every, unit, weekdays) {
+// День m в месяце даты d, но не дальше последнего дня месяца (то же, что month_day в базе).
+function monthDay(d, m) {
+  const [y, mo] = d.split('-').map(Number);
+  return d.slice(0, 8) + pad(Math.min(m, new Date(y, mo, 0).getDate()));
+}
+// Тот же расчёт, что next_due + next_of в базе (здесь — только для показа повторов в календаре).
+// mday — исходный день месяца (repeat_monthday): 31 янв → 28 фев → 31 мар, а не 28 мар.
+function nextDue(from, every, unit, weekdays, mday) {
   every = every || 1;
   if (unit === 'week' && weekdays && weekdays.length) {
     const w0 = weekStart(from);
@@ -86,9 +92,11 @@ function nextDue(from, every, unit, weekdays) {
   }
   if (unit === 'day') return addDays(from, every);
   if (unit === 'week') return addDays(from, 7 * every);
-  if (unit === 'month') return addMonths(from, every);
-  return addMonths(from, 12 * every);
+  const r = addMonths(from, unit === 'month' ? every : 12 * every);
+  return mday ? monthDay(r, mday) : r;
 }
+// исходный день месяца задачи; пока 027_monthday.sql не запущен — день из срока
+const mdayOf = t => t.repeat_monthday || (t.due_date ? +t.due_date.slice(8) : null);
 
 // Цикл «on дней делать, off пропускать» от первого дня anchor (то же, что next_cycle в базе).
 function cycleOn(d, on, off, anchor) {
@@ -103,7 +111,7 @@ function nextCycle(from, on, off, anchor) {
 // Следующий срок задачи после d, с любым видом повтора.
 const nextOf = (t, d) => t.repeat_unit === 'cycle'
   ? nextCycle(d, t.repeat_every || 1, t.repeat_off || 1, t.repeat_anchor || d)
-  : nextDue(d, t.repeat_every, t.repeat_unit, t.repeat_weekdays);
+  : nextDue(d, t.repeat_every, t.repeat_unit, t.repeat_weekdays, mdayOf(t));
 
 function dateLabel(s) {
   const diff = daysBetween(today(), s);

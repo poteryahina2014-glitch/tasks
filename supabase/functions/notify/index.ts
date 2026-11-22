@@ -29,7 +29,8 @@ function addMonths(s: string, n: number) {
   return iso(t);
 }
 // то же, что next_due в базе и nextDue в приложении
-function nextDue(from: string, every: number, unit: string, weekdays: number[] | null) {
+// mday — исходный день месяца (repeat_monthday): 31 янв → 28 фев → 31 мар
+function nextDue(from: string, every: number, unit: string, weekdays: number[] | null, mday?: number | null) {
   every = every || 1;
   if (unit === 'week' && weekdays && weekdays.length) {
     const w0 = weekStart(from);
@@ -41,8 +42,10 @@ function nextDue(from: string, every: number, unit: string, weekdays: number[] |
   }
   if (unit === 'day') return addDays(from, every);
   if (unit === 'week') return addDays(from, 7 * every);
-  if (unit === 'month') return addMonths(from, every);
-  return addMonths(from, 12 * every);
+  const r = addMonths(from, unit === 'month' ? every : 12 * every);
+  if (!mday) return r;
+  const [y, m] = r.split('-').map(Number);
+  return r.slice(0, 8) + String(Math.min(mday, new Date(Date.UTC(y, m, 0)).getUTCDate())).padStart(2, '0');
 }
 
 // Есть ли задача на день d. У событий срок не сдвигается — повторы считаем от первой даты.
@@ -51,7 +54,7 @@ function onDay(t: any, d: string) {
   if (t.due_date === d) return true;
   if (t.kind !== 'event' || !t.repeat_unit || t.due_date > d) return false;
   let x = t.due_date;
-  for (let i = 0; i < 5000 && x < d; i++) x = nextDue(x, t.repeat_every, t.repeat_unit, t.repeat_weekdays);
+  for (let i = 0; i < 5000 && x < d; i++) x = nextDue(x, t.repeat_every, t.repeat_unit, t.repeat_weekdays, t.repeat_monthday || +t.due_date.slice(8));
   return x === d;
 }
 
