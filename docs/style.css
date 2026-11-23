@@ -442,7 +442,8 @@ body { --appw: 1180px; }
 /* Вид за окном: позади всего, приглушённый, с рамой и подоконником */
 #bg { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
 #bg[hidden], #pets .pet[hidden], #pets .perch[hidden] { display: none; }
-#bg > svg { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .5; }
+#bg .glass { position: absolute; inset: 0; background: var(--bg); overflow: hidden; }
+#bg .glass > svg { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .5; }
 #bg .frame { position: absolute; inset: 0; box-shadow: inset 0 0 0 16px #2b2420, inset 0 0 0 20px #3d332c, inset 0 0 60px 30px #0008; }
 #bg .frame i { position: absolute; background: #2b2420; box-shadow: 0 0 0 3px #3d332c; }
 #bg .frame .v { left: calc(50% - 7px); top: 0; bottom: 0; width: 14px; }
@@ -891,7 +892,7 @@ textarea.t-howto { width: 100%; min-height: 110px; resize: vertical; font: inher
 .rb-foot { display: flex; gap: 8px; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 8px; }
 
 /* на телефоне в заголовке 7 значков (📰 добавился 14.11.2026) — плотнее, чтобы «Сегодня» помещалось */
-@media (max-width: 520px) { header .tools { gap: 0; } header .tools .icon { width: 34px; height: 36px; font-size: 18px; } }
+@media (max-width: 520px) { header .tools { gap: 0; flex-wrap: wrap; justify-content: flex-end; min-width: 0; } header .tools .icon { width: 34px; height: 36px; font-size: 18px; } }
 
 /* Архив сделанного */
 .arch-body { flex: 1; overflow-y: auto; min-height: 0; margin-top: 10px; }
@@ -921,12 +922,10 @@ textarea.t-howto { width: 100%; min-height: 110px; resize: vertical; font: inher
 .bdi span { color: var(--muted); font-size: 13px; white-space: nowrap; }
 
 /* Стена справа от окна с полками (18.11.2026): книги, день рождения, газета стоят тут, а не на подоконнике */
-#bg .wall { position: absolute; top: 0; right: 0; bottom: 0; background: #2a2431;
-  background-image: repeating-linear-gradient(90deg, #ffffff05 0 18px, transparent 18px 36px);
-  box-shadow: inset 14px 0 18px -8px #0009; }
-#bg .shelves { position: absolute; left: 14px; right: 14px; top: 16%; min-height: 378px; display: flex; flex-wrap: wrap;
+#bg .wall { position: absolute; top: 0; right: 0; bottom: 0; width: var(--wall); }
+#bg .shelves { position: absolute; left: 14px; right: 14px; top: 9%; min-height: 378px; display: flex; flex-wrap: wrap;
   align-content: flex-start; align-items: flex-end; justify-content: center; gap: 0 10px;
-  background: repeating-linear-gradient(to bottom, transparent 0 114px, #6b4a33 114px 124px, #4a3324 124px 126px); }
+  background: repeating-linear-gradient(to bottom, transparent 0 114px, #6b4f38 114px 126px); }
 #bg .wall .shelves > div { position: relative; right: auto; bottom: auto; height: 114px; width: min(130px, calc(50% - 6px)); display: flex; align-items: flex-end; margin-bottom: 12px; }
 #bg .wall .shelves > .cat-spot { flex: 0 0 100%; height: 114px; margin-bottom: 12px; } /* нижняя полка всегда свободна — для кота */
 #bg .wall .shelves > .paper { width: min(120px, calc(50% - 6px)); }
@@ -942,10 +941,10 @@ textarea.t-howto { width: 100%; min-height: 110px; resize: vertical; font: inher
 /* Стена: список уже, чтобы строки не упирались в стену; подоконник кончается у стены, под стеной — тумба */
 @media (min-width: 900px) { body.wall #app { max-width: calc(var(--appw) - 80px); } body.wall .fab { right: max(28px, calc(50% - 522px)); } }
 @media (min-width: 1280px) and (max-width: 1639px) { body.pets.wall #app { max-width: calc(var(--appw) - 80px); } }
-#bg .cabinet { position: absolute; left: 0; right: 0; bottom: 0; height: 84px; display: flex; gap: 6px; padding: 18px 10px 6px;
-  background: linear-gradient(#5a4636, #4a3829 12px, #2e241d 13px, #3a2d24); box-shadow: 0 -6px 18px #0006; }
-#bg .cabinet i { flex: 1; border: 2px solid #2a2019; border-radius: 4px; background: #44342a; position: relative; }
-#bg .cabinet i::after { content: ''; position: absolute; top: 45%; width: 6px; height: 6px; border-radius: 50%; background: #b99a6b; }
+#bg .cabinet { position: absolute; left: 14px; right: 14px; bottom: calc(var(--floor) + 7px); height: calc(var(--sill) + 19px - var(--floor)); display: flex; background: #6b4f38; }
+#bg .cabinet i { flex: 1; position: relative; }
+#bg .cabinet i + i { border-left: 3px solid #3d2d20; }
+#bg .cabinet i::after { content: ''; position: absolute; top: 45%; width: 8px; height: 8px; border-radius: 50%; background: #b98d5e; }
 #bg .cabinet i:first-child::after { right: 8px; } #bg .cabinet i:last-child::after { left: 8px; }
 #bg .wall .paper { cursor: grab; touch-action: none; user-select: none; }
 
@@ -953,3 +952,37 @@ textarea.t-howto { width: 100%; min-height: 110px; resize: vertical; font: inher
 .ver{font-size:12px;opacity:.6;align-self:center}
 .upd-bar{position:fixed;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:9999;display:flex;gap:10px;align-items:center;padding:8px 10px 8px 14px;border-radius:12px;background:var(--accent,#7a5cff);color:#fff;font-size:14px;box-shadow:0 4px 16px rgba(0,0,0,.3);white-space:nowrap}
 .upd-bar button{border:0;border-radius:8px;padding:6px 10px;font:inherit;font-weight:600;background:#fff;color:#222;cursor:pointer}
+
+/* Комната (23.11.2026, Эскиз комнаты 23.11.svg): окно по ширине списка, слева доска «По мере» и лежанка кота, под окном пол. Плоские цвета. */
+body.wall #bg { background: #3a3040; --floor: clamp(118px, 13vh, 135px); --sill: calc(var(--floor) + clamp(30px, 7vh, 80px)); }
+#bg .floor { position: absolute; left: 0; right: 0; bottom: 0; height: var(--floor); background: #4a3a30; border-top: 7px solid #2b2420; }
+body.wall #bg .glass, body.wall #bg .frame { left: var(--wall); right: var(--wall); top: 2vh; bottom: calc(var(--sill) + 20px); }
+body.wall #bg .frame { box-shadow: inset 0 0 0 14px #2b2420; }
+body.wall #bg .frame i { box-shadow: none; }
+body.wall #bg .sill { left: calc(var(--wall) - 24px); right: calc(var(--wall) - 24px); bottom: var(--sill); height: 26px; background: #6b5a4c; box-shadow: none; }
+body.wall #bg .flower { left: auto; right: calc(var(--wall) - 24px); bottom: calc(var(--sill) + 18px); width: 110px; }
+body.wall #bg .flower[style] { right: auto; }
+#bg .lwall { position: absolute; left: 0; top: 0; bottom: 0; width: var(--wall); }
+#bg .board { position: absolute; top: 4vh; left: 50%; translate: -50% 0; width: min(300px, calc(var(--wall) - 28px), 33vh); pointer-events: auto; cursor: pointer; }
+#bg .board:hover { filter: brightness(1.06); }
+#bg .board svg, #bg .bed svg { display: block; width: 100%; }
+#bg .bed { position: absolute; left: 50%; translate: -50% 0; bottom: calc(var(--floor) - 57px); width: min(290px, calc(var(--wall) - 12px)); }
+#bg .wall .shelves > .recipe { pointer-events: auto; cursor: pointer; transition: transform .15s; }
+#bg .recipe:hover { transform: translateY(-3px); }
+#bg .wall .shelves > .recipe svg { height: 100px; }
+body.wall .loose-ico { display: none; }
+/* счётчик — на правой стене под полками, чтобы не закрывал доску (перетаскивается, место запоминается) */
+@media (min-width: 1640px) { body.wall .meter-card.side { top: 66%; left: calc(100vw - (100vw - var(--appw)) / 4 - 75px); } }
+body.wall #pets .pet.cat { width: 300px; bottom: calc(clamp(118px, 13vh, 135px) - 45px); }
+body.wall #pets .pet.cat .pet-svg { width: 300px; height: 315px; }
+body.wall #pets .pet.cat .pet-svg.walk { width: 326px; height: 201px; }
+body.wall #pets .pet.cat.left { left: calc((100vw - var(--appw)) / 4 - 150px); }
+body.wall #pets .pet.cat.right { left: calc(100vw - (100vw - var(--appw)) / 4 - 150px); }
+
+/* Окно «По мере» и рецепты: размер постоянный, список прокручивается */
+.sheet.board-win { max-width: 720px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; }
+.board-list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; scrollbar-color: var(--border) transparent; }
+.board-win .task { align-items: center; }
+.board-win .task.stale { background: color-mix(in srgb, #EF9F27 22%, var(--card)); border-color: #EF9F27; }
+.board-more { flex: none; padding: 6px 10px; font-size: 13px; }
+@media (max-width: 520px) { header.top > .seg.sizes { gap: 6px; } .seg.sizes .pill { padding: 6px 10px; min-width: 40px; } }
