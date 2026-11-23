@@ -275,7 +275,7 @@ function habitStats(t) {
 async function load() {
   const since = addDays(today(), -62);
   const monthFrom = S.month && S.month < since ? S.month : since;
-  const [tasks, sections, logs, templates, projects, times, reads, rfolders] = await Promise.all([
+  const [tasks, sections, logs, templates, projects, times, reads, rfolders, memoList, memoLog] = await Promise.all([
     callAll(() => sb.from('tasks').select('*').or(`done_on.is.null,done_on.gte.${monthFrom},project_id.not.is.null`).order('position').order('created_at').order('id')),
     call(sb.from('sections').select('*').order('position').order('created_at')),
     callAll(() => sb.from('task_log').select('*').gte('day', monthFrom).order('id')),
@@ -286,7 +286,11 @@ async function load() {
     // очередь чтения (022_reads.sql): в очереди + прочитанные сегодня
     callAll(() => sb.from('reads').select('*').order('created_at').order('id'), true),
     sb.from('read_folders').select('*').order('position').order('created_at').then(r => (r.error ? null : r.data)),
+    // памятки (029_memos.sql); пока таблиц нет — вкладки нет
+    callAll(() => sb.from('memos').select('*').order('created_at').order('id'), true),
+    callAll(() => sb.from('memo_log').select('*').order('id'), true),
   ]);
+  memoLoaded(memoList, memoLog);
   S.reads = reads || [];
   S.rfolders = rfolders || [];
   S.readOn = !!reads && !!rfolders;
@@ -2935,7 +2939,7 @@ function renderReview() {
   const list = reviewList();
   const o = S.offer;
   const kind = $modal.dataset.kind;
-  if (kind === 'board') return; // открыт список «По мере» — утреннее окно после него
+  if (kind === 'board' || kind === 'memo') return; // открыт список «По мере» — утреннее окно после него
   // из утреннего окна открыли задачу — дождаться, пока её закроют
   if (kind && kind !== 'morning' && (o || !list.length)) return;
   offerChip();
@@ -3722,6 +3726,7 @@ function closeSoft() {
       || (v('f-notes') !== null && v('f-notes') !== (S.edit.notes || ''));
     if (changed && !confirm('Закрыть без сохранения? Набранное пропадёт.')) return;
   }
+  if (memoChanged() && !confirm('Закрыть без сохранения? Набранное пропадёт.')) return;
   closeModal();
 }
 function closeModal() {
@@ -4054,7 +4059,7 @@ document.addEventListener('change', async ev => {
 });
 
 // ---------- резервная копия (18.11.2026): все свои данные одним файлом JSON ----------
-const BACKUP_TABLES = ['sections', 'tasks', 'task_log', 'templates', 'projects', 'time_log', 'reads', 'read_folders', 'payments', 'prefs', 'bday_done'];
+const BACKUP_TABLES = ['sections', 'tasks', 'task_log', 'templates', 'projects', 'time_log', 'reads', 'read_folders', 'payments', 'prefs', 'bday_done', 'memos', 'memo_log'];
 async function backup(el) {
   el.disabled = true; el.textContent = 'Собираю…';
   const out = { made: new Date().toISOString(), user: S.user.id };
@@ -4629,7 +4634,7 @@ async function deleteTemplate() {
 
 // ---------- нажатия ----------
 const byId = id => S.tasks.find(t => t.id === id);
-const BUSY = new Set(['t-save', 't-run', 't-delete', 'p-archive', 's-pause', 'login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no', 'bulk-save', 'bulk-delete', 'limits-save', 'flower-sec', 'occ-go', 'board-done']);
+const BUSY = new Set(['t-save', 't-run', 't-delete', 'p-archive', 's-pause', 'login', 'signup', 'done', 'undo', 'save', 'delete', 's-save', 's-delete', 'r-yes', 'r-no', 'bulk-save', 'bulk-delete', 'limits-save', 'flower-sec', 'occ-go', 'board-done', 'memo-save', 'memo-done-save', 'memo-book-save', 'memo-unbook', 'memo-shift']);
 
 // ---------- быстрое меню (правая кнопка мыши / долгое нажатие на телефоне) ----------
 const $ctx = document.createElement('div');
@@ -4708,6 +4713,7 @@ document.addEventListener('click', async ev => {
   if ((act === 'close-bg' || act === 'of-hide-bg' || act === 'hw-close-bg') && (ev.target !== el || downAt !== el)) return;
   if (BUSY.has(act)) el.disabled = true; // от двойного нажатия, пока ждём базу
   try {
+    if (act.startsWith('memo-') && await memoAct(act, id, v)) return;
     switch (act) {
       case 'login': case 'signup': await auth(act); break;
       case 'logout': closeModal(); await sb.auth.signOut(); break;
@@ -4721,6 +4727,8 @@ document.addEventListener('click', async ev => {
       case 'help-tab': helpTab(el.dataset.v); break;
       case 'help-go': helpGo(el.dataset.v); break;
       case 'board': openBoard(); break;
+      case 'board-memo': openBoard('memo'); break;
+      case 'board-tab': boardTab(v); break;
       case 'recipes': openBoard('recipes'); break;
       case 'board-done': if (tooSoon()) break; el.classList.add('ok'); await boardDone(id); break;
       case 'board-more': await boardMore(id); break;
