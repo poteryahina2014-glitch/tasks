@@ -664,6 +664,34 @@ body.work .icon.mode { box-shadow: inset 0 0 0 1px var(--accent); }
 .review .yn .btn.yes:not(.good) { color: var(--good); }
 .review .yn .btn.no:not(.no-on) { color: var(--bad); }
 .sheet.help.fixed { overflow: hidden; }
+/* справка: блоки слева (на телефоне — сверху), поиск, таблица видов */
+.sheet.help.fixed { max-width: 1080px; height: min(780px, 92vh) !important; }
+.help-top { display: flex; gap: 14px; align-items: center; margin-bottom: 12px; }
+.help-top h3 { margin: 0; flex: 1; }
+.help-top .inp { width: 240px; flex: none; padding: 8px 12px; }
+.sheet.help.fixed > .help-body { flex: 1 1 auto; min-height: 0; display: flex; gap: 18px; }
+.help-nav { flex: 0 0 214px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.help-nav .pill { text-align: left; padding: 6px 12px; flex: none; }
+.help-list { overflow-x: hidden; padding-right: 8px; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.help-item .from { font-style: normal; font-weight: 400; font-size: 12px; color: var(--muted); margin-left: 6px; }
+.help-item mark { background: var(--sel); color: var(--text); border-radius: 3px; padding: 0 1px; }
+.help-table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.35; margin-bottom: 18px; }
+.help-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 12px 6px 0; border-bottom: 1px solid var(--border); }
+.help-table td { padding: 7px 12px 7px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+.help-table td:first-child { font-weight: 600; width: 20%; }
+.help-table .link { padding: 0; text-align: left; font-weight: 600; }
+@media (max-width: 699px) {
+  .help-top { flex-wrap: wrap; gap: 8px; }
+  .help-top h3, .help-top .inp { flex: 1 1 100%; width: 100%; }
+  .sheet.help.fixed > .help-body { flex-direction: column; gap: 10px; }
+  .help-nav { flex: none; flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  .help-nav .pill { padding: 5px 9px; font-size: 13px; }
+  .help-table thead { display: none; }
+  .help-table, .help-table tbody, .help-table tr, .help-table td { display: block; }
+  .help-table tr { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .help-table td, .help-table td:first-child { border: 0; padding: 2px 0; width: auto; }
+  .help-table td:not(:first-child)::before { content: attr(data-l) ': '; color: var(--muted); }
+}
 
 /* ☀ Случаи и задачи «Следом» */
 .kid-mark { text-align: center; color: var(--muted); }
