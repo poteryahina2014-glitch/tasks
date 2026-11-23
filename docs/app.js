@@ -4732,7 +4732,7 @@ document.addEventListener('click', async ev => {
       case 'recipes': openBoard('recipes'); break;
       case 'board-done': if (tooSoon()) break; el.classList.add('ok'); await boardDone(id); break;
       case 'board-more': await boardMore(id); break;
-      case 'board-close': closeModal(); break;
+      case 'board-close': if (tooSoon()) break; closeModal(); break;
       case 'occ': openOcc(); break;
       case 'pay': await openPay(); break;
       case 'read-add': await readAdd(); break;

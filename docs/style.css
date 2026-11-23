@@ -1042,7 +1042,9 @@ body.wall #pets .pet.cat.right { left: calc(100vw - (100vw - var(--appw)) / 4 - 
 #m-logs { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; scrollbar-color: var(--border) transparent; }
 .memo-log { margin-bottom: 10px; }
 .memo-log textarea { min-height: 44px; margin-top: 4px; }
-.memo-add { align-self: flex-start; padding: 6px 16px; margin-top: 8px; }
+.memo-hh { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+.memo-add { padding: 4px 14px; color: var(--text); font-size: 16px; }
+.memo-rec { color: var(--good); }
 .memo-actions .grow { flex: 1; }
 .memo-actions { justify-content: flex-start; }
 @media (min-width: 701px) {
@@ -1050,6 +1052,6 @@ body.wall #pets .pet.cat.right { left: calc(100vw - (100vw - var(--appw)) / 4 - 
   .memo-win .memo-cols > div:first-child { overflow-y: auto; scrollbar-color: var(--border) transparent; }
 }
 @media (max-width: 700px) {
-  .memo-cols { grid-template-columns: 1fr; } .memo-hist { min-height: auto; } #m-logs { flex: none; overflow: visible; }
+  .memo-cols { grid-template-columns: minmax(0, 1fr); } .memo-win .memo-cols { overflow-x: hidden; padding-right: 6px; } .memo-hist { min-height: auto; } #m-logs { flex: none; overflow: visible; }
   .memo-when { display: none; } .memo-when2 { display: inline; }
 }

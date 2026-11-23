@@ -44,8 +44,8 @@ function boardSVG() {
 const boardLabel = () => `По мере: ${loose().length}${memoNow().length ? `, памятки — пора: ${memoNow().length}` : ''}`;
 const boardHTML = () => (S.space === 'personal' ? `<div class="board" data-act="board" role="button" aria-label="${boardLabel()}">${boardSVG()}</div>` : '');
 // Вход без доски (телефон, узкое окно, вид за окном выключен): значок в заголовке; когда стена есть, его прячет CSS.
-// Число на значке — сколько памяток пора.
-const looseIcon = () => (S.space === 'personal' ? `<button class="icon loose-ico" data-act="board" aria-label="${boardLabel()}">📌${memoNow().length ? `<i class="ico-n">${memoNow().length}</i>` : ''}</button>` : '');
+// Число на значке — сколько памяток пора; тогда и открываются сразу памятки.
+const looseIcon = () => (S.space === 'personal' ? `<button class="icon loose-ico" data-act="${memoNow().length ? 'board-memo' : 'board'}" aria-label="${boardLabel()}">📌${memoNow().length ? `<i class="ico-n">${memoNow().length}</i>` : ''}</button>` : '');
 
 // Лежанка под доской и книга рецептов на полке — простой плоский стиль (Эскиз комнаты 23.11.svg)
 const bedSVG = () => `<svg viewBox="0 0 112 34" aria-hidden="true"><ellipse cx="56" cy="18" rx="56" ry="16" fill="#5d4a6b"/><ellipse cx="56" cy="12" rx="46" ry="11" fill="#7d6690"/></svg>`;

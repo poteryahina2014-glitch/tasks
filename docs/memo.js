@@ -13,9 +13,9 @@ const memoMonths = (s, n) => { const d = parse(monthStart(s)); d.setMonth(d.getM
 const dmy = s => `${s.slice(8)}.${s.slice(5, 7)}.${s.slice(0, 4)}`;
 // Когда в следующий раз, если сделано on: месяцы — 1-е число месяца, недели — день; частоты нет — «когда?»
 const memoNext = (m, on) => (!m.every ? null : m.unit === 'week' ? addDays(on, 7 * m.every) : memoMonths(on, m.every));
-// → «на месяц позже» (у недель — на неделю), не раньше следующего месяца/недели от сегодня
+// → «на месяц позже» (у недель — на неделю): у «Пора» — от сегодня (в т. ч. когда прошла запись), у будущих — от их срока
 const memoShift = m => {
-  const t0 = today(), from = m.plan && m.plan > t0 ? m.plan : t0;
+  const t0 = today(), from = m.plan && m.plan > t0 && memoState(m) !== 'now' ? m.plan : t0;
   return m.unit === 'week' ? addDays(from, 7) : memoMonths(from, 1);
 };
 const plural = (n, one, few, many) => (n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && !(n % 100 >= 12 && n % 100 <= 14) ? few : many);
@@ -57,9 +57,10 @@ function memoLoaded(list, log) {
 }
 
 // ---------- вкладка «Памятки» в окне доски ----------
+const memoPast = m => { const e = memoEvent(m); return !!(e && e.due_date && e.due_date < today()); }; // запись прошла, а ✓ нет
 function memoRow(m) {
   const st = memoState(m), e = memoEvent(m), last = memoLogs(m.id)[0];
-  const when = e && st !== 'rest' ? `${e.due_date.slice(8)}.${e.due_date.slice(5, 7)}${e.start_time ? ', ' + hhmm(e.start_time) : ''}` : memoWhen(m);
+  const when = e && st === 'booked' ? `${e.due_date.slice(8)}.${e.due_date.slice(5, 7)}${e.start_time ? ', ' + hhmm(e.start_time) : ''}` : memoPast(m) ? `запись ${e.due_date.slice(8)}.${e.due_date.slice(5, 7)}` : memoWhen(m);
   const meta = [last && dmy(last.done_on), memoEvery(m), m.prep && `<b>${esc(m.prep)}</b>`].filter(Boolean).join(' · ');
   return `<div class="task memo ${st}">
     <button class="check" data-act="memo-done" data-id="${m.id}" aria-label="Сделано">✓</button>
@@ -90,7 +91,7 @@ async function memoShiftBy(id) {
   if (!m) return;
   const was = await memoPatch(id, { plan: memoShift(m), booked_task: null }); // запись, что уже прошла, больше не держит
   render(); renderBoard();
-  toast(`Теперь: ${memoWhen(m)}`, async () => { await memoPatch(id, was); render(); renderBoard(); });
+  toast(`${m.title}: ${memoWhen(m)}`, async () => { await memoPatch(id, was); render(); renderBoard(); });
 }
 
 // Закрыли окно памятки — обратно в список
@@ -112,17 +113,20 @@ const planValue = () => { const v = val('m-plan'); return !v ? null : v.length =
 function openMemo(id) {
   const m = id ? memoById(id) : { title: '', grp: 'health', every: null, unit: 'month', plan: null };
   if (!m) return;
-  MEMO.ed = { id: m.id || null, grp: m.grp, unit: m.unit, logs: id ? memoLogs(id).map(l => ({ ...l })) : [], del: [] };
+  MEMO.ed = { id: m.id || null, grp: m.grp, unit: m.unit, logs: id ? memoLogs(id).map(l => ({ ...l })) : [], del: [], plan: m.plan, day: m.unit === 'week' ? m.plan : null, touched: false };
+  const e = id && memoState(m) !== 'rest' ? memoEvent(m) : null;
   memoSheet('edit memo-win', id ? 'Памятка' : 'Новая памятка', `<div class="memo-cols"><div>
       <div class="field"><label>Название</label><input class="inp" id="m-title" value="${esc(m.title)}"></div>
       <div class="field"><label>Группа</label><div class="seg memo-grp">${MEMO_GROUPS.map(([g, n]) => `<button class="pill${g === m.grp ? ' on' : ''}" data-act="memo-grp" data-v="${g}">${n}</button>`).join('')}</div></div>
       <div class="memo-two"><div class="field"><label>Раз в</label><div class="row"><input class="inp" type="number" min="1" max="600" id="m-every" value="${m.every || ''}"><select class="inp" id="m-unit"><option value="month"${m.unit === 'month' ? ' selected' : ''}>мес.</option><option value="week"${m.unit === 'week' ? ' selected' : ''}>нед.</option></select></div></div>
       <div class="field"><label>Когда</label><div id="m-plan-box">${planInput(m.unit, m.plan)}</div></div></div>
+      ${e ? `<div class="field memo-rec"><label>Запись</label>${dmy(e.due_date)}${e.start_time ? ', ' + hhmm(e.start_time) : ''}</div>` : ''}
       <div class="field"><label>Перед этим / что взять</label><input class="inp" id="m-prep" value="${esc(m.prep || '')}"></div>
       <div class="field"><label>Заметка</label><textarea class="inp" id="m-note">${esc(m.note || '')}</textarea></div></div>
-    <div class="memo-hist"><div class="field"><label>История</label></div><div id="m-logs"></div><button class="btn memo-add" data-act="memo-log-add">+</button></div></div>`,
+    <div class="memo-hist"><div class="memo-hh"><span>История</span><button class="btn memo-add" data-act="memo-log-add" aria-label="Добавить в историю">+</button></div><div id="m-logs"></div></div></div>`,
     id ? `<button class="btn danger" data-act="memo-del" data-id="${id}" aria-label="Удалить">🗑</button>` : '', 'memo-save');
   renderMemoLogs();
+  MEMO.ed.base = MEMO.ed.prev = memoBasis();
   MEMO.was = memoFields();
   if (!id) document.getElementById('m-title').focus();
 }
@@ -130,32 +134,66 @@ function syncMemoLogs() {
   $modal.querySelectorAll('.memo-log').forEach((r, i) => { const l = MEMO.ed.logs[i]; l.done_on = r.querySelector('input').value; l.said = r.querySelector('textarea').value; });
 }
 function renderMemoLogs() {
-  document.getElementById('m-logs').innerHTML = MEMO.ed.logs.map((l, i) => `<div class="memo-log"><div class="row"><input class="inp" type="date" aria-label="Когда" value="${l.done_on || ''}"><button class="icon" data-act="memo-log-del" data-v="${i}" aria-label="Убрать строку">✕</button></div>
+  document.getElementById('m-logs').innerHTML = MEMO.ed.logs.map((l, i) => `<div class="memo-log"><div class="row"><input class="inp m-log-on" type="date" aria-label="Когда" max="${today()}" value="${l.done_on || ''}"><button class="icon" data-act="memo-log-del" data-v="${i}" aria-label="Убрать строку">✕</button></div>
     <textarea class="inp" rows="2" aria-label="Что сказали">${esc(l.said || '')}</textarea></div>`).join('') || '<div class="empty small">Пусто</div>';
 }
-function memoLogAdd() { syncMemoLogs(); MEMO.ed.logs.unshift({ done_on: today(), said: '' }); renderMemoLogs(); }
+function memoLogAdd() { syncMemoLogs(); MEMO.ed.logs.unshift({ done_on: today(), said: '' }); renderMemoLogs(); memoAuto(); }
 function memoLogDel(i) {
   syncMemoLogs();
   const [l] = MEMO.ed.logs.splice(i, 1);
   if (l.id) MEMO.ed.del.push(l.id);
   renderMemoLogs();
+  memoAuto();
 }
 function memoGrp(g) {
   MEMO.ed.grp = g;
   $modal.querySelectorAll('.memo-grp .pill').forEach(b => b.classList.toggle('on', b.dataset.v === g));
 }
 function memoUnit(unit) {
-  const plan = planValue();
-  MEMO.ed.unit = unit;
+  let plan = planValue();
+  const ed = MEMO.ed;
+  if (ed.unit === 'week') ed.day = plan; // недели → месяцы → недели: день не теряется
+  else if (unit === 'week' && ed.day && plan && ed.day.slice(0, 7) === plan.slice(0, 7)) plan = ed.day;
+  ed.unit = unit;
   document.getElementById('m-plan-box').innerHTML = planInput(unit, plan);
+  memoAuto();
+}
+// «Когда» считается само: последняя дата истории + частота. Не трогает, если «Когда» правила сама в этом окне
+// или там стоял свой месяц (не по расчёту) и новой, более поздней даты не появилось. Вернула всё как было — вернулся и прежний месяц.
+function memoBasis() {
+  syncMemoLogs();
+  const last = MEMO.ed.logs.map(l => l.done_on).filter(d => d && d <= today()).sort().pop() || null;
+  return { last, every: memoEveryVal() || null, unit: MEMO.ed.unit };
+}
+const memoCalc = b => (b.last && b.every ? memoNext(b, b.last) : null);
+function memoAuto() {
+  const ed = MEMO.ed, b = memoBasis(), prev = ed.prev;
+  ed.prev = b;
+  if (ed.touched) return;
+  const same = b.last === ed.base.last && b.every === ed.base.every && b.unit === ed.base.unit;
+  const cur = planValue(), calc = memoCalc(b);
+  let next;
+  if (same) next = ed.plan;
+  else if (!calc) return;
+  else if (!cur || cur === memoCalc(prev) || (b.last && (!prev.last || b.last > prev.last))) next = calc;
+  else return;
+  document.getElementById('m-plan').value = !next ? '' : b.unit === 'week' ? next : next.slice(0, 7);
+}
+// «Раз в»: целое от 1; пусто — null; иначе NaN
+function memoEveryVal() {
+  const el = document.getElementById('m-every'), v = el.value.trim();
+  if (el.validity.badInput) return NaN;
+  return !v ? null : /^\d+$/.test(v) && +v > 0 && +v <= 600 ? +v : NaN;
 }
 const saveMemo = memoOnce(async function saveMemo() {
   const ed = MEMO.ed, title = val('m-title');
   if (!title) return toast('Напиши название');
   syncMemoLogs();
   if (ed.logs.some(l => !l.done_on)) return toast('В истории есть строка без даты');
-  const row = { title, grp: ed.grp, every: parseInt(val('m-every')) || null, unit: ed.unit, plan: planValue(), prep: val('m-prep') || null, note: val('m-note') || null };
-  if (row.every < 0) row.every = null;
+  if (ed.logs.some(l => l.done_on > today())) return toast('В истории дата ещё не наступила');
+  const every = memoEveryVal();
+  if (Number.isNaN(every)) return toast('«Раз в» — целое число от 1 до 600');
+  const row = { title, grp: ed.grp, every, unit: ed.unit, plan: planValue(), prep: val('m-prep') || null, note: val('m-note') || null };
   if (ed.id) await call(sb.from('memos').update(row).eq('id', ed.id));
   else ed.id = (await call(sb.from('memos').insert(row).select()))[0].id; // не записалась история — повтор «Сохранить» не создаст вторую памятку
   if (ed.del.length) await call(sb.from('memo_log').delete().in('id', ed.del));
@@ -169,16 +207,23 @@ const saveMemo = memoOnce(async function saveMemo() {
     }
   }
   await load();
-  closeModal();
+  memoClose();
 });
+// Памятку удалили или отметили раньше записи — будущее событие из календаря уходит вместе с ней
 function memoDel(id) {
+  const e = memoEvent(memoById(id)), ev = e && e.due_date >= today() ? e.id : null;
   MEMO.gone.add(id);
+  if (ev) { S.gone.add(ev); S.tasks = S.tasks.filter(t => t.id !== ev); }
   closeModal();
   render(); renderBoard();
   const timer = setTimeout(async () => {
-    try { await call(sb.from('memos').delete().eq('id', id)); MEMO.list = MEMO.list.filter(m => m.id !== id); } finally { MEMO.gone.delete(id); render(); renderBoard(); }
+    try {
+      await call(sb.from('memos').delete().eq('id', id));
+      MEMO.list = MEMO.list.filter(m => m.id !== id);
+      if (ev) await call(sb.from('tasks').delete().eq('id', ev));
+    } finally { MEMO.gone.delete(id); S.gone.delete(ev); if (ev) await load(); else { render(); renderBoard(); } }
   }, UNDO_MS);
-  toast('Памятка удалена', async () => { clearTimeout(timer); MEMO.gone.delete(id); render(); renderBoard(); });
+  toast(ev ? 'Памятка и запись удалены' : 'Памятка удалена', async () => { clearTimeout(timer); MEMO.gone.delete(id); S.gone.delete(ev); if (ev) await load(); else { render(); renderBoard(); } });
 }
 
 // ---------- ✓ сделано ----------
@@ -187,7 +232,7 @@ function openMemoDone(id) {
   if (!m) return;
   const e = memoEvent(m), t0 = today(), on = e && e.due_date && e.due_date < t0 ? e.due_date : t0; // была запись и прошла — её дата
   MEMO.ed = { id, grp: '', unit: m.unit, touched: false };
-  memoSheet('memo-small', m.title, `<div class="memo-two"><div class="field"><label>Когда</label><input class="inp" type="date" id="m-on" max="${t0}" value="${on}"></div>
+  memoSheet('memo-small', 'Сделано: ' + m.title, `<div class="memo-two"><div class="field"><label>Когда</label><input class="inp" type="date" id="m-on" max="${t0}" value="${on}"></div>
     <div class="field"><label>Следующий раз</label>${planInput(m.unit, memoNext(m, on))}</div></div>
     <div class="field"><label>Что сказали</label><textarea class="inp" id="m-said"></textarea></div>`, '', 'memo-done-save');
 }
@@ -202,9 +247,12 @@ const saveMemoDone = memoOnce(async function saveMemoDone() {
   const on = val('m-on');
   if (!on) return toast('Укажи дату');
   if (on > today()) return toast('Дата ещё не наступила');
+  const e = memoEvent(memoById(MEMO.ed.id));
   await call(sb.rpc('memo_done', { p_id: MEMO.ed.id, p_on: on, p_said: val('m-said') || null, p_next: planValue() }));
+  if (e && e.due_date > today()) await call(sb.from('tasks').delete().eq('id', e.id));
   await load();
-  closeModal();
+  memoClose();
+  if (e && e.due_date > today()) toast(`Запись ${dmy(e.due_date)} убрана из календаря`);
 });
 
 // ---------- 📅 записалась: событие в календаре ----------
@@ -213,7 +261,7 @@ function openMemoBook(id) {
   if (!m) return;
   const st = memoState(m), e = st === 'booked' ? memoEvent(m) : null; // прошедшая запись — новая запись с чистого листа
   MEMO.ed = { id, grp: '', unit: m.unit, ev: e ? e.id : null };
-  memoSheet('memo-small', m.title, `<div class="memo-two"><div class="field"><label>Дата</label><input class="inp" type="date" id="m-bd" min="${today()}" value="${e ? e.due_date : ''}"></div>
+  memoSheet('memo-small', 'Запись: ' + m.title, `<div class="memo-two"><div class="field"><label>Дата</label><input class="inp" type="date" id="m-bd" min="${today()}" value="${e ? e.due_date : ''}"></div>
     <div class="field"><label>Время</label><input class="inp" type="time" id="m-bt" value="${e ? hhmm(e.start_time) : ''}"></div></div>
     <div class="field"><label>Где, что взять</label><textarea class="inp" id="m-bn">${esc(e ? e.notes || '' : m.prep || '')}</textarea></div>`,
     e ? `<button class="btn danger" data-act="memo-unbook">Отменить запись</button>` : '', 'memo-book-save');
@@ -229,7 +277,7 @@ const saveMemoBook = memoOnce(async function saveMemoBook() {
     try { await memoPatch(m.id, { booked_task: t.id }); } catch (err) { await sb.from('tasks').delete().eq('id', t.id); throw err; } // не связалось — событие без памятки не оставлять
   }
   await load();
-  closeModal();
+  memoClose();
 });
 const memoUnbook = memoOnce(async function memoUnbook() {
   const ed = MEMO.ed;
@@ -237,7 +285,7 @@ const memoUnbook = memoOnce(async function memoUnbook() {
   await call(sb.from('tasks').delete().eq('id', ed.ev)); // booked_task база очистит сама
   memoById(ed.id).booked_task = null;
   await load();
-  closeModal();
+  memoClose();
 });
 
 document.addEventListener('change', ev => {
@@ -245,9 +293,14 @@ document.addEventListener('change', ev => {
   if (ev.target.id === 'm-unit') memoUnit(ev.target.value);
   if (ev.target.id === 'm-on') memoOnChange();
   if (ev.target.id === 'm-plan') MEMO.ed.touched = true;
+  if (ev.target.id === 'm-every' || ev.target.classList.contains('m-log-on')) memoAuto();
 });
+// После сохранения под пальцем оказывается список: второе нажатие двойного щелчка не должно попасть в него
+function memoClose() { closeModal(); lastTick = Date.now(); }
+const MEMO_TICK = new Set(['memo-edit', 'memo-new', 'memo-done', 'memo-book', 'memo-shift', 'memo-del', 'memo-log-add', 'memo-log-del']);
 // Кнопки памяток (из общего обработчика щелчков app.js); true — обработано
 async function memoAct(act, id, v) {
+  if (MEMO_TICK.has(act) && tooSoon()) return true;
   switch (act) {
     case 'memo-edit': openMemo(id); break;
     case 'memo-new': openMemo(); break;
