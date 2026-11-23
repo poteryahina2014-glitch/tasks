@@ -35,7 +35,7 @@ const S = {
   showDone: localGet('done') === '1', // показывать выполненные («Сделано сегодня», отметки в календаре)
   bg: localGet('bg') !== '0', // вид за окном на фоне
   noDate: localGet('nodate') === '1', // «Разделы»: только задачи без срока
-  sizes: (localGet('sizes') || '').split(',').filter(x => x && x !== 'idea'), // «Разделы»: показать только эти размеры (пусто — все)
+  sizes: (localGet('sizes') || '').split(',').filter(x => ['quick', 'mid', 'none'].includes(x)), // «Разделы»: показать только эти размеры (пусто — все)
   hRange: +localGet('hrange') || 30,
   tRange: +localGet('trange') || 30,  // «Время»: за сколько дней  // «Привычки»: за сколько дней статистика
   hLogs: null,            // история привычек за год (грузится, когда открыта вкладка)
@@ -3073,7 +3073,6 @@ async function rvSave(reload = true) {
 const SIZES = {
   quick: { icon: '⚡', name: 'пятиминутка', title: 'Пятиминутки', hint: 'Можно сделать в любой свободный момент' },
   mid: { icon: '◐', name: 'средняя', title: 'Средние', hint: '' },
-  big: { icon: '●', name: 'на весь день', title: 'Большие', hint: 'Сегодня ничего большого не запланировано — может, взять одну?' },
 };
 // Свободные окошки будних дней для средних задач. Событие со временем внутри окошка его занимает.
 const SLOTS = {
@@ -3100,7 +3099,9 @@ async function saveSlots() {
 }
 const secSize = id => { const z = (S.sections.find(s => s.id === id) || {}).default_size; return SIZES[z] ? z : null; }; // 'idea' — книга рецептов (board.js), не размер
 // свой размер у задачи, иначе — размер раздела по умолчанию
-const sizeOf = t => (isEvent(t) ? null : t.size || secSize(t.section_id));
+// 'big' — бывший ● «на весь день» (убран 23.11.2026): значение в базе не трогаем, считается «без размера», размер раздела к нему не применяется
+const wasBig = t => t.size === 'big' || (!t.size && (sectionOf(t) || {}).default_size === 'big');
+const sizeOf = t => (isEvent(t) || t.size === 'big' ? null : t.size || secSize(t.section_id));
 
 // Что стоит на день d в окошках и сколько там места (в минутах). Сами задачи по окошкам не расставляются (её решение 12.11.2026):
 // в окошке только задачи со своим «Когда» и те, что она перетащила на сегодня. Место занимают средние и прочие задачи
@@ -3236,7 +3237,7 @@ function openOffer() {
 // Задачи без размера (в утреннем окне — разнести размеры): по разделам, внутри — как в «Разделах»
 function sizeList() {
   const secIx = t => { const i = S.sections.findIndex(s => s.id === t.section_id); return i < 0 ? 1e6 : i; };
-  return active().filter(t => !t.done_on && !isEvent(t) && t.kind !== 'occasion' && !t.bday_of && !isRecipe(t) && !sizeOf(t))
+  return active().filter(t => !t.done_on && !isEvent(t) && t.kind !== 'occasion' && !t.bday_of && !isRecipe(t) && !sizeOf(t) && !wasBig(t)) // бывшие ● по утрам не спрашивать
     .sort((a, b) => secIx(a) - secIx(b) || byPos(a, b));
 }
 function sizeRow(t, o) {
@@ -3499,7 +3500,8 @@ function syncEdit() {
   const sizeBtn = document.getElementById('f-size-def');
   if (sizeBtn) {
     sizeBtn.textContent = defSize ? `Как у раздела: ${SIZES[defSize].icon}` : 'Нет';
-    q('[data-act=size]').forEach(b => b.classList.toggle('on', b.dataset.v === (e.size || '')));
+    const szOn = e.size === 'big' ? (defSize ? null : '') : e.size || '';
+    q('[data-act=size]').forEach(b => b.classList.toggle('on', b.dataset.v === szOn));
     q('[data-act=slot]').forEach(b => b.classList.toggle('on', b.dataset.v === (e.slot || '')));
     document.getElementById('f-size-box').style.display = isEvent(e) ? 'none' : '';
     const sz = isEvent(e) ? null : e.size || defSize;
@@ -3539,7 +3541,7 @@ function syncEdit() {
   // вкладки: «План и время» — только у рабочих задач; точка — на вкладке что-то задано
   const tabOk = { main: true, repeat: !occ, plan: !occ && planFields(e), more: !occ };
   if (!tabOk[e.tab]) e.tab = 'main';
-  const sizeSet = !isEvent(e) && (e.size || e.slot);
+  const sizeSet = !isEvent(e) && (SIZES[e.size] || e.slot);
   const dots = {
     repeat: !!(e.repeat_unit || e.window_days),
     plan: !!(e.plan_date || e.estimate || (e.id && spentOf(e.id))),
