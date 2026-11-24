@@ -289,7 +289,7 @@ async function load() {
     // памятки (029_memos.sql); пока таблиц нет — вкладки нет
     callAll(() => sb.from('memos').select('*').order('created_at').order('id'), true),
     callAll(() => sb.from('memo_log').select('*').order('id'), true),
-    // лимит Claude (031_claude_limit.sql); пока таблицы нет — плашки нет
+    // лимит Claude (031_claude_limit.sql); пока таблицы нет — шкалы нет
     callAll(() => sb.from('claude_limit').select('*').order('user_id'), true),
   ]);
   memoLoaded(memoList, memoLog);
@@ -521,8 +521,7 @@ function renderToday() {
   const doneIds = [...new Set(S.logs.filter(l => l.status === 'done' && l.done_on === t0).map(l => l.task_id))];
   const doneToday = S.showDone ? doneIds.map(id => S.tasks.find(t => t.id === id)).filter(Boolean) : [];
 
-  let html = `<header class="top"><h1>Сегодня <span class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</span></h1><div class="tools">${MODE()}${GEARS.v}</div></header>`;
-  html += limitHTML();
+  let html = `<header class="top today"><h1>Сегодня <span class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</span></h1>${limitHTML()}<div class="tools">${MODE()}${GEARS.v}</div></header>`;
   html += meterCard('top');
   if (!due.length && !doneToday.length && !events.length && !inWork.length) {
     html += '<div class="empty">Задач на сегодня нет.<br>Нажми «+», чтобы добавить.</div>';

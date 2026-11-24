@@ -1056,12 +1056,25 @@ body.wall #pets .pet.cat.right { left: calc(100vw - (100vw - var(--appw)) / 4 - 
   .memo-when { display: none; } .memo-when2 { display: inline; }
 }
 
-/* лимит Claude на «Сегодня» (limit.js) */
-.limit { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 2px 4px; color: var(--muted); font-size: 14px; }
-.limit svg { flex: none; width: 16px; height: 16px; stroke: #d97757; stroke-width: 2.4; stroke-linecap: round; }
-.limit b { font-weight: 400; }
-.limit span { margin-left: auto; white-space: nowrap; color: var(--muted); }
+/* лимит Claude в шапке «Сегодня» (limit.js): шкала, подсказка — поверх задач, ничего не двигает */
+.limit { position: relative; flex: 0 1 auto; display: flex; align-items: center; gap: 8px; height: 30px; min-width: 0; margin-left: auto; padding: 0; color: var(--good); font-size: 15px; pointer-events: auto; }
+.limit + .tools { margin-left: 0; }
+.limit svg { flex: none; width: 18px; height: 18px; stroke: #d97757; stroke-width: 2.4; stroke-linecap: round; }
+.limit-bar { flex: 1 1 120px; width: 120px; min-width: 24px; height: 9px; border-radius: 5px; background: var(--track); overflow: hidden; }
+.limit-bar i { display: block; height: 100%; border-radius: 5px; background: currentColor; }
+.limit b { flex: none; min-width: 42px; text-align: right; font-weight: 600; }
 .limit.warn { color: var(--warn); }
-.limit.bad { padding: 9px 12px; border: 1px solid var(--bad); border-radius: 12px; background: #3a2432; color: var(--bad); }
-.limit.bad b { font-weight: 600; }
-.limit.bad svg { width: 20px; height: 20px; }
+.limit.bad { color: var(--bad); }
+.limit-tip { display: none; position: absolute; right: 0; top: 34px; z-index: 5; padding: 9px 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); box-shadow: 0 8px 24px #0009;
+  color: var(--text); font-size: 14px; line-height: 1.6; text-align: left; white-space: nowrap; }
+.limit.open .limit-tip { display: block; }
+@media (hover: hover) { .limit:hover .limit-tip { display: block; } }
+/* узкий экран: дата и шкала — второй строкой шапки */
+@media (max-width: 899px) {
+  header.top.today { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 2px 8px; align-items: center; }
+  header.top.today h1 { display: contents; }
+  header.top.today h1 .sub { grid-area: 2 / 1 / 3 / 3; font-size: 15px; line-height: 30px; white-space: nowrap; margin: 0; }
+  header.top.today .tools { grid-area: 1 / 2 / 2 / 4; justify-self: end; }
+  header.top.today .limit { grid-area: 2 / 3 / 3 / 4; justify-self: end; max-width: 100%; }
+  .limit-bar { flex-basis: 90px; width: 90px; }
+}
