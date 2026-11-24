@@ -275,7 +275,7 @@ function habitStats(t) {
 async function load() {
   const since = addDays(today(), -62);
   const monthFrom = S.month && S.month < since ? S.month : since;
-  const [tasks, sections, logs, templates, projects, times, reads, rfolders, memoList, memoLog] = await Promise.all([
+  const [tasks, sections, logs, templates, projects, times, reads, rfolders, memoList, memoLog, limitRows] = await Promise.all([
     callAll(() => sb.from('tasks').select('*').or(`done_on.is.null,done_on.gte.${monthFrom},project_id.not.is.null`).order('position').order('created_at').order('id')),
     call(sb.from('sections').select('*').order('position').order('created_at')),
     callAll(() => sb.from('task_log').select('*').gte('day', monthFrom).order('id')),
@@ -289,8 +289,11 @@ async function load() {
     // памятки (029_memos.sql); пока таблиц нет — вкладки нет
     callAll(() => sb.from('memos').select('*').order('created_at').order('id'), true),
     callAll(() => sb.from('memo_log').select('*').order('id'), true),
+    // лимит Claude (031_claude_limit.sql); пока таблицы нет — плашки нет
+    callAll(() => sb.from('claude_limit').select('*').order('user_id'), true),
   ]);
   memoLoaded(memoList, memoLog);
+  limitLoaded(limitRows);
   S.reads = reads || [];
   S.rfolders = rfolders || [];
   S.readOn = !!reads && !!rfolders;
@@ -519,6 +522,7 @@ function renderToday() {
   const doneToday = S.showDone ? doneIds.map(id => S.tasks.find(t => t.id === id)).filter(Boolean) : [];
 
   let html = `<header class="top"><h1>Сегодня <span class="sub">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS_OF[now.getMonth()]}</span></h1><div class="tools">${MODE()}${GEARS.v}</div></header>`;
+  html += limitHTML();
   html += meterCard('top');
   if (!due.length && !doneToday.length && !events.length && !inWork.length) {
     html += '<div class="empty">Задач на сегодня нет.<br>Нажми «+», чтобы добавить.</div>';

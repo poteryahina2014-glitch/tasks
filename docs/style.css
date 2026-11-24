@@ -1055,3 +1055,13 @@ body.wall #pets .pet.cat.right { left: calc(100vw - (100vw - var(--appw)) / 4 - 
   .memo-cols { grid-template-columns: minmax(0, 1fr); } .memo-win .memo-cols { overflow-x: hidden; padding-right: 6px; } .memo-hist { min-height: auto; } #m-logs { flex: none; overflow: visible; }
   .memo-when { display: none; } .memo-when2 { display: inline; }
 }
+
+/* лимит Claude на «Сегодня» (limit.js) */
+.limit { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 2px 4px; color: var(--muted); font-size: 14px; }
+.limit svg { flex: none; width: 16px; height: 16px; stroke: #d97757; stroke-width: 2.4; stroke-linecap: round; }
+.limit b { font-weight: 400; }
+.limit span { margin-left: auto; white-space: nowrap; color: var(--muted); }
+.limit.warn { color: var(--warn); }
+.limit.bad { padding: 9px 12px; border: 1px solid var(--bad); border-radius: 12px; background: #3a2432; color: var(--bad); }
+.limit.bad b { font-weight: 600; }
+.limit.bad svg { width: 20px; height: 20px; }
