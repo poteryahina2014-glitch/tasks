@@ -4994,7 +4994,7 @@ sb.auth.onAuthStateChange((event, session) => {
   if (was !== S.user.id) { render(); setTimeout(() => load().catch(() => { }), 0); }
 });
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(e => console.error(e));
 
 // Версия на экране и сверка с сайтом (ревизия 22.11.2026). Номер — в version.js: каждая выкладка ставит новый
 // (крючок перед коммитом не пустит изменение docs/ без него). На сайте новее — полоска «Есть новая версия».
